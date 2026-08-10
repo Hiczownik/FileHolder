@@ -1,0 +1,71 @@
+name: FileHolder CI/CD Pipeline
+
+on:
+    push:
+        branches: [ "main" ]
+    pull_request:
+        branches: [ "main" ]
+    
+jobs:
+    backend-tests:
+        name: Build & Test Backend (.NET 10)
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+            
+            - name: Setup .NET 10 SDK
+              uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: 10.0.x
+            
+            - name: Restore Dependencies
+              run: dotnet restore FileHolder.sln
+            
+            - name: Build Solution in Release Mode
+              run: dotnet build FileHolder.sln --no-restore -c Release
+
+            - name: Run Backend Integration Tests
+              run: dotnet test tests/FileHolder.Tests.Integration/FileHolder.Tests.Integration.csproj -c Release --no-build --verbosity normal
+    e2e-tests: 
+        name: Build & Run Playwright E2E Tests
+        runs-on: ubuntu-latest
+        needs: backend-tests
+
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+            
+            - name: Setup Node.js 22
+              uses: actions/setup-node@v4
+              with:
+                node-version: '22'
+                cache: 'npm'
+                cache-dependency-path: 'src/fileholder-ui/package-lock.json'
+            - name: Install Frontend Dependencies
+              run: |
+                cd src/fileholder-ui
+                npm ci
+            - name: Install Playwright Browsers & System Dependencies
+              run: |
+               cd src/fileholder-ui
+               npx playwright install --with-deps chromium
+            - name: Start Docker Compose Stack
+              run: docker compose up -d --build
+            - name: Wait for API Healthcheck Readiness
+              run: |
+                echo "Waiting for .NET 10 API to become healthy..."
+                timeout 60s bash -c 'until curl -s http://localhost:8080/healthz; do sleep 2; done'
+            - name: Run Playwright E2E Tests
+              run: |
+                cd src/fileshare-ui
+                npx playwright test
+            - name: Upload Playwright Artifacts on Failure
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                name: playwright-failure-report
+                path: src/fileholder-ui/playwright-report/
+                retention-days: 7    
+            
