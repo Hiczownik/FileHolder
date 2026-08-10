@@ -10,18 +10,16 @@ using FluentValidation;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
+using OpenTelemetry.Metrics;
 using Scalar.AspNetCore;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Serilog Logging
 builder.Host.UseSerilog((ctx, lc) => lc.WriteTo.Console());
 
-// 2. OpenAPI 3.1 & Scalar Documentation
 builder.Services.AddOpenApi();
 
-// 3. Native .NET 10 HybridCache
 #pragma warning disable EXTEXP0018
 builder.Services.AddHybridCache(options =>
 {
@@ -34,22 +32,19 @@ builder.Services.AddHybridCache(options =>
 });
 #pragma warning restore EXTEXP0018
 
-// 4. Centralized RFC 7807 ProblemDetails Exception Handling
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
-// 5. Database Context (PostgreSQL)
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection")));
 
-// 6. Register Amazon S3 Client for MinIO / Cloudflare R2 Compatibility
 builder.Services.AddSingleton<IAmazonS3>(sp =>
 {
     var config = new AmazonS3Config
     {
         ServiceURL = builder.Configuration["Storage:ServiceUrl"],
         ForcePathStyle = true,
-        UseHttp = true // Force HTTP mode for local MinIO
+        UseHttp = true 
     };
     return new AmazonS3Client(
         builder.Configuration["Storage:AccessKey"],
@@ -57,15 +52,21 @@ builder.Services.AddSingleton<IAmazonS3>(sp =>
         config);
 });
 
-// 7. Domain Services & Utilities
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddAspNetCoreInstrumentation()
+            .AddRuntimeInstrumentation()
+            .AddPrometheusExporter();
+    });
+
 builder.Services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
 builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddHostedService<FileCleanupWorker>();
 
-// 8. FluentValidation Registration
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
-// 9. Rate Limiting Middleware
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -83,7 +84,6 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
-// 10. CORS Policy for React Frontend
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policy =>
@@ -96,18 +96,18 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Automatically ensure PostgreSQL database tables are created on startup
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     dbContext.Database.EnsureCreated();
 }
 
-// Pipeline Middleware Configuration
 app.UseExceptionHandler();
 app.UseSecurityHeaders();
 app.UseCors("AllowReactApp");
 app.UseRateLimiter();
+
+app.MapPrometheusScrapingEndpoint();
 
 if (app.Environment.IsDevelopment())
 {
@@ -119,7 +119,6 @@ if (app.Environment.IsDevelopment())
     });
 }
 
-// Map Modular Route Groups
 app.MapFileEndpoints();
 app.MapHealthEndpoints();
 
