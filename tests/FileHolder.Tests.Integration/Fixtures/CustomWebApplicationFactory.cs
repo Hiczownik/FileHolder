@@ -12,8 +12,7 @@ namespace FileHolder.Tests.Integration.Fixtures;
 
 public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgresContainer = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
+    private readonly PostgreSqlContainer _postgresContainer = new PostgreSqlBuilder("postgres:17-alpine")
         .WithDatabase("test_fileholder_db")
         .WithUsername("test_user")
         .WithPassword("test_password")
