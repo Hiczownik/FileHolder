@@ -1,63 +1,20 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useParams } from 'react-router-dom';
-import { fileApi } from '../api/fileApi';
-import type { FileMetadataResponse } from '../types/api';
-import { Download, Lock, FileText, AlertCircle, Clock, ShieldAlert } from 'lucide-react';
+import { useFileDownload } from '../hooks/useFileDownload';
+import { Download, Lock, FileText, AlertCircle, Clock, ShieldAlert, Folder } from 'lucide-react';
 
 export const DownloadPage: React.FC = () => {
   const { shareToken } = useParams<{ shareToken: string }>();
-  const [metadata, setMetadata] = useState<FileMetadataResponse | null>(null);
-  const [password, setPassword] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isDownloading, setIsDownloading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (shareToken) {
-      fileApi
-        .getMetadata(shareToken)
-        .then((data) => setMetadata(data))
-        .catch((err) => {
-          if (err.response?.status === 410) {
-            setError('This file link has expired or reached its maximum download limit.');
-          } else {
-            setError('File link not found or deleted.');
-          }
-        })
-        .finally(() => setIsLoading(false));
-    }
-  }, [shareToken]);
-
-  const handleDownload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!shareToken) return;
-
-    setIsDownloading(true);
-    setError(null);
-
-    try {
-      const downloadUrl = await fileApi.getDownloadUrl(shareToken, password || undefined);
-      
-      // Trigger browser download
-      window.location.href = downloadUrl;
-    } catch (err: any) {
-      if (err.response?.status === 401) {
-        setError('Incorrect password. Please try again.');
-      } else {
-        setError('Failed to generate download link.');
-      }
-    } finally {
-      setIsDownloading(false);
-    }
-  };
-
-  const formatSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-  };
+  const {
+    metadata,
+    password,
+    isLoading,
+    downloadingFileId,
+    error,
+    setPassword,
+    handleDownloadFile,
+    formatSize,
+  } = useFileDownload(shareToken);
 
   if (isLoading) {
     return (
@@ -73,22 +30,26 @@ export const DownloadPage: React.FC = () => {
         <div className="p-4 bg-rose-500/10 rounded-full w-16 h-16 mx-auto flex items-center justify-center text-rose-400 border border-rose-500/20">
           <ShieldAlert className="w-8 h-8" />
         </div>
-        <h2 className="text-xl font-bold text-white">Link Unavailable</h2>
+        <h2 className="text-xl font-bold text-white">Files Unavailable</h2>
         <p className="text-slate-400 text-sm">{error}</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-md mx-auto my-12 px-4">
+    <div className="max-w-xl mx-auto my-12 px-4">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
         <div className="flex items-center gap-4 border-b border-slate-800 pb-6">
           <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400 border border-indigo-500/20">
-            <FileText className="w-8 h-8" />
+            <Folder className="w-8 h-8" />
           </div>
-          <div>
-            <h1 className="text-lg font-bold text-white line-clamp-1">{metadata?.fileName}</h1>
-            <p className="text-xs text-slate-400 mt-0.5">{metadata && formatSize(metadata.sizeBytes)}</p>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-bold text-white line-clamp-1">
+              {metadata?.title || 'Shared File Bundle'}
+            </h1>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {metadata?.fileCount} {metadata?.fileCount === 1 ? 'file' : 'files'} • {metadata && formatSize(metadata.totalSizeBytes)}
+            </p>
           </div>
         </div>
 
@@ -102,10 +63,26 @@ export const DownloadPage: React.FC = () => {
           {metadata?.remainingDownloads !== null && metadata?.remainingDownloads !== undefined && (
             <div className="flex items-center gap-2">
               <Download className="w-4 h-4 text-indigo-400" />
-              <span>Remaining Downloads: {metadata.remainingDownloads}</span>
+              <span>Remaining File Group Downloads: {metadata.remainingDownloads}</span>
             </div>
           )}
         </div>
+
+        {metadata?.requiresPassword && (
+          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+            <label className="text-xs font-semibold text-slate-400 flex items-center gap-1.5">
+              <Lock className="w-4 h-4 text-indigo-400" />
+              <span>Password Protected Group</span>
+            </label>
+            <input
+              type="password"
+              placeholder="Enter password to enable file downloads"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            />
+          </div>
+        )}
 
         {error && (
           <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs flex items-center gap-2">
@@ -114,33 +91,38 @@ export const DownloadPage: React.FC = () => {
           </div>
         )}
 
-        <form onSubmit={handleDownload} className="space-y-4">
-          {metadata?.requiresPassword && (
-            <div>
-              <label className="text-xs font-semibold text-slate-400 flex items-center gap-1.5 mb-2">
-                <Lock className="w-4 h-4 text-indigo-400" />
-                <span>Password Protected</span>
-              </label>
-              <input
-                type="password"
-                required
-                placeholder="Enter password to download"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-              />
-            </div>
-          )}
+        <div className="space-y-3">
+          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            Files in Group ({metadata?.files.length})
+          </h2>
 
-          <button
-            type="submit"
-            disabled={isDownloading}
-            className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white py-3 rounded-xl font-semibold text-sm transition flex items-center justify-center gap-2"
-          >
-            <Download className="w-4 h-4" />
-            <span>{isDownloading ? 'Preparing File...' : 'Download File'}</span>
-          </button>
-        </form>
+          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+            {metadata?.files.map((file) => (
+              <div
+                key={file.id}
+                className="flex items-center justify-between bg-slate-950 p-3 rounded-xl border border-slate-800 hover:border-slate-700 transition"
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1 pr-3">
+                  <FileText className="w-5 h-5 text-indigo-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-slate-200 truncate">{file.fileName}</p>
+                    <p className="text-xs text-slate-500">{formatSize(file.sizeBytes)}</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleDownloadFile(file.id)}
+                  disabled={downloadingFileId === file.id}
+                  className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3.5 py-2 rounded-lg font-semibold transition flex items-center gap-1.5 shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{downloadingFileId === file.id ? 'Loading...' : 'Download'}</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

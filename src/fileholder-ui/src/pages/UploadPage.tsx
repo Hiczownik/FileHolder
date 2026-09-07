@@ -1,82 +1,30 @@
-import React, { useState } from 'react';
-import { fileApi } from '../api/fileApi';
+import React from 'react';
+import { useFileUpload } from '../hooks/useFileUpload';
 import { FileDropzone } from '../components/FileDropzone';
-import { Lock, Clock, Download, Copy, Check, Sparkles, Loader2 } from 'lucide-react';
+import { Lock, Clock, Download, Copy, Check, Sparkles, Loader2, Folder } from 'lucide-react';
 
 export const UploadPage: React.FC = () => {
-  const [file, setFile] = useState<File | null>(null);
-  const [expireInHours, setExpireInHours] = useState<number>(24);
-  const [maxDownloads, setMaxDownloads] = useState<number>(10);
-  const [password, setPassword] = useState<string>('');
-
-  const [isUploading, setIsUploading] = useState<boolean>(false);
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [shareLink, setShareLink] = useState<string | null>(null);
-  const [copied, setCopied] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!file) return;
-
-    setIsUploading(true);
-    setUploadProgress(0);
-    setError(null);
-
-    try {
-      // 1. Request Presigned Upload URL
-      const presign = await fileApi.getPresignedUrl({
-        fileName: file.name,
-        contentType: file.type || 'application/octet-stream',
-        sizeBytes: file.size,
-        expireInHours,
-        maxDownloads,
-        password: password || undefined,
-      });
-
-      // 2. Direct PUT binary payload to S3/MinIO
-      await fileApi.uploadDirectToS3(presign.uploadUrl, file, (percent) => {
-        setUploadProgress(percent);
-      });
-
-      // 3. Confirm Upload & Save Metadata in PostgreSQL
-      const shareToken = await fileApi.confirmUpload({
-        uploadToken: presign.uploadToken,
-        storageKey: presign.storageKey,
-        fileName: file.name,
-        contentType: file.type || 'application/octet-stream',
-        sizeBytes: file.size,
-        expireInHours,
-        maxDownloads,
-        password: password || undefined,
-      });
-
-      const fullShareUrl = `${window.location.origin}/f/${shareToken}`;
-      setShareLink(fullShareUrl);
-    } catch (err: any) {
-      // Extract ASP.NET Core ValidationProblem errors dictionary
-      if (err.response?.data?.errors) {
-        const errorMessages = Object.values(err.response.data.errors).flat() as string[];
-        setError(errorMessages.join(' '));
-      } else if (err.response?.data?.detail) {
-        setError(err.response.data.detail);
-      } else if (err.response?.data?.title) {
-        setError(err.response.data.title);
-      } else {
-        setError('Upload failed. Please check your file and settings.');
-      }
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const copyToClipboard = () => {
-    if (shareLink) {
-      navigator.clipboard.writeText(shareLink);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
+  const {
+    files,
+    title,
+    expireInHours,
+    maxDownloads,
+    password,
+    isUploading,
+    uploadProgress,
+    shareLink,
+    copied,
+    error,
+    setTitle,
+    setExpireInHours,
+    setMaxDownloads,
+    setPassword,
+    addFiles,
+    removeFile,
+    handleUpload,
+    copyToClipboard,
+    reset,
+  } = useFileUpload();
 
   return (
     <div className="max-w-2xl mx-auto py-12 px-4">
@@ -85,7 +33,7 @@ export const UploadPage: React.FC = () => {
           Secure File Sharing <Sparkles className="w-6 h-6 text-indigo-400" />
         </h1>
         <p className="text-slate-400 text-sm mt-2">
-          Upload files directly to storage with custom expiration rules and password protection.
+          Upload single files or multi-file groups directly to storage with custom expiration rules and password protection.
         </p>
       </div>
 
@@ -101,8 +49,8 @@ export const UploadPage: React.FC = () => {
             <Check className="w-8 h-8" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold text-white">Your File Link is Ready!</h2>
-            <p className="text-sm text-slate-400 mt-1">Anyone with this link can view metadata and download the file.</p>
+            <h2 className="text-2xl font-bold text-white">Your File Group is Ready!</h2>
+            <p className="text-sm text-slate-400 mt-1">Anyone with this link can view metadata and download files.</p>
           </div>
 
           <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
@@ -124,19 +72,29 @@ export const UploadPage: React.FC = () => {
 
           <button
             type="button"
-            onClick={() => {
-              setShareLink(null);
-              setFile(null);
-              setPassword('');
-            }}
+            onClick={reset}
             className="text-xs text-slate-400 hover:text-slate-200 underline"
           >
-            Upload another file
+            Upload another file or file group
           </button>
         </div>
       ) : (
         <form onSubmit={handleUpload} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
-          <FileDropzone selectedFile={file} onFileSelect={setFile} />
+          <div>
+            <label className="text-xs font-semibold text-slate-400 flex items-center gap-1.5 mb-2">
+              <Folder className="w-4 h-4 text-indigo-400" />
+              <span>Group Title (Optional)</span>
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Project Deliverables v1"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <FileDropzone selectedFiles={files} onFilesSelect={addFiles} onRemoveFile={removeFile} />
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
             <div>
@@ -207,7 +165,7 @@ export const UploadPage: React.FC = () => {
 
           <button
             type="submit"
-            disabled={!file || isUploading}
+            disabled={files.length === 0 || isUploading}
             className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white py-3 rounded-xl font-semibold text-sm transition flex items-center justify-center gap-2"
           >
             {isUploading ? (

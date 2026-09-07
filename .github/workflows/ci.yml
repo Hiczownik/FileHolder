@@ -47,6 +47,10 @@ jobs:
               run: |
                 cd src/fileholder-ui
                 npm ci
+            - name: Run React Component & Hook Unit Tests (Vitest)
+              run: |
+                cd src/fileholder-ui
+                npm test
             - name: Install Playwright Browsers & System Dependencies
               run: |
                cd src/fileholder-ui

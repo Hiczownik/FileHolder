@@ -2,6 +2,7 @@ using Amazon.S3;
 using FileHolder.Api.Endpoints;
 using FileHolder.Api.ExceptionHandling;
 using FileHolder.Api.Middleware;
+using FileHolder.Core.Configuration;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
 using FileHolder.Infrastructure.Services;
@@ -10,6 +11,7 @@ using FluentValidation;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using Scalar.AspNetCore;
 using Serilog;
@@ -17,6 +19,11 @@ using Serilog;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Host.UseSerilog((ctx, lc) => lc.WriteTo.Console());
+
+builder.Services.AddOptions<StorageOptions>()
+    .Bind(builder.Configuration.GetSection(StorageOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 builder.Services.AddOpenApi();
 
@@ -40,15 +47,17 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddSingleton<IAmazonS3>(sp =>
 {
+    var storageOptions = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
     var config = new AmazonS3Config
     {
-        ServiceURL = builder.Configuration["Storage:ServiceUrl"],
+        ServiceURL = storageOptions.ServiceUrl,
         ForcePathStyle = true,
-        UseHttp = true 
+        UseHttp = true,
+        AuthenticationRegion = "us-east-1"
     };
     return new AmazonS3Client(
-        builder.Configuration["Storage:AccessKey"],
-        builder.Configuration["Storage:SecretKey"],
+        storageOptions.AccessKey,
+        storageOptions.SecretKey,
         config);
 });
 

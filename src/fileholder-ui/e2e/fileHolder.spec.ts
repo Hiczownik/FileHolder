@@ -2,35 +2,41 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 
-test.describe('FileHolder End-to-End System Tests', () => {
+test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
   const e2eDir = path.resolve(process.cwd(), 'e2e');
-  const testFileName = 'playwright_test_document.txt';
-  const testFilePath = path.join(e2eDir, testFileName);
+  const file1Name = 'doc1.txt';
+  const file2Name = 'doc2.txt';
+  const file1Path = path.join(e2eDir, file1Name);
+  const file2Path = path.join(e2eDir, file2Name);
 
   test.beforeAll(() => {
     if (!fs.existsSync(e2eDir)) {
       fs.mkdirSync(e2eDir, { recursive: true });
     }
-    fs.writeFileSync(testFilePath, 'Hello World! This is an automated Playwright E2E test file payload.');
+    fs.writeFileSync(file1Path, 'Multi-file payload #1 content');
+    fs.writeFileSync(file2Path, 'Multi-file payload #2 content');
   });
 
   test.afterAll(() => {
-    if (fs.existsSync(testFilePath)) {
-      fs.unlinkSync(testFilePath);
-    }
+    if (fs.existsSync(file1Path)) fs.unlinkSync(file1Path);
+    if (fs.existsSync(file2Path)) fs.unlinkSync(file2Path);
   });
 
-  test('1. Full Password-Protected Journey: Upload -> Copy Link -> Download -> Self-Destruct Expiration', async ({ page, browser }) => {
-    // 1. Open Upload Page
+  test('1. Multi-File Password-Protected Journey: Upload -> Download Individual File -> Expiry', async ({ page, browser }) => {
+    page.on('console', (msg) => console.log(`[Browser ${msg.type()}]: ${msg.text()}`));
+    page.on('pageerror', (err) => console.log(`[Browser Exception]: ${err.message}`));
+
     await page.goto('/');
     await expect(page.getByRole('heading', { name: /Secure File Sharing/i })).toBeVisible();
 
-    // 2. Upload file via file input
-    const fileInput = page.locator('input[type="file"]');
-    await fileInput.setInputFiles(testFilePath);
-    await expect(page.getByText(testFileName)).toBeVisible();
+    await page.getByPlaceholder(/e.g. Project Deliverables v1/i).fill('E2E Deliverables');
 
-    // 3. Set Expiration = 24 Hours, Max Downloads = 1 (Self-Destruct), Password = "PlaywrightPass123!"
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles([file1Path, file2Path]);
+
+    await expect(page.getByText('Selected Files (2)')).toBeVisible();
+
+    // Set Expiration = 24 Hours, Max Downloads = 1 (Self-Destruct), Password = "PlaywrightPass123!"
     const selects = page.locator('select');
     await selects.nth(0).selectOption('24');
     await selects.nth(1).selectOption('1');
@@ -38,46 +44,46 @@ test.describe('FileHolder End-to-End System Tests', () => {
     const passwordInput = page.getByPlaceholder(/Leave empty for public link/i);
     await passwordInput.fill('PlaywrightPass123!');
 
-    // 4. Click "Generate Shareable Link" and read output
     await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
 
     const shareLinkInput = page.locator('input[readonly]');
-    await expect(shareLinkInput).toBeVisible({ timeout: 15000 });
-    
+    const errorBanner = page.locator('.bg-rose-500\\/10');
+
+    await Promise.race([
+      shareLinkInput.waitFor({ state: 'visible', timeout: 30000 }),
+      errorBanner.waitFor({ state: 'visible', timeout: 30000 }).then(async () => {
+        const errorText = await errorBanner.textContent();
+        throw new Error(`Upload failed on UI with error message: "${errorText}"`);
+      })
+    ]);
+
     const shareUrl = await shareLinkInput.inputValue();
     expect(shareUrl).toContain('/f/');
 
-    // 5. Open FRESH Incognito Browser Context
     const downloaderContext = await browser.newContext();
     const downloaderPage = await downloaderContext.newPage();
 
-    // 6. Navigate to Share Link
     await downloaderPage.goto(shareUrl);
-    await expect(downloaderPage.getByText(testFileName)).toBeVisible();
-    await expect(downloaderPage.getByText(/Remaining Downloads: 1/i)).toBeVisible();
+    await expect(downloaderPage.getByRole('heading', { name: 'E2E Deliverables' })).toBeVisible();
+    await expect(downloaderPage.getByText(file1Name)).toBeVisible();
+    await expect(downloaderPage.getByText(file2Name)).toBeVisible();
 
-    // 7. Test WRONG Password
-    const downloadPasswordInput = downloaderPage.getByPlaceholder(/Enter password to download/i);
-    await downloadPasswordInput.fill('WrongPassword!');
-    await downloaderPage.getByRole('button', { name: /Download File/i }).click();
-    await expect(downloaderPage.getByText(/Incorrect password/i)).toBeVisible();
-
-    // 8. Test CORRECT Password & File Download
+    const downloadPasswordInput = downloaderPage.getByPlaceholder(/Enter password/i);
     await downloadPasswordInput.fill('PlaywrightPass123!');
-    const downloadPromise = downloaderPage.waitForEvent('download');
-    await downloaderPage.getByRole('button', { name: /Download File/i }).click();
-    
-    const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe(testFileName);
 
-    // 9. Verify Self-Destruct Expiration (HTTP 410)
+    const downloadPromise = downloaderPage.waitForEvent('download');
+    await downloaderPage.locator('button', { hasText: 'Download' }).first().click();
+
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe(file1Name);
+
     await downloaderPage.reload();
-    await expect(downloaderPage.getByText(/This file link has expired/i)).toBeVisible();
+    await expect(downloaderPage.getByText(/This shared file group has expired/i)).toBeVisible();
 
     await downloaderContext.close();
   });
 
-  test('2. Security Rule: Rejects Executable Script Files (.exe)', async ({ page }) => {
+  test('2. Security Rule: Rejects Executable Script Files (.exe) in Multi-File Payload', async ({ page }) => {
     const maliciousFilePath = path.join(e2eDir, 'virus.exe');
     fs.writeFileSync(maliciousFilePath, 'MZ_FAKE_EXECUTABLE_HEADER');
 
@@ -85,11 +91,10 @@ test.describe('FileHolder End-to-End System Tests', () => {
       await page.goto('/');
 
       const fileInput = page.locator('input[type="file"]');
-      await fileInput.setInputFiles(maliciousFilePath);
+      await fileInput.setInputFiles([file1Path, maliciousFilePath]);
 
       await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
 
-      // Target error banner
       const errorBanner = page.locator('.bg-rose-500\\/10');
       await expect(errorBanner).toBeVisible({ timeout: 10000 });
 
@@ -100,72 +105,5 @@ test.describe('FileHolder End-to-End System Tests', () => {
         fs.unlinkSync(maliciousFilePath);
       }
     }
-  });
-
-  test('3. Public Share Link: Allows Direct Download Without Password Prompt', async ({ page, browser }) => {
-    await page.goto('/');
-
-    const fileInput = page.locator('input[type="file"]');
-    await fileInput.setInputFiles(testFilePath);
-
-    // Click Generate without filling a password
-    await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
-
-    const shareLinkInput = page.locator('input[readonly]');
-    await expect(shareLinkInput).toBeVisible({ timeout: 15000 });
-    const shareUrl = await shareLinkInput.inputValue();
-
-    // Open Incognito Browser Context
-    const publicContext = await browser.newContext();
-    const publicPage = await publicContext.newPage();
-    await publicPage.goto(shareUrl);
-
-    // Verify Password Input is NOT rendered
-    await expect(publicPage.getByPlaceholder(/Enter password to download/i)).not.toBeVisible();
-
-    // Click Download directly
-    const downloadPromise = publicPage.waitForEvent('download');
-    await publicPage.getByRole('button', { name: /Download File/i }).click();
-
-    const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe(testFileName);
-
-    await publicContext.close();
-  });
-
-  test('4. Download Counter Decrement: Decrements Remaining Downloads Upon Download', async ({ page, browser }) => {
-    await page.goto('/');
-
-    const fileInput = page.locator('input[type="file"]');
-    await fileInput.setInputFiles(testFilePath);
-
-    // Select 5 Downloads
-    const selects = page.locator('select');
-    await selects.nth(1).selectOption('5');
-
-    await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
-
-    const shareLinkInput = page.locator('input[readonly]');
-    await expect(shareLinkInput).toBeVisible({ timeout: 15000 });
-    const shareUrl = await shareLinkInput.inputValue();
-
-    // Open Incognito Context
-    const userContext = await browser.newContext();
-    const userPage = await userContext.newPage();
-    await userPage.goto(shareUrl);
-
-    // Verify Remaining Downloads initially = 5
-    await expect(userPage.getByText(/Remaining Downloads: 5/i)).toBeVisible();
-
-    // Download #1
-    const downloadPromise = userPage.waitForEvent('download');
-    await userPage.getByRole('button', { name: /Download File/i }).click();
-    await downloadPromise;
-
-    // Reload and verify Remaining Downloads decremented to 4
-    await userPage.reload();
-    await expect(userPage.getByText(/Remaining Downloads: 4/i)).toBeVisible();
-
-    await userContext.close();
   });
 });

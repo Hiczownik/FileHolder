@@ -12,14 +12,10 @@ public class SharedFileConfiguration : IEntityTypeConfiguration<SharedFile>
         
         builder.HasKey(f => f.Id);
 
-        builder.Property(f => f.ShareToken)
-            .IsRequired()
-            .HasMaxLength(32);
-        
         builder.Property(f => f.OriginalFileName)
             .IsRequired()
             .HasMaxLength(255);
-
+        
         builder.Property(f => f.StorageKey)
             .IsRequired()
             .HasMaxLength(512);
@@ -28,14 +24,7 @@ public class SharedFileConfiguration : IEntityTypeConfiguration<SharedFile>
             .IsRequired()
             .HasMaxLength(128);
 
-        builder.Property(f => f.PasswordHash)
-            .HasMaxLength(255);
-
-        builder.HasIndex(f => f.ShareToken)
-            .IsUnique()
-            .HasFilter("\"IsDeleted\" = FALSE");
-
-        builder.HasIndex(f => new { f.ExpiresAt, f.DownloadCount, f.MaxDownloads })
-            .HasFilter("\"IsDeleted\" = FALSE");
+        builder.HasIndex(f => f.StorageKey)
+            .IsUnique();
     }
 }

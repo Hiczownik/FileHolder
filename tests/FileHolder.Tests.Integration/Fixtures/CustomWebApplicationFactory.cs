@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Infrastructure.Data;
@@ -19,7 +20,14 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
         .Build();
     
     public IAmazonS3 MockS3Client { get; private set; } = Substitute.For<IAmazonS3>();
+    
+    public ConcurrentDictionary<string, long> S3ObjectRegistry { get; } = new();
 
+    public void SeedS3Object(string storageKey, long sizeBytes)
+    {
+        S3ObjectRegistry[storageKey] = sizeBytes;
+    }
+    
     public async Task InitializeAsync()
     {
         await _postgresContainer.StartAsync();
@@ -28,7 +36,24 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
             .Returns("http://localhost:9000/fileholder-bucket/test_key?sig=dummy");
 
         MockS3Client.GetObjectMetadataAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(new GetObjectMetadataResponse { ContentLength = 1024 });
+            .Returns(callInfo =>
+            {
+                string storageKey = callInfo.ArgAt<string>(1);
+
+                if (storageKey.Contains("non_existent"))
+                {
+                    var ex = new AmazonS3Exception("Key not found.");
+                    ex.StatusCode = System.Net.HttpStatusCode.NotFound;
+                    throw ex;
+                }
+
+                if (S3ObjectRegistry.TryGetValue(storageKey, out long registeredSize))
+                {
+                    return new GetObjectMetadataResponse { ContentLength = registeredSize };
+                }
+                
+                return new GetObjectMetadataResponse { ContentLength = 38219032 };
+            });
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)

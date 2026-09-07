@@ -1,20 +1,30 @@
 ﻿namespace FileHolder.Core.Dtos;
 
-public record CreatePresignedUrlRequestDto(
+public record FileItemInputDto(
     string FileName,
     string ContentType,
-    long SizeBytes,
+    long SizeBytes
+    );
+
+public record CreatePresignedUrlRequestDto(
+    string? Title,
+    List<FileItemInputDto> Files,
     int? ExpireInHours,
     int? MaxDownloads,
     string? Password
     );
-    
-public record ConfirmUploadRequestDto(
-    string UploadToken,
+
+public record ConfirmedFileItemDto(
     string StorageKey,
     string FileName,
     string ContentType,
-    long SizeBytes,
+    long SizeBytes
+    );
+
+public record ConfirmUploadRequestDto(
+    string UploadToken,
+    string? Title,
+    List<ConfirmedFileItemDto> Files,
     int? ExpireInHours,
     int? MaxDownloads,
     string? Password

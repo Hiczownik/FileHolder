@@ -21,10 +21,10 @@ public static class FileEndpoints
             .AddEndpointFilter<ValidationFilter<ConfirmUploadRequestDto>>()
             .WithName("ConfirmUpload");
         
-        group.MapGet("/{shareToken}", GetFileMetadata)
+        group.MapGet("/{shareToken}", GetGroupMetadata)
             .WithName("GetFileMetadata");
 
-        group.MapPost("/{shareToken}/download", GenerateDownloadLink)
+        group.MapPost("/{shareToken}/download/{fileId:guid}", GenerateDownloadLink)
             .RequireRateLimiting("DownloadPolicy")
             .WithName("GenerateDownloadLink");
     }
@@ -37,11 +37,11 @@ public static class FileEndpoints
         return TypedResults.Ok(response);
     }
 
-    public static async Task<Results<Ok<FileMetadataResponseDto>, NotFound, ProblemHttpResult>> GetFileMetadata(
+    public static async Task<Results<Ok<FileGroupMetadataResponseDto>, NotFound, ProblemHttpResult>> GetGroupMetadata(
         string shareToken,
         IStorageService storageService)
     {
-        var metadata = await storageService.GetMetadataByTokenAsync(shareToken);
+        var metadata = await storageService.GetGroupMetadataByTokenAsync(shareToken);
         if (metadata == null)
         {
             return TypedResults.NotFound();
@@ -50,7 +50,7 @@ public static class FileEndpoints
         if (metadata.IsExpired)
         {
             return TypedResults.Problem(
-                detail: "This shared file link has expired or reached its download limit.",
+                detail: "This shared file bundle has expired or reached its download limit.",
                 statusCode: StatusCodes.Status410Gone,
                 title: "Link Expired");
         }
@@ -61,10 +61,11 @@ public static class FileEndpoints
     public static async Task<Results<Ok<DownloadUrlResponseDto>, UnauthorizedHttpResult, ProblemHttpResult>>
         GenerateDownloadLink(
             string shareToken,
+            Guid fileId,
             DownloadRequestDto dto,
             IStorageService storageService)
     {
-        var result = await storageService.CreatePresignedDownloadUrlAsync(shareToken, dto.Password);
+        var result = await storageService.CreatePresignedDownloadUrlAsync(shareToken, fileId, dto.Password);
 
         if (result.IsPasswordInvalid)
         {
@@ -86,7 +87,7 @@ public static class FileEndpoints
         ConfirmUploadRequestDto dto,
         IStorageService storageService)
     {
-        var shareToken = await storageService.ConfirmAndPersistFileAsync(dto);
+        var shareToken = await storageService.ConfirmAndPersistFileGroupAsync(dto);
         return TypedResults.Ok(shareToken);       
     }
 }

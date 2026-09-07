@@ -1,25 +1,43 @@
-﻿namespace FileHolder.Core.Dtos;
+﻿using System.Text.Json.Serialization;
+
+namespace FileHolder.Core.Dtos;
+
+public record PresignedItemDto(
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("uploadUrl")] string UploadUrl,
+    [property: JsonPropertyName("storageKey")] string StorageKey
+);
 
 public record PresignedUrlResponseDto(
-    string UploadUrl,
-    string StorageKey,
-    string UploadToken
-    );
+    [property: JsonPropertyName("uploadToken")] string UploadToken,
+    [property: JsonPropertyName("items")] List<PresignedItemDto> Items
+);
 
-public record FileMetadataResponseDto(
-    string ShareToken,
-    string FileName,
-    long SizeBytes,
-    string ContentType,
-    bool RequiresPassword,
-    DateTime? ExpiresAt,
-    int? RemainingDownloads,
-    bool IsExpired
-    );
+public record FileItemMetadataDto(
+    [property: JsonPropertyName("id")] Guid Id,
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("sizeBytes")] long SizeBytes,
+    [property: JsonPropertyName("contentType")] string ContentType
+);
 
-public record DownloadUrlResponseDto(string DownloadUrl); 
+public record FileGroupMetadataResponseDto(
+    [property: JsonPropertyName("shareToken")] string ShareToken,
+    [property: JsonPropertyName("title")] string? Title,
+    [property: JsonPropertyName("totalSizeBytes")] long TotalSizeBytes,
+    [property: JsonPropertyName("fileCount")] int FileCount,
+    [property: JsonPropertyName("requiresPassword")] bool RequiresPassword,
+    [property: JsonPropertyName("expiresAt")] DateTime? ExpiresAt,
+    [property: JsonPropertyName("remainingDownloads")] int? RemainingDownloads,
+    [property: JsonPropertyName("isExpired")] bool IsExpired,
+    [property: JsonPropertyName("files")] List<FileItemMetadataDto> Files
+);
+
+public record DownloadUrlResponseDto(
+    [property: JsonPropertyName("downloadUrl")] string DownloadUrl
+);
 
 public record DownloadResult(
     bool IsPasswordInvalid,
     bool IsExpired,
-    string? DownloadUrl);
+    string? DownloadUrl
+);

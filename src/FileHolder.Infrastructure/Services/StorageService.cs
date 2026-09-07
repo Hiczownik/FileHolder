@@ -1,5 +1,6 @@
 ﻿using Amazon.S3;
 using Amazon.S3.Model;
+using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
@@ -7,7 +8,7 @@ using FileHolder.Core.Security;
 using FileHolder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace FileHolder.Infrastructure.Services;
 
@@ -18,208 +19,232 @@ public class StorageService : IStorageService
     private readonly AppDbContext _dbContext;
     private readonly HybridCache _cache;
     private readonly IDateTimeProvider _dateTimeProvider;
-    private readonly string _bucketName;
+    private readonly StorageOptions _options;
 
     public StorageService(
         IAmazonS3 internalS3Client,
         AppDbContext dbContext,
         HybridCache cache,
         IDateTimeProvider dateTimeProvider,
-        IConfiguration config)
+        IOptions<StorageOptions> options)
     {
         _internalS3Client = internalS3Client;
         _dbContext = dbContext;
         _cache = cache;
         _dateTimeProvider = dateTimeProvider;
-        _bucketName = config["Storage:BucketName"] ?? "fileholder-bucket";
-
-        var publicBaseUrl = config["Storage:PublicBaseUrl"] ?? "http://localhost:9000";
-        var accessKey = config["Storage:AccessKey"] ?? "minioadmin";
-        var secretKey = config["Storage:SecretKey"] ?? "minioadmin";
-
+        _options = options.Value;
+        
         var presignConfig = new AmazonS3Config
         {
-            ServiceURL = publicBaseUrl,
+            ServiceURL = _options.PublicBaseUrl,
             ForcePathStyle = true,
-            UseHttp = true
+            UseHttp = true,
+            AuthenticationRegion = "us-east-1"
         };
-        _presignS3Client = new AmazonS3Client(accessKey, secretKey, presignConfig);
+        _presignS3Client = new AmazonS3Client(_options.AccessKey, _options.SecretKey, presignConfig);
     }
 
     public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto)
     {
-        var storageKey = FileSecurityUtils.GenerateStorageKey(dto.FileName);
         var uploadToken = Guid.NewGuid().ToString("N");
+        var items = new List<PresignedItemDto>();
 
-        var request = new GetPreSignedUrlRequest
+        foreach (var file in dto.Files)
         {
-            BucketName = _bucketName,
-            Key = storageKey,
-            Verb = HttpVerb.PUT,
-            Expires = _dateTimeProvider.UtcNow.AddMinutes(15),
-            Protocol = Protocol.HTTP // Explicitly force HTTP scheme (http://localhost:9000)
-        };
+            var storageKey = FileSecurityUtils.GenerateStorageKey(file.FileName);
 
-        string presignedUrl = _presignS3Client.GetPreSignedURL(request);
+            var request = new GetPreSignedUrlRequest
+            {
+                BucketName = _options.BucketName,
+                Key = storageKey,
+                Verb = HttpVerb.PUT,
+                Expires = _dateTimeProvider.UtcNow.AddMinutes(15),
+                Protocol = Protocol.HTTP
+            };
 
-        return new PresignedUrlResponseDto(presignedUrl, storageKey, uploadToken);
+            string presignedUrl = _presignS3Client.GetPreSignedURL(request);
+            items.Add(new PresignedItemDto(file.FileName, presignedUrl, storageKey));
+        }
+        
+        return new PresignedUrlResponseDto(uploadToken, items);       
     }
 
-    public async Task<string> ConfirmAndPersistFileAsync(ConfirmUploadRequestDto dto)
+    public async Task<string> ConfirmAndPersistFileGroupAsync(ConfirmUploadRequestDto dto)
     {
-        try
+        foreach (var item in dto.Files)
         {
-            var metadata = await _internalS3Client.GetObjectMetadataAsync(_bucketName, dto.StorageKey);
-
-            if (dto.SizeBytes > 0 && metadata.ContentLength != dto.SizeBytes)
+            try
             {
-                throw new InvalidOperationException("Uploaded file size does not match request metadata.");
+                var metadata = await _internalS3Client.GetObjectMetadataAsync(_options.BucketName, item.StorageKey);
+                if (item.SizeBytes > 0 && metadata.ContentLength != item.SizeBytes)
+                {
+                    throw new InvalidOperationException($"File size mismatch for {item.FileName}.");
+                }
             }
-        }
-        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            throw new KeyNotFoundException("Uploaded object was not found in storage.");
+            catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                throw new KeyNotFoundException($"Uploaded object for {item.FileName} was not found in storage.");
+            }
         }
 
         var shareToken = CryptoUtils.GenerateShortToken();
         var passwordHash = CryptoUtils.HashPassword(dto.Password);
-        var sanitizedFileName = FileSecurityUtils.SanitizeFileName(dto.FileName);
 
-        var sharedFile = new SharedFile
+        var fileGroup = new FileGroup
         {
             ShareToken = shareToken,
-            OriginalFileName = sanitizedFileName,
-            StorageKey = dto.StorageKey,
-            ContentType = dto.ContentType,
-            SizeBytes = dto.SizeBytes,
+            Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title.Trim(),
             PasswordHash = passwordHash,
             MaxDownloads = dto.MaxDownloads,
             ExpiresAt = dto.ExpireInHours.HasValue ? _dateTimeProvider.UtcNow.AddHours(dto.ExpireInHours.Value) : null,
             CreatedAt = _dateTimeProvider.UtcNow
         };
 
-        _dbContext.SharedFiles.Add(sharedFile);
+        foreach (var item in dto.Files)
+        {
+            fileGroup.Files.Add(new SharedFile
+            {
+                OriginalFileName = FileSecurityUtils.SanitizeFileName(item.FileName),
+                StorageKey = item.StorageKey,
+                ContentType = item.ContentType,
+                SizeBytes = item.SizeBytes
+            });
+        }
+        
+        _dbContext.FileGroups.Add(fileGroup);
         await _dbContext.SaveChangesAsync();
-
-        await _cache.SetAsync($"file_meta:{shareToken}", sharedFile);
-
+        
+        await _cache.SetAsync($"file_group:{shareToken}", fileGroup);
+        
         return shareToken;
     }
 
-    public async Task<FileMetadataResponseDto?> GetMetadataByTokenAsync(string shareToken)
+    public async Task<FileGroupMetadataResponseDto?> GetGroupMetadataByTokenAsync(string shareToken)
     {
-        var file = await _cache.GetOrCreateAsync(
-            $"file_meta:{shareToken}",
-            async cancel => await _dbContext.SharedFiles
+        var group = await _cache.GetOrCreateAsync(
+            $"file_group:{shareToken}",
+            async cancel => await _dbContext.FileGroups
                 .AsNoTracking()
-                .FirstOrDefaultAsync(f => f.ShareToken == shareToken && !f.IsDeleted, cancel)
+                .Include(g => g.Files)
+                .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted, cancel)
         );
 
-        if (file == null) return null;
-
+        if (group == null) return null;
+        
         var now = _dateTimeProvider.UtcNow;
-        bool isExpired = (file.ExpiresAt.HasValue && file.ExpiresAt.Value <= now) ||
-                         (file.MaxDownloads.HasValue && file.DownloadCount >= file.MaxDownloads.Value);
+        
+        var fileItemDtos = group.Files.Select(f => new FileItemMetadataDto(
+            f.Id,
+            f.OriginalFileName,
+            f.SizeBytes,
+            f.ContentType
+        )).ToList();
 
-        int? remainingDownloads = file.MaxDownloads.HasValue
-            ? Math.Max(0, file.MaxDownloads.Value - file.DownloadCount)
-            : null;
-
-        return new FileMetadataResponseDto(
-            file.ShareToken,
-            file.OriginalFileName,
-            file.SizeBytes,
-            file.ContentType,
-            !string.IsNullOrEmpty(file.PasswordHash),
-            file.ExpiresAt,
-            remainingDownloads,
-            isExpired
-        );
+        return new FileGroupMetadataResponseDto(
+            group.ShareToken,
+            group.Title,
+            group.TotalSizeBytes,
+            fileItemDtos.Count,
+            !string.IsNullOrEmpty(group.PasswordHash),
+            group.ExpiresAt,
+            group.RemainingDownloads,
+            group.IsExpired(now),
+            fileItemDtos);
     }
 
-    public async Task<DownloadResult> CreatePresignedDownloadUrlAsync(string shareToken, string? password)
+    public async Task<DownloadResult> CreatePresignedDownloadUrlAsync(string shareToken, Guid fileId, string? password)
     {
-        var file = await _dbContext.SharedFiles.FirstOrDefaultAsync(f => f.ShareToken == shareToken && !f.IsDeleted);
+        var group = await _dbContext.FileGroups
+            .Include(g => g.Files)
+            .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted);
 
-        if (file == null) return new DownloadResult(false, true, null);
+        if (group == null) return new DownloadResult(false, true, null);
 
-        if (!string.IsNullOrEmpty(file.PasswordHash))
+        if (!group.VerifyPassword(password))
         {
-            if (string.IsNullOrEmpty(password) || !CryptoUtils.VerifyPassword(password, file.PasswordHash))
-            {
-                return new DownloadResult(true, false, null);
-            }
+            return new DownloadResult(true, false, null);       
         }
-
+        
         var now = _dateTimeProvider.UtcNow;
 
-        if ((file.ExpiresAt.HasValue && file.ExpiresAt.Value <= now) ||
-            (file.MaxDownloads.HasValue && file.DownloadCount >= file.MaxDownloads.Value))
+        if (group.IsExpired(now))
         {
-            return new DownloadResult(false, true, null);
+            return new DownloadResult(false, true, null);      
         }
 
-        file.DownloadCount++;
+        var childFile = group.Files.FirstOrDefault(f => f.Id == fileId);
+        if (childFile == null) return new DownloadResult(false, true, null);
+
+        group.DownloadCount++;
         await _dbContext.SaveChangesAsync();
 
-        await _cache.RemoveAsync($"file_meta:{shareToken}");
+        await _cache.RemoveAsync($"file_group:{shareToken}");
 
         var presignedRequest = new GetPreSignedUrlRequest
         {
-            BucketName = _bucketName,
-            Key = file.StorageKey,
+            BucketName = _options.BucketName,
+            Key = childFile.StorageKey,
             Verb = HttpVerb.GET,
             Expires = _dateTimeProvider.UtcNow.AddMinutes(5),
-            Protocol = Protocol.HTTP, // Explicitly force HTTP scheme
+            Protocol = Protocol.HTTP,
             ResponseHeaderOverrides = new ResponseHeaderOverrides
             {
-                ContentDisposition = $"attachment; filename=\"{file.OriginalFileName}\"",
-                ContentType = file.ContentType
+                ContentDisposition = $"attachment; filename=\"{childFile.OriginalFileName}\"",
+                ContentType = childFile.ContentType
             }
         };
-
-        string downloadUrl = _presignS3Client.GetPreSignedURL(presignedRequest);
-
-        return new DownloadResult(false, false, downloadUrl);
+        
+        var downloadUrl = _presignS3Client.GetPreSignedURL(presignedRequest);
+        
+        return new DownloadResult(false, false, downloadUrl);       
     }
 
     public async Task<int> PurgeExpiredFilesAsync(CancellationToken cancellationToken = default)
     {
         var now = _dateTimeProvider.UtcNow;
-
-        var expiredFiles = await _dbContext.SharedFiles
-            .Where(f => !f.IsDeleted && (
-                (f.ExpiresAt != null && f.ExpiresAt <= now) ||
-                (f.MaxDownloads != null && f.DownloadCount >= f.MaxDownloads)
+        
+        var expiredGroups = await _dbContext.FileGroups
+            .Include(g => g.Files)
+            .Where(g => !g.IsDeleted && (
+                (g.ExpiresAt != null && g.ExpiresAt <= now) ||
+                (g.MaxDownloads != null && g.DownloadCount >= g.MaxDownloads)
             ))
-            .OrderBy(f => f.CreatedAt) // Added OrderBy to fix EF Core row-limiting warning
+            .OrderBy(g => g.CreatedAt)
             .Take(100)
             .ToListAsync(cancellationToken);
+        
+        if (expiredGroups.Count == 0) return 0;
 
-        if (expiredFiles.Count == 0) return 0;
+        var allKeysToDelete = expiredGroups
+            .SelectMany(g => g.Files)
+            .Select(f => new KeyVersion { Key = f.StorageKey })
+            .ToList();
 
-        var deleteObjectsRequest = new DeleteObjectsRequest
+        if (allKeysToDelete.Count > 0)
         {
-            BucketName = _bucketName,
-            Objects = expiredFiles.Select(f => new KeyVersion { Key = f.StorageKey }).ToList()
-        };
+            var deleteObjectsRequest = new DeleteObjectsRequest
+            {
+                BucketName = _options.BucketName,
+                Objects = allKeysToDelete
+            };
 
-        try
-        {
-            await _internalS3Client.DeleteObjectsAsync(deleteObjectsRequest, cancellationToken);
+            try
+            {
+                await _internalS3Client.DeleteObjectsAsync(deleteObjectsRequest, cancellationToken);
+            }
+            catch (AmazonS3Exception)
+            {
+                
+            }
         }
-        catch (AmazonS3Exception)
-        {
-            
-        }
 
-        foreach (var file in expiredFiles)
+        foreach (var group in expiredGroups)
         {
-            file.IsDeleted = true;
-            await _cache.RemoveAsync($"file_meta:{file.ShareToken}", cancellationToken);
+            group.IsDeleted = true;
+            await _cache.RemoveAsync($"file_group:{group.ShareToken}", cancellationToken);
         }
-
+        
         await _dbContext.SaveChangesAsync(cancellationToken);
-        return expiredFiles.Count;
+        return expiredGroups.Count;       
     }
 }
