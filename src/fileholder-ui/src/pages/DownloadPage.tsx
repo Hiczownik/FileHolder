@@ -1,7 +1,7 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
 import { useFileDownload } from '../hooks/useFileDownload';
-import { Download, Lock, FileText, AlertCircle, Clock, ShieldAlert, Folder } from 'lucide-react';
+import { Download, Lock, FileText, AlertCircle, Clock, ShieldAlert, Folder, Loader2, Archive } from 'lucide-react';
 
 export const DownloadPage: React.FC = () => {
   const { shareToken } = useParams<{ shareToken: string }>();
@@ -10,9 +10,11 @@ export const DownloadPage: React.FC = () => {
     password,
     isLoading,
     downloadingFileId,
+    isDownloadingAll,
     error,
     setPassword,
     handleDownloadFile,
+    handleDownloadAllZip,
     formatSize,
   } = useFileDownload(shareToken);
 
@@ -89,6 +91,27 @@ export const DownloadPage: React.FC = () => {
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{error}</span>
           </div>
+        )}
+
+        {metadata && metadata.fileCount > 1 && (
+          <button
+            type="button"
+            onClick={handleDownloadAllZip}
+            disabled={isDownloadingAll}
+            className="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800 hover:border-indigo-500/50 text-indigo-400 py-2.5 rounded-xl font-semibold text-xs transition flex items-center justify-center gap-2"
+          >
+            {isDownloadingAll ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                <span>Streaming & Compressing ZIP...</span>
+              </>
+            ) : (
+              <>
+                <Archive className="w-4 h-4" />
+                <span>Download All ({metadata.fileCount} Files) as ZIP</span>
+              </>
+            )}
+          </button>
         )}
 
         <div className="space-y-3">

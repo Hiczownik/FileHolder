@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Infrastructure.Data;
@@ -53,6 +54,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 }
                 
                 return new GetObjectMetadataResponse { ContentLength = 38219032 };
+            });
+
+        MockS3Client.GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var req = callInfo.ArgAt<GetObjectRequest>(0);
+                byte[] content = Encoding.UTF8.GetBytes($"Mock binary payload content for {req.Key}");
+                return new GetObjectResponse
+                {
+                    ResponseStream = new MemoryStream(content),
+                    ContentLength = content.Length
+                };
             });
     }
 

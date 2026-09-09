@@ -7,6 +7,7 @@ export const useFileDownload = (shareToken?: string) => {
     const [password, setPassword] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+    const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -48,6 +49,27 @@ export const useFileDownload = (shareToken?: string) => {
         }
     };
 
+    const handleDownloadAllZip = async () => {
+        if (!shareToken || !metadata) return;
+
+        setIsDownloadingAll(true);
+        setError(null);
+
+        try {
+            await fileApi.downloadAllZip(shareToken, metadata.title, password || undefined);
+        } catch (err: any) {
+            if (err.response?.status === 401) {
+                setError('Incorrect password. Please enter the correct password above.');
+            } else if (err.response?.status === 410) {
+                setError('This shared file group has expired or reached its maximum download limit.');
+            } else {
+                setError('Failed to generate ZIP download stream.');
+            }
+        } finally {
+            setIsDownloadingAll(false);
+        }
+    };
+
     const formatSize = (bytes: number) => {
         if (bytes === 0) return '0 Bytes';
         const k = 1024;
@@ -61,9 +83,11 @@ export const useFileDownload = (shareToken?: string) => {
         password,
         isLoading,
         downloadingFileId,
+        isDownloadingAll,
         error,
         setPassword,
         handleDownloadFile,
+        handleDownloadAllZip,
         formatSize,
     };
 };

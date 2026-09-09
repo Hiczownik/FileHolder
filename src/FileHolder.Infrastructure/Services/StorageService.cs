@@ -1,4 +1,6 @@
-﻿using Amazon.S3;
+﻿using System.IO.Compression;
+using System.IO.Pipelines;
+using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
@@ -7,6 +9,7 @@ using FileHolder.Core.Interfaces;
 using FileHolder.Core.Security;
 using FileHolder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Options;
 
@@ -21,6 +24,12 @@ public class StorageService : IStorageService
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly StorageOptions _options;
 
+    private static readonly HashSet<string> PreCompressedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".mp4", ".mov", ".avi", ".mkv",
+        ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".mp3", ".wav"
+    };
+    
     public StorageService(
         IAmazonS3 internalS3Client,
         AppDbContext dbContext,
@@ -199,6 +208,98 @@ public class StorageService : IStorageService
         return new DownloadResult(false, false, downloadUrl);       
     }
 
+    public async Task<StreamZipResult> StreamBundleZipAsync(string shareToken, string? password, Stream destinationStream,
+        CancellationToken cancellationToken = default)
+    {
+        var group = await _dbContext.FileGroups.Include(g => g.Files)
+            .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted, cancellationToken);
+
+        if (group == null)
+        {
+            return new StreamZipResult(StreamZipStatus.NotFound, null);
+        }
+
+        if (!group.VerifyPassword(password))
+        {
+            return new StreamZipResult(StreamZipStatus.InvalidPassword, null);       
+        }
+
+        var now = _dateTimeProvider.UtcNow;
+        if (group.IsExpired(now))
+        {
+            return new StreamZipResult(StreamZipStatus.Expired, null);
+        }
+
+        if (group.Files.Count == 0)
+        {
+            return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
+        }
+        
+        group.DownloadCount++;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        await _cache.RemoveAsync($"file_group:{shareToken}", cancellationToken);
+
+        var pipe = new Pipe(new PipeOptions(
+            pauseWriterThreshold: 128 * 1024,
+            resumeWriterThreshold: 64 * 1024,
+            useSynchronizationContext: false));
+        
+        var producerTask = Task.Run(async () =>
+        {
+            Exception? producerException = null;
+            try
+            {
+                await using var pipeStream = pipe.Writer.AsStream();
+                await using (var zipArchive = new ZipArchive(pipeStream, ZipArchiveMode.Create, leaveOpen: true))
+                {
+                    foreach (var file in group.Files)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        var compressionLevel = DetermineCompressionLevel(file.OriginalFileName);
+                        var entry = zipArchive.CreateEntry(file.OriginalFileName, compressionLevel);
+
+                        await using var entryStream = await entry.OpenAsync(cancellationToken);
+
+                        var getObjectRequest = new GetObjectRequest
+                        {
+                            BucketName = _options.BucketName,
+                            Key = file.StorageKey
+                        };
+
+                        using var response =
+                            await _internalS3Client.GetObjectAsync(getObjectRequest, cancellationToken);
+                        await using var s3Stream = response.ResponseStream;
+
+                        await s3Stream.CopyToAsync(entryStream, 65536, cancellationToken);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                producerException = ex;
+            }
+            finally
+            {
+                await pipe.Writer.CompleteAsync(producerException);
+            }
+            
+        }, cancellationToken);
+
+        try
+        {
+            await pipe.Reader.CopyToAsync(destinationStream, cancellationToken);
+        }
+        finally
+        {
+            await pipe.Reader.CompleteAsync();
+        }
+
+        await producerTask;
+        
+        return new StreamZipResult(StreamZipStatus.Success, group.Title ?? group.ShareToken);      
+    }
+
     public async Task<int> PurgeExpiredFilesAsync(CancellationToken cancellationToken = default)
     {
         var now = _dateTimeProvider.UtcNow;
@@ -246,5 +347,13 @@ public class StorageService : IStorageService
         
         await _dbContext.SaveChangesAsync(cancellationToken);
         return expiredGroups.Count;       
+    }
+
+    private static CompressionLevel DetermineCompressionLevel(string fileName)
+    {
+        var ext = Path.GetExtension(fileName);
+        return PreCompressedExtensions.Contains(ext)
+            ? CompressionLevel.NoCompression
+            : CompressionLevel.Fastest;
     }
 }

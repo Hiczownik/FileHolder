@@ -50,4 +50,25 @@ export const fileApi = {
     );
     return response.data.downloadUrl;
   },
+
+  downloadAllZip: async (shareToken: string, bundleTitle?: string, password?: string): Promise<void> => {
+    const response = await axios.post(
+      `${API_BASE_URL}/${shareToken}/download-all`,
+      { password },
+      { responseType: 'blob' }
+    );
+
+    const blob = new Blob([response.data], { type: 'application/zip' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+
+    const safeTitle = bundleTitle ? bundleTitle.replace(/[^\w\.\-]/g, '_') : 'group';
+    link.setAttribute('download', `${safeTitle}_${shareToken}.zip`);
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
 };

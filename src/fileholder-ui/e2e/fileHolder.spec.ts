@@ -72,7 +72,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await downloadPasswordInput.fill('PlaywrightPass123!');
 
     const downloadPromise = downloaderPage.waitForEvent('download');
-    await downloaderPage.locator('button', { hasText: 'Download' }).first().click();
+    await downloaderPage.getByRole('button', { name: 'Download', exact: true }).first().click();
 
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toBe(file1Name);
@@ -106,4 +106,29 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       }
     }
   });
+
+  test('3. Download All as ZIP: Stream and downloads complete bundle archive', async ({ page, browser }) => {
+    await page.goto('/');
+
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles([file1Path, file2Path]);
+
+    await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
+
+    const shareLinkInput = page.locator('input[readonly]');
+    await expect(shareLinkInput).toBeVisible({ timeout: 30000 });
+    const shareUrl = await shareLinkInput.inputValue();
+
+    const downloaderContext = await browser.newContext();
+    const downloaderPage = await downloaderContext.newPage();
+    await downloaderPage.goto(shareUrl);
+
+    const downloadPromise = downloaderPage.waitForEvent('download');
+    await downloaderPage.getByRole('button', { name: /Download All.*ZIP/i }).click();
+
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/\.zip$/);
+
+    await downloaderContext.close();
+  })
 });

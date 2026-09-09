@@ -27,6 +27,10 @@ public static class FileEndpoints
         group.MapPost("/{shareToken}/download/{fileId:guid}", GenerateDownloadLink)
             .RequireRateLimiting("DownloadPolicy")
             .WithName("GenerateDownloadLink");
+
+        group.MapPost("/{shareToken}/download-all", StreamBundleZip)
+            .RequireRateLimiting("DownloadPolicy")
+            .WithName("StreamBundleZip");
     }
 
     public static async Task<Ok<PresignedUrlResponseDto>> GetPresignedUploadUrl(
@@ -83,6 +87,35 @@ public static class FileEndpoints
         return TypedResults.Ok(new DownloadUrlResponseDto(result.DownloadUrl!));
     }
 
+    public static async
+        Task<Results<EmptyHttpResult, NotFound, UnauthorizedHttpResult, ProblemHttpResult, BadRequest<string>>>
+        StreamBundleZip(
+            string shareToken,
+            DownloadRequestDto dto,
+            HttpContext context,
+            IStorageService storageService)
+    {
+        context.Response.ContentType = "application/zip";
+        context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"bundle_{shareToken}.zip\"");
+        context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+
+        var result = await storageService.StreamBundleZipAsync(shareToken, dto.Password, context.Response.Body,
+            context.RequestAborted);
+
+        return result.Status switch
+        {
+            StreamZipStatus.NotFound => TypedResults.NotFound(),
+            StreamZipStatus.InvalidPassword => TypedResults.Unauthorized(),
+            StreamZipStatus.Expired => TypedResults.Problem(
+                detail: "Bundle has expired or reached maximum download limit.",
+                statusCode: StatusCodes.Status410Gone,
+                title: "Link Expired"),
+            StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
+            StreamZipStatus.Success => TypedResults.Empty,
+            _ => TypedResults.Empty
+        };
+    }
+    
     public static async Task<Ok<string>> ConfirmUpload(
         ConfirmUploadRequestDto dto,
         IStorageService storageService)

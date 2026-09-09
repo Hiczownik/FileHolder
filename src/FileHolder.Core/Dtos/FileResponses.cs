@@ -41,3 +41,17 @@ public record DownloadResult(
     bool IsExpired,
     string? DownloadUrl
 );
+
+public enum StreamZipStatus
+{
+    Success,
+    NotFound,
+    InvalidPassword,
+    Expired,
+    EmptyBundle
+}
+
+public record StreamZipResult(
+    StreamZipStatus Status,
+    string? BundleTitle
+);

@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
 using FileHolder.Core.Dtos;
@@ -204,11 +205,78 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         downloadResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var downloadResult = await downloadResponse.Content.ReadFromJsonAsync<DownloadUrlResponseDto>();
         downloadResult.Should().NotBeNull();
-        downloadResult!.DownloadUrl.Should().Contain("http://localhost:9000");
+        downloadResult.DownloadUrl.Should().Contain("http://localhost:9000");
     }
     #endregion
     
-    #region 4. Expiration & Not Found Tests
+    #region 4. Real-Time Streaming ZIP Archive Tests
+
+    [Fact]
+    public async Task StreamBundleZip_Returns200AndValidZipArchive_WhenRequestIsValid()
+    {
+        factory.SeedS3Object("uploads/zip_file_1.pdf", 1024);
+        factory.SeedS3Object("uploads/zip_file_2.png", 512);
+
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: "zip_test_token",
+            Title: "Streaming Zip Bundle",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new("uploads/zip_file_1.pdf", "report.pdf", "application/pdf", 1024),
+                new("uploads/zip_file_2.png", "chart.png", "image/png", 512),
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 5,
+            Password: null
+        );
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
+
+        var response =
+            await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download-all", new DownloadRequestDto(null));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType?.MediaType.Should().Be("application/zip");
+
+        var zipBytes = await response.Content.ReadAsByteArrayAsync();
+        using var ms = new MemoryStream(zipBytes);
+        await using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+
+        archive.Entries.Should().HaveCount(2);
+        archive.Entries.Select(e => e.Name).Should().Contain(["report.pdf", "chart.png"]);
+    }
+
+    [Fact]
+    public async Task StreamBundleZip_Returns401Unauthorized_WhenPasswordIsIncorrect()
+    {
+        factory.SeedS3Object("uploads/zip_protected.pdf", 1024);
+
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: "zip_protected_token",
+            Title: "Protected Zip Bundle",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new("uploads/zip_protected.pdf", "secret.pdf", "application/pdf", 1024)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 5,
+            Password: "CorrectZipPassword1!"
+        );
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
+
+        var response = await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download-all",
+            new DownloadRequestDto("WrongPassword2@"));
+        
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);       
+    }
+    
+    #endregion
+    
+    #region 5. Expiration & Not Found Tests
 
     [Fact]
     public async Task GetGroupMetadata_Returns404NotFound_WhenTokenDoesNotExist()
