@@ -92,16 +92,25 @@ public static class FileEndpoints
         StreamBundleZip(
             string shareToken,
             DownloadRequestDto dto,
+            [Microsoft.AspNetCore.Mvc.FromQuery] string? lease,
             HttpContext context,
             IStorageService storageService)
     {
-        context.Response.ContentType = "application/zip";
-        context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"bundle_{shareToken}.zip\"");
-        context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
-
-        var result = await storageService.StreamBundleZipAsync(shareToken, dto.Password, context.Response.Body,
+        
+        var result = await storageService.StreamBundleZipAsync(
+            shareToken,
+            dto.Password, 
+            lease, 
+            context.Response.Body,
+            leaseToken =>
+            {
+                context.Response.ContentType = "application/zip";
+                context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"bundle_{shareToken}.zip\"");
+                context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+                context.Response.Headers.Append("X-Download-Lease", leaseToken);
+            },
             context.RequestAborted);
-
+        
         return result.Status switch
         {
             StreamZipStatus.NotFound => TypedResults.NotFound(),
@@ -110,6 +119,10 @@ public static class FileEndpoints
                 detail: "Bundle has expired or reached maximum download limit.",
                 statusCode: StatusCodes.Status410Gone,
                 title: "Link Expired"),
+            StreamZipStatus.CapacityReached => TypedResults.Problem(
+                detail: "All download slots are currently in use or exhausted.",
+                statusCode: StatusCodes.Status410Gone,
+                title: "Download Limit Reached"),
             StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
             StreamZipStatus.Success => TypedResults.Empty,
             _ => TypedResults.Empty

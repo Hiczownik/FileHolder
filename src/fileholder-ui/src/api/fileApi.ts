@@ -51,17 +51,23 @@ export const fileApi = {
     return response.data.downloadUrl;
   },
 
-  downloadAllZip: async (shareToken: string, bundleTitle?: string, password?: string): Promise<void> => {
+  downloadAllZip: async (shareToken: string, bundleTitle?: string, password?: string, leaseToken?: string | null): Promise<string | null> => {
+    const url = leaseToken
+      ? `${API_BASE_URL}/${shareToken}/download-all?lease=${encodeURIComponent(leaseToken)}`
+      : `${API_BASE_URL}/${shareToken}/download-all`;
+
     const response = await axios.post(
-      `${API_BASE_URL}/${shareToken}/download-all`,
+      url,
       { password },
       { responseType: 'blob' }
     );
 
+    const issuedLease = (response.headers['x-download-lease'] as string) || null; 
+
     const blob = new Blob([response.data], { type: 'application/zip' });
-    const url = window.URL.createObjectURL(blob);
+    const downloadUrl = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
+    link.href = downloadUrl;
 
     const safeTitle = bundleTitle ? bundleTitle.replace(/[^\w\.\-]/g, '_') : 'group';
     link.setAttribute('download', `${safeTitle}_${shareToken}.zip`);
@@ -69,6 +75,8 @@ export const fileApi = {
     document.body.appendChild(link);
     link.click();
     link.remove();
-    window.URL.revokeObjectURL(url);
+    window.URL.revokeObjectURL(downloadUrl);
+
+    return issuedLease;
   },
 };

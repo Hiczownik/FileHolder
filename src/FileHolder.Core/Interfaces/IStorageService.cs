@@ -16,13 +16,16 @@ public interface IStorageService
     /// </summary>
     /// <param name="shareToken"></param>
     /// <param name="password"></param>
+    /// <param name="existingLeaseToken"></param>
     /// <param name="destinationStream"></param>
+    /// <param name="onLeaseAcquired"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    
     Task<StreamZipResult> StreamBundleZipAsync(
         string shareToken,
-        string? password,
+        string? password, 
+        string? existingLeaseToken,
         Stream destinationStream,
+        Action<string>? onLeaseAcquired = null,
         CancellationToken cancellationToken = default);
 }

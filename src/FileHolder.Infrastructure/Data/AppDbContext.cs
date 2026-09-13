@@ -7,6 +7,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 {
     public DbSet<FileGroup> FileGroups => Set<FileGroup>();
     public DbSet<SharedFile> SharedFiles => Set<SharedFile>();
+    public DbSet<DownloadLease> DownloadLeases => Set<DownloadLease>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -247,7 +247,48 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         archive.Entries.Should().HaveCount(2);
         archive.Entries.Select(e => e.Name).Should().Contain(["report.pdf", "chart.png"]);
     }
+    [Fact]
+    public async Task StreamBundleZip_EnforcesLeaseCapacity_AndRejectsExcessClientsWithHardRejection()
+    {
+        factory.SeedS3Object("uploads/lease_doc.pdf",1024);
 
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: "lease_test_token",
+            Title: "Lease Capacity Bundle",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new("uploads/lease_doc.pdf", "lease_doc.pdf", "application/pdf", 1024)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 1,
+            Password: null
+        );
+        
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
+
+        var responseClient1 = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/download-all",
+            new DownloadRequestDto(null));
+        
+        responseClient1.StatusCode.Should().Be(HttpStatusCode.OK);
+        var leaseToken = responseClient1.Headers.GetValues("X-Download-Lease").FirstOrDefault();
+        leaseToken.Should().NotBeNullOrWhiteSpace();
+
+        var responseClient2 = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/download-all",
+            new DownloadRequestDto(null));
+        
+        responseClient2.StatusCode.Should().Be(HttpStatusCode.Gone);
+        
+        var responseAfterExhaustion = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/download-all?lease={leaseToken}",
+            new DownloadRequestDto(null));
+        
+        responseAfterExhaustion.StatusCode.Should().Be(HttpStatusCode.Gone);
+    }
+    
     [Fact]
     public async Task StreamBundleZip_Returns401Unauthorized_WhenPasswordIsIncorrect()
     {

@@ -8,6 +8,7 @@ export const useFileDownload = (shareToken?: string) => {
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
     const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
+    const [activeLeaseToken, setActiveLeaseToken] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -56,7 +57,11 @@ export const useFileDownload = (shareToken?: string) => {
         setError(null);
 
         try {
-            await fileApi.downloadAllZip(shareToken, metadata.title, password || undefined);
+            const issuedLease = await fileApi.downloadAllZip(shareToken, metadata.title, password || undefined, activeLeaseToken);
+            
+            if (issuedLease) {
+                setActiveLeaseToken(issuedLease);
+            }
         } catch (err: any) {
             if (err.response?.status === 401) {
                 setError('Incorrect password. Please enter the correct password above.');

@@ -9,7 +9,6 @@ using FileHolder.Core.Interfaces;
 using FileHolder.Core.Security;
 using FileHolder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Options;
 
@@ -208,11 +207,21 @@ public class StorageService : IStorageService
         return new DownloadResult(false, false, downloadUrl);       
     }
 
-    public async Task<StreamZipResult> StreamBundleZipAsync(string shareToken, string? password, Stream destinationStream,
-        CancellationToken cancellationToken = default)
+    public async Task<StreamZipResult> StreamBundleZipAsync(
+        string shareToken, 
+        string? password, 
+        string? existingLeaseToken, 
+        Stream destinationStream, 
+        Action<string>? onLeaseAcquired = null, 
+        CancellationToken cancellationToken = default
+    )
     {
-        var group = await _dbContext.FileGroups.Include(g => g.Files)
-            .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted, cancellationToken);
+        var now = _dateTimeProvider.UtcNow;
+        
+        var group = await _dbContext.FileGroups
+            .Include(g => g.Files)
+            .Include(g => g.Leases)
+            .FirstOrDefaultAsync(g => g.ShareToken == shareToken, cancellationToken);
 
         if (group == null)
         {
@@ -223,8 +232,7 @@ public class StorageService : IStorageService
         {
             return new StreamZipResult(StreamZipStatus.InvalidPassword, null);       
         }
-
-        var now = _dateTimeProvider.UtcNow;
+        
         if (group.IsExpired(now))
         {
             return new StreamZipResult(StreamZipStatus.Expired, null);
@@ -234,11 +242,35 @@ public class StorageService : IStorageService
         {
             return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
         }
-        
-        group.DownloadCount++;
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        await _cache.RemoveAsync($"file_group:{shareToken}", cancellationToken);
 
+        DownloadLease? currentLease = null;
+        if (!string.IsNullOrWhiteSpace(existingLeaseToken))
+        {
+            currentLease = group.Leases.FirstOrDefault(l => l.LeaseToken == existingLeaseToken && l.IsActive(now));
+        }
+
+        if (currentLease == null)
+        {
+            if (!group.HasDownloadCapacity(now))
+            {
+                return new StreamZipResult(StreamZipStatus.CapacityReached, null);
+            }
+
+            currentLease = new DownloadLease
+            {
+                FileGroupId = group.Id,
+                LeaseToken = Guid.NewGuid().ToString("N"),
+                Status = LeaseStatus.Active,
+                ExpiresAt = now.AddMinutes(15),
+                CreatedAt = now
+            };
+            
+            _dbContext.DownloadLeases.Add(currentLease);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+        
+        onLeaseAcquired?.Invoke(currentLease.LeaseToken);
+        
         var pipe = new Pipe(new PipeOptions(
             pauseWriterThreshold: 128 * 1024,
             resumeWriterThreshold: 64 * 1024,
@@ -296,8 +328,37 @@ public class StorageService : IStorageService
         }
 
         await producerTask;
+
+        currentLease.Status = LeaseStatus.Completed;
+        currentLease.CompletedAt = _dateTimeProvider.UtcNow;
+        group.DownloadCount++;
+
+        bool shouldPurgeImmediately = group.MaxDownloads.HasValue && group.DownloadCount >= group.MaxDownloads.Value;
+        if (shouldPurgeImmediately)
+        {
+            group.IsDeleted = true;
+        }
+
+        await _dbContext.SaveChangesAsync(CancellationToken.None);
+        await _cache.RemoveAsync($"file_group:{shareToken}", CancellationToken.None);
+
+        if (shouldPurgeImmediately)
+        {
+            _ = Task.Run(async () =>
+            {
+                var keysToDelete = group.Files.Select(f => new KeyVersion { Key = f.StorageKey }).ToList();
+                if (keysToDelete.Count > 0)
+                {
+                    await _internalS3Client.DeleteObjectsAsync(new DeleteObjectsRequest
+                    {
+                        BucketName = _options.BucketName,
+                        Objects = keysToDelete
+                    });
+                }
+            });
+        }
         
-        return new StreamZipResult(StreamZipStatus.Success, group.Title ?? group.ShareToken);      
+        return new StreamZipResult(StreamZipStatus.Success, group.Title ?? group.ShareToken, currentLease.LeaseToken);      
     }
 
     public async Task<int> PurgeExpiredFilesAsync(CancellationToken cancellationToken = default)

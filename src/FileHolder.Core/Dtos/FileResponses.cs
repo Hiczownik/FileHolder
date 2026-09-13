@@ -48,10 +48,12 @@ public enum StreamZipStatus
     NotFound,
     InvalidPassword,
     Expired,
+    CapacityReached,
     EmptyBundle
 }
 
 public record StreamZipResult(
     StreamZipStatus Status,
-    string? BundleTitle
+    string? BundleTitle,
+    string? LeaseToken = null
 );
