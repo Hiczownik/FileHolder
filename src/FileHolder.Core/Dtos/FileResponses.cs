@@ -26,10 +26,18 @@ public record FileGroupMetadataResponseDto(
     [property: JsonPropertyName("totalSizeBytes")] long TotalSizeBytes,
     [property: JsonPropertyName("fileCount")] int FileCount,
     [property: JsonPropertyName("requiresPassword")] bool RequiresPassword,
+    [property: JsonPropertyName("isUnlocked")] bool IsUnlocked,
     [property: JsonPropertyName("expiresAt")] DateTime? ExpiresAt,
     [property: JsonPropertyName("remainingDownloads")] int? RemainingDownloads,
     [property: JsonPropertyName("isExpired")] bool IsExpired,
     [property: JsonPropertyName("files")] List<FileItemMetadataDto> Files
+);
+
+public record UnlockResult(
+    bool IsSuccess,
+    bool IsPasswordInvalid,
+    bool IsExpired,
+    FileGroupMetadataResponseDto? Metadata
 );
 
 public record DownloadUrlResponseDto(

@@ -134,13 +134,29 @@ public class StorageService : IStorageService
             async cancel => await _dbContext.FileGroups
                 .AsNoTracking()
                 .Include(g => g.Files)
-                .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted, cancel)
+                .FirstOrDefaultAsync(g => g.ShareToken == shareToken, cancel)
         );
 
         if (group == null) return null;
-        
+
         var now = _dateTimeProvider.UtcNow;
         
+        if (group.RequiresPassword && !group.IsExpired(now))
+        {
+            return new FileGroupMetadataResponseDto(
+                group.ShareToken,
+                group.Title,
+                0,
+                group.Files.Count,
+                true,
+                false,
+                group.ExpiresAt,
+                group.RemainingDownloads,
+                false,
+                new List<FileItemMetadataDto>()
+            );
+        }
+
         var fileItemDtos = group.Files.Select(f => new FileItemMetadataDto(
             f.Id,
             f.OriginalFileName,
@@ -153,11 +169,59 @@ public class StorageService : IStorageService
             group.Title,
             group.TotalSizeBytes,
             fileItemDtos.Count,
-            !string.IsNullOrEmpty(group.PasswordHash),
+            group.RequiresPassword,
+            !group.RequiresPassword,
             group.ExpiresAt,
             group.RemainingDownloads,
             group.IsExpired(now),
-            fileItemDtos);
+            fileItemDtos
+        );
+    }
+    
+    public async Task<UnlockResult> UnlockGroupAsync(string shareToken, string password)
+    {
+        var group = await _dbContext.FileGroups
+            .AsNoTracking()
+            .Include(g => g.Files)
+            .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted);
+
+        if (group == null)
+        {
+            return new UnlockResult(false, false, true, null);
+        }
+
+        var now = _dateTimeProvider.UtcNow;
+        if (group.IsExpired(now))
+        {
+            return new UnlockResult(false, false, true, null);
+        }
+
+        if (!group.VerifyPassword(password))
+        {
+            return new UnlockResult(false, true, false, null);
+        }
+
+        var fileItemDtos = group.Files.Select(f => new FileItemMetadataDto(
+            f.Id,
+            f.OriginalFileName,
+            f.SizeBytes,
+            f.ContentType
+        )).ToList();
+
+        var unlockedMetadata = new FileGroupMetadataResponseDto(
+            group.ShareToken,
+            group.Title,
+            group.TotalSizeBytes,
+            fileItemDtos.Count,
+            true,
+            true, 
+            group.ExpiresAt,
+            group.RemainingDownloads,
+            false,
+            fileItemDtos
+        );
+
+        return new UnlockResult(true, false, false, unlockedMetadata);
     }
 
     public async Task<DownloadResult> CreatePresignedDownloadUrlAsync(string shareToken, Guid fileId, string? password)

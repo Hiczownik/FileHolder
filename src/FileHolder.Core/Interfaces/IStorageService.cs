@@ -7,6 +7,7 @@ public interface IStorageService
     Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto request);
     Task<string> ConfirmAndPersistFileGroupAsync(ConfirmUploadRequestDto request);
     Task<FileGroupMetadataResponseDto?> GetGroupMetadataByTokenAsync(string shareToken);
+    Task<UnlockResult> UnlockGroupAsync(string shareToken, string password);
     Task<DownloadResult> CreatePresignedDownloadUrlAsync(string shareToken, Guid fileId, string? password);
     Task<int> PurgeExpiredFilesAsync(CancellationToken cancellationToken = default);
 

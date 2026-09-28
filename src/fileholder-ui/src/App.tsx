@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { Navbar } from './components/Navbar';
-import { UploadPage } from './pages/UploadPage';
-import { DownloadPage } from './pages/DownloadPage';
+import { Navbar } from './shared/components/Navbar';
+import { UploadPage } from './features/upload/UploadPage';
+import { DownloadPage } from './features/download/DownloadPage';
 
 function App() {
   return (

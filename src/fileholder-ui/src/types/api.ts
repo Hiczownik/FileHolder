@@ -4,7 +4,6 @@ export interface FileItemInput {
     sizeBytes: number;
 }
 
-
 export interface CreatePresignedUrlRequest {
     title?: string;
     files: FileItemInput[];

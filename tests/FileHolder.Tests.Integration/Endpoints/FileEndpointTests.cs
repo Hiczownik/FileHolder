@@ -135,12 +135,82 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     
     #endregion
     
-    #region 3. Authentication & Download Security Tests
-    
+    #region 3. Authentication & Download Tests
+
+    [Fact]
+    public async Task GetGroupMetadata_MasksFilesAndSizes_WhenBundleIsPasswordProtected()
+    {
+        factory.SeedS3Object("uploads/masked_doc.pdf", 1024);
+
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: "masked_token",
+            Title: "Classified Deliverables",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new("uploads/masked_doc.pdf", "secret_financials.pdf", "application/pdf", 1024)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 5,
+            Password: "VaultPassword123!"
+        );
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
+        
+        var response = await _client.GetAsync($"/api/v1/files/{shareToken}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var metadata = await response.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        metadata.Should().NotBeNull();
+        metadata!.RequiresPassword.Should().BeTrue();
+        metadata.IsUnlocked.Should().BeFalse();
+        metadata.Files.Should().BeEmpty(); 
+        metadata.TotalSizeBytes.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task UnlockGroup_ReturnsFullMetadata_WhenPasswordIsCorrect()
+    {
+        factory.SeedS3Object("uploads/unlock_doc.pdf", 1024);
+
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: "unlock_token",
+            Title: "Confidential Project",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new("uploads/unlock_doc.pdf", "client_contract.pdf", "application/pdf", 1024)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 5,
+            Password: "CorrectVaultPassword!"
+        );
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
+
+        var failedUnlockResponse = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("WrongPassword!")
+        );
+        failedUnlockResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var successUnlockResponse = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("CorrectVaultPassword!")
+        );
+        
+        successUnlockResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var unlockedMetadata = await successUnlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        unlockedMetadata.Should().NotBeNull();
+        unlockedMetadata!.IsUnlocked.Should().BeTrue();
+        unlockedMetadata.Files.Should().HaveCount(1);
+        unlockedMetadata.Files[0].FileName.Should().Be("client_contract.pdf");
+        unlockedMetadata.TotalSizeBytes.Should().Be(1024);
+    }
+
     [Fact]
     public async Task DownloadFile_Returns401Unauthorized_WhenPasswordIsIncorrect()
     {
-        // Seed S3 and Confirm Password-Protected Group
         factory.SeedS3Object("uploads/protected_key.pdf", 1024);
 
         var confirmRequest = new ConfirmUploadRequestDto(
@@ -157,24 +227,25 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
-
-        var metadataResponse = await _client.GetAsync($"/api/v1/files/{shareToken}");
-        var metadata = await metadataResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        
+        var unlockResponse = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("CorrectPassword123!")
+        );
+        var metadata = await unlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         var fileId = metadata!.Files[0].Id;
-
-        // Attempt download with WRONG password
+        
         var downloadResponse = await _client.PostAsJsonAsync(
-            $"/api/v1/files/{shareToken}/download/{fileId}", 
+            $"/api/v1/files/{shareToken}/download/{fileId}",
             new DownloadRequestDto("WrongPassword!")
         );
-        
+
         downloadResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
     public async Task DownloadFile_Returns200OKWithPresignedUrl_WhenPasswordIsCorrect()
     {
-        // Seed S3 and Confirm Password-Protected Group
         factory.SeedS3Object("uploads/protected_key_2.pdf", 1024);
 
         var confirmRequest = new ConfirmUploadRequestDto(
@@ -191,22 +262,25 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
-
-        var metadataResponse = await _client.GetAsync($"/api/v1/files/{shareToken}");
-        var metadata = await metadataResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
-        var fileId = metadata!.Files[0].Id;
-
-        // Attempt download with CORRECT password
-        var downloadResponse = await _client.PostAsJsonAsync(
-            $"/api/v1/files/{shareToken}/download/{fileId}", 
+        
+        var unlockResponse = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/unlock",
             new DownloadRequestDto("CorrectPassword123!")
         );
+        var metadata = await unlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        var fileId = metadata!.Files[0].Id;
         
+        var downloadResponse = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/download/{fileId}",
+            new DownloadRequestDto("CorrectPassword123!")
+        );
+
         downloadResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var downloadResult = await downloadResponse.Content.ReadFromJsonAsync<DownloadUrlResponseDto>();
         downloadResult.Should().NotBeNull();
-        downloadResult.DownloadUrl.Should().Contain("http://localhost:9000");
+        downloadResult!.DownloadUrl.Should().Contain("http://localhost:9000");
     }
+
     #endregion
     
     #region 4. Real-Time Streaming ZIP Archive Tests

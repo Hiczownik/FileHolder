@@ -20,14 +20,18 @@ public static class FileEndpoints
         group.MapPost("/confirm", ConfirmUpload)
             .AddEndpointFilter<ValidationFilter<ConfirmUploadRequestDto>>()
             .WithName("ConfirmUpload");
-        
+
         group.MapGet("/{shareToken}", GetGroupMetadata)
-            .WithName("GetFileMetadata");
+            .WithName("GetGroupMetadata");
+
+        group.MapPost("/{shareToken}/unlock", UnlockGroup)
+            .RequireRateLimiting("DownloadPolicy")
+            .WithName("UnlockGroup");
 
         group.MapPost("/{shareToken}/download/{fileId:guid}", GenerateDownloadLink)
             .RequireRateLimiting("DownloadPolicy")
             .WithName("GenerateDownloadLink");
-
+        
         group.MapPost("/{shareToken}/download-all", StreamBundleZip)
             .RequireRateLimiting("DownloadPolicy")
             .WithName("StreamBundleZip");
@@ -62,6 +66,37 @@ public static class FileEndpoints
         return TypedResults.Ok(metadata);
     }
 
+    public static async Task<Results<Ok<FileGroupMetadataResponseDto>, NotFound, ProblemHttpResult>> UnlockGroup(
+        string shareToken,
+        DownloadRequestDto dto,
+        IStorageService storageService)
+    {
+        var result = await storageService.UnlockGroupAsync(shareToken, dto.Password ?? string.Empty);
+
+        if (result.IsPasswordInvalid)
+        {
+            return TypedResults.Problem(
+                detail: "Incorrect password. Please try again.",
+                statusCode: StatusCodes.Status401Unauthorized,
+                title: "Unauthorized");
+        }
+
+        if (result.IsExpired)
+        {
+            return TypedResults.Problem(
+                detail: "This shared file bundle has expired or reached its download limit.",
+                statusCode: StatusCodes.Status410Gone,
+                title: "Link Expired");
+        }
+
+        if (result.Metadata == null)
+        {
+            return TypedResults.NotFound();
+        }
+
+        return TypedResults.Ok(result.Metadata);
+    }
+    
     public static async Task<Results<Ok<DownloadUrlResponseDto>, UnauthorizedHttpResult, ProblemHttpResult>>
         GenerateDownloadLink(
             string shareToken,
