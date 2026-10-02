@@ -1,5 +1,4 @@
-﻿using System.Data;
-using FileHolder.Core.Dtos;
+﻿using FileHolder.Core.Dtos;
 using FileHolder.Core.Security;
 using FluentValidation;
 
@@ -16,7 +15,15 @@ public class CreatePresignedUrlValidator : AbstractValidator<CreatePresignedUrlR
 
         RuleFor(x => x.Files)
             .Must(files => files == null || files.Sum(f => f.SizeBytes) <= 5_368_709_120)
-            .WithMessage("Total; aggregate batch file size cannot exceed 5 GB.");
+            .WithMessage("Total aggregate batch file size cannot exceed 5 GB.");
+
+        // 1 GB + 64 KB margin for IV, AES-GCM authentication tag, and container headers
+        const long maxEncryptedPayloadBytes = 1_073_741_824L + 65_536L;
+
+        RuleFor(x => x.Files)
+            .Must(files => files == null || files.Sum(f => f.SizeBytes) <= maxEncryptedPayloadBytes)
+            .When(x => x.IsEncrypted)
+            .WithMessage("Encrypted payloads cannot exceed 1 GB due to client-side memory safety constraints.");
 
         RuleForEach(x => x.Files).ChildRules(file =>
         {

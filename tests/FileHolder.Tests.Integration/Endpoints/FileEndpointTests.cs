@@ -2,8 +2,12 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
 using FileHolder.Core.Dtos;
+using FileHolder.Core.Entities;
+using FileHolder.Infrastructure.Data;
 using FileHolder.Tests.Integration.Fixtures;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FileHolder.Tests.Integration.Endpoints;
 
@@ -76,6 +80,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     #endregion
     
     #region 2. Happy Path Upload & Metadata Tests
+
     [Fact]
     public async Task GetPresignedUrl_Returns200OK_WhenPayloadIsValid()
     {
@@ -94,7 +99,6 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task ConfirmAndGetMetadataFlow_SuccessfullyStoresAndRetrievesBundle()
     {
-        // Seed S3 Object Registry dynamically
         factory.SeedS3Object("uploads/test_key_1.pdf", 1024);
         factory.SeedS3Object("uploads/test_key_2.png", 512);
 
@@ -111,14 +115,12 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             Password: null
         );
 
-        // Confirm Upload
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
         shareToken.Should().NotBeNullOrWhiteSpace();
 
-        // Fetch Metadata
         var metadataResponse = await _client.GetAsync($"/api/v1/files/{shareToken}");
         metadataResponse.StatusCode.Should().Be(HttpStatusCode.OK);
 
@@ -131,7 +133,6 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         metadata.RemainingDownloads.Should().Be(10);
         metadata.IsExpired.Should().BeFalse();
     }
-    
     
     #endregion
     
@@ -321,10 +322,11 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         archive.Entries.Should().HaveCount(2);
         archive.Entries.Select(e => e.Name).Should().Contain(["report.pdf", "chart.png"]);
     }
+
     [Fact]
     public async Task StreamBundleZip_EnforcesLeaseCapacity_AndRejectsExcessClientsWithHardRejection()
     {
-        factory.SeedS3Object("uploads/lease_doc.pdf",1024);
+        factory.SeedS3Object("uploads/lease_doc.pdf", 1024);
 
         var confirmRequest = new ConfirmUploadRequestDto(
             UploadToken: "lease_test_token",
@@ -362,7 +364,61 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         
         responseAfterExhaustion.StatusCode.Should().Be(HttpStatusCode.Gone);
     }
-    
+
+    [Fact]
+    public async Task StreamBundleZip_UnderConcurrentContention_EnforcesStrictAtomicLeaseLimit()
+    {
+        factory.SeedS3Object("uploads/race_file.txt", 2048);
+
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: "race_test_token",
+            Title: "Race Condition Bundle",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new("uploads/race_file.txt", "race_file.txt", "text/plain", 2048)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 1,
+            Password: null
+        );
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
+        shareToken.Should().NotBeNullOrWhiteSpace();
+
+        var tasks = Enumerable.Range(0, 10)
+            .Select(_ => _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download-all", new DownloadRequestDto(null)))
+            .ToArray();
+
+        var responses = await Task.WhenAll(tasks);
+
+        var successResponses = responses.Where(r => r.StatusCode == HttpStatusCode.OK).ToList();
+        var goneResponses = responses.Where(r => r.StatusCode == HttpStatusCode.Gone).ToList();
+
+        successResponses.Should().HaveCount(1);
+        goneResponses.Should().HaveCount(9);
+
+        var successResponse = successResponses.Single();
+        successResponse.Headers.Contains("X-Download-Lease").Should().BeTrue();
+        var leaseToken = successResponse.Headers.GetValues("X-Download-Lease").FirstOrDefault();
+        leaseToken.Should().NotBeNullOrWhiteSpace();
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var group = await dbContext.FileGroups
+            .Include(g => g.Leases)
+            .FirstOrDefaultAsync(g => g.ShareToken == shareToken);
+
+        group.Should().NotBeNull();
+        group!.DownloadCount.Should().Be(1);
+
+        var leases = group.Leases.ToList();
+        leases.Count(l => l.Status == LeaseStatus.Completed).Should().BeLessThanOrEqualTo(1);
+        leases.Count(l => l.IsActive(DateTime.UtcNow)).Should().Be(0);
+    }
+
     [Fact]
     public async Task StreamBundleZip_Returns401Unauthorized_WhenPasswordIsIncorrect()
     {

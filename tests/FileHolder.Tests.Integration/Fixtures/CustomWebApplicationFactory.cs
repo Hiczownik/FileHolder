@@ -3,10 +3,12 @@ using System.Text;
 using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Infrastructure.Data;
+using FileHolder.Infrastructure.Workers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using NSubstitute;
 using Testcontainers.PostgreSql;
 
@@ -90,6 +92,16 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
             }
 
             services.AddSingleton(MockS3Client);
+
+            // Remove the background purge worker during integration testing
+            var cleanupWorkerDescriptor = services.SingleOrDefault(d =>
+                d.ImplementationType == typeof(FileCleanupWorker) ||
+                (d.ServiceType == typeof(IHostedService) && d.ImplementationFactory?.Method.ReturnType == typeof(FileCleanupWorker)));
+
+            if (cleanupWorkerDescriptor != null)
+            {
+                services.Remove(cleanupWorkerDescriptor);
+            }
 
             var sp = services.BuildServiceProvider();
             using var scope = sp.CreateScope();

@@ -1,10 +1,11 @@
 import { useReducer } from "react";
 import { uploadApi } from "../api/uploadApi";
 import type { UploadFormValues, UploadState, PresignedItem } from "../types";
+import { E2EE_MAX_BUNDLE_BYTES, E2EE_MAX_SINGLE_FILE_BYTES } from "../types";
+import type { FileItemMetadata } from "../../download/types";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import { cryptoEngine } from "../../../shared/utils/crypto/cryptoUtils";
 import { zipUtils } from "../../../shared/utils/crypto/zipUtils";
-import type { FileItemMetadata } from "../../download/types";
 
 type UploadAction =
     | { type: 'START_UPLOAD' }
@@ -18,11 +19,11 @@ const uploadReducer = (_state: UploadState, action: UploadAction): UploadState =
         case 'START_UPLOAD':
             return { status: 'uploading', progress: 0 };
         case 'SET_PROGRESS':
-            return { status: 'uploading', progress: action.payload};
+            return { status: 'uploading', progress: action.payload };
         case 'UPLOAD_SUCCESS':
-            return { status: 'success', shareLink: action.payload};
+            return { status: 'success', shareLink: action.payload };
         case 'UPLOAD_ERROR':
-            return { status: 'error', message: action.payload};
+            return { status: 'error', message: action.payload };
         case 'RESET':
             return { status: 'idle' };
         default:
@@ -34,13 +35,30 @@ export const useFileUpload = () => {
     const [uploadState, dispatch] = useReducer(uploadReducer, { status: 'idle' });
 
     const upload = async (formValues: UploadFormValues, files: File[]) => {
-        if (files.length == 0) return;
+        if (files.length === 0) return;
 
         dispatch({ type: 'START_UPLOAD' });
 
         try {
-
             if (formValues.isEncrypted) {
+                const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
+
+                if (files.length > 1 && totalBytes > E2EE_MAX_BUNDLE_BYTES) {
+                    dispatch({
+                        type: 'UPLOAD_ERROR',
+                        payload: 'Encrypted multi-file bundle exceeds the 200 MB browser safety limit.',
+                    });
+                    return;
+                }
+
+                if (files.length === 1 && totalBytes > E2EE_MAX_SINGLE_FILE_BYTES) {
+                    dispatch({
+                        type: 'UPLOAD_ERROR',
+                        payload: 'Encrypted single file exceeds the 1 GB browser safety limit.',
+                    });
+                    return;
+                }
+
                 const key = await cryptoEngine.generateKey();
                 const keyString = await cryptoEngine.exportKeyToBase64Url(key);
 
@@ -59,7 +77,7 @@ export const useFileUpload = () => {
                     sizeBytes: f.size,
                     contentType: f.type || 'application/octet-stream',
                 }));
-                
+
                 const encryptedManifest = await cryptoEngine.encryptJson(key, manifestData);
 
                 const presign = await uploadApi.getPresignedUrl({
@@ -107,7 +125,7 @@ export const useFileUpload = () => {
                     isEncrypted: true,
                     encryptedManifest: encryptedManifest,
                 });
-            
+
                 const fullShareUrl = `${window.location.origin}/f/${shareToken}#key=${keyString}`;
                 dispatch({ type: 'UPLOAD_SUCCESS', payload: fullShareUrl });
                 return;

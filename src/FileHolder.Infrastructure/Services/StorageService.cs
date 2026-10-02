@@ -1,6 +1,6 @@
-﻿using System.IO.Compression;
+﻿using System.Data;
+using System.IO.Compression;
 using System.IO.Pipelines;
-using System.Threading.Tasks.Dataflow;
 using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Core.Configuration;
@@ -256,9 +256,7 @@ public class StorageService : IStorageService
         var group = await _dbContext.FileGroups
             .Include(g => g.Files)
             .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted);
-        
-        
-        
+
         if (group == null) return new DownloadResult(false, true, null);
 
         if (!group.VerifyPassword(password))
@@ -310,56 +308,111 @@ public class StorageService : IStorageService
     )
     {
         var now = _dateTimeProvider.UtcNow;
-        
-        var group = await _dbContext.FileGroups
-            .Include(g => g.Files)
-            .Include(g => g.Leases)
-            .FirstOrDefaultAsync(g => g.ShareToken == shareToken, cancellationToken);
-
-        if (group == null)
-        {
-            return new StreamZipResult(StreamZipStatus.NotFound, null);
-        }
-
-        if (!group.VerifyPassword(password))
-        {
-            return new StreamZipResult(StreamZipStatus.InvalidPassword, null);       
-        }
-        
-        if (group.IsExpired(now))
-        {
-            return new StreamZipResult(StreamZipStatus.Expired, null);
-        }
-
-        if (group.Files.Count == 0)
-        {
-            return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
-        }
-
         DownloadLease? currentLease = null;
+        FileGroup? group = null;
+
+        // Step 2: Handle Existing Lease Check Cleanly
         if (!string.IsNullOrWhiteSpace(existingLeaseToken))
         {
-            currentLease = group.Leases.FirstOrDefault(l => l.LeaseToken == existingLeaseToken && l.IsActive(now));
+            currentLease = await _dbContext.DownloadLeases
+                .Include(l => l.FileGroup)
+                .ThenInclude(g => g.Files)
+                .FirstOrDefaultAsync(
+                    l => l.LeaseToken == existingLeaseToken && l.Status == LeaseStatus.Active && l.ExpiresAt > now, 
+                    cancellationToken);
+
+            group = currentLease?.FileGroup;
+
+            if (currentLease != null)
+            {
+                if (group == null)
+                {
+                    return new StreamZipResult(StreamZipStatus.NotFound, null);
+                }
+
+                if (!group.VerifyPassword(password))
+                {
+                    return new StreamZipResult(StreamZipStatus.InvalidPassword, null);
+                }
+
+                if (group.IsExpired(now))
+                {
+                    return new StreamZipResult(StreamZipStatus.Expired, null);
+                }
+
+                if (group.Files.Count == 0)
+                {
+                    return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
+                }
+            }
         }
 
+        // Step 3: Atomic Lock & Direct Database Lease Count
         if (currentLease == null)
         {
-            if (!group.HasDownloadCapacity(now))
+            // 1. Begin database transaction
+            await using var tx = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
+
+            // 2. Acquire exclusive pessimistic lock on the single row (no JOINs)
+            var lockedGroup = await _dbContext.FileGroups
+                .FromSqlInterpolated($"SELECT * FROM \"FileGroups\" WHERE \"ShareToken\" = {shareToken} FOR UPDATE")
+                .FirstOrDefaultAsync(cancellationToken);
+
+            if (lockedGroup == null)
             {
+                await tx.RollbackAsync(cancellationToken);
+                return new StreamZipResult(StreamZipStatus.NotFound, null);
+            }
+
+            // 3. Verify Domain Invariants under Lock
+            if (!lockedGroup.VerifyPassword(password))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return new StreamZipResult(StreamZipStatus.InvalidPassword, null);
+            }
+
+            if (lockedGroup.IsExpired(now))
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return new StreamZipResult(StreamZipStatus.Expired, null);
+            }
+
+            // 4. Load Child Files explicitly for the locked group
+            await _dbContext.Entry(lockedGroup).Collection(g => g.Files).LoadAsync(cancellationToken);
+
+            if (lockedGroup.Files.Count == 0)
+            {
+                await tx.RollbackAsync(cancellationToken);
+                return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
+            }
+
+            // 5. Query Active Leases directly from committed database state under the lock
+            int activeLeases = await _dbContext.DownloadLeases
+                .CountAsync(
+                    l => l.FileGroupId == lockedGroup.Id && l.Status == LeaseStatus.Active && l.ExpiresAt > now, 
+                    cancellationToken);
+
+            if (lockedGroup.MaxDownloads.HasValue && (lockedGroup.DownloadCount + activeLeases >= lockedGroup.MaxDownloads.Value))
+            {
+                await tx.RollbackAsync(cancellationToken);
                 return new StreamZipResult(StreamZipStatus.CapacityReached, null);
             }
 
+            // 6. Create Lease, Save & Commit
             currentLease = new DownloadLease
             {
-                FileGroupId = group.Id,
+                FileGroupId = lockedGroup.Id,
                 LeaseToken = Guid.NewGuid().ToString("N"),
                 Status = LeaseStatus.Active,
                 ExpiresAt = now.AddMinutes(15),
                 CreatedAt = now
             };
-            
+
             _dbContext.DownloadLeases.Add(currentLease);
             await _dbContext.SaveChangesAsync(cancellationToken);
+            await tx.CommitAsync(cancellationToken);
+
+            group = lockedGroup;
         }
         
         onLeaseAcquired?.Invoke(currentLease.LeaseToken);

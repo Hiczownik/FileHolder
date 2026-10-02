@@ -1,10 +1,12 @@
 import { useState } from "react";
 import type { UploadFormValues, UploadState } from "../types";
+import { E2EE_MAX_BUNDLE_BYTES, E2EE_MAX_SINGLE_FILE_BYTES } from "../types";
 import { useForm } from "react-hook-form";
 import { Clock, Download, Folder, Lock, ShieldCheck } from "lucide-react";
 import { FileDropzone } from "./FileDropzone";
 import { UploadProgress } from "./UploadProgress";
 import { Button } from "../../../shared/components/Button";
+import { StatusAlert } from "../../../shared/components/StatusAlert";
 
 interface Props {
     uploadState: UploadState;
@@ -15,14 +17,35 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
     const [files, setFiles] = useState<File[]>([]);
     const isUploading = uploadState.status === "uploading";
 
-    const { register, handleSubmit } = useForm<UploadFormValues>({
+    const { register, handleSubmit, watch } = useForm<UploadFormValues>({
         defaultValues: {
             title: '',
             expireInHours: 24,
             maxDownloads: 10,
             password: '',
+            isEncrypted: false,
         },
     });
+
+    const isEncrypted = watch('isEncrypted') ?? false;
+    const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
+
+    const isMultiFileLimitExceeded =
+        isEncrypted && files.length > 1 && totalBytes > E2EE_MAX_BUNDLE_BYTES;
+    const isSingleFileLimitExceeded =
+        isEncrypted && files.length === 1 && totalBytes > E2EE_MAX_SINGLE_FILE_BYTES;
+
+    const isSubmitDisabled =
+        files.length === 0 || isMultiFileLimitExceeded || isSingleFileLimitExceeded;
+
+    let warningMessage: string | null = null;
+    if (isMultiFileLimitExceeded) {
+        warningMessage =
+            "Browser security limits client-side bundling to 200 MB. To share larger bundles securely, please compress them into a .zip file on your computer and upload as a single file.";
+    } else if (isSingleFileLimitExceeded) {
+        warningMessage =
+            "Single-file End-to-End Encryption is limited to 1 GB to maintain browser stability. For larger transfers up to 5 GB, disable E2EE to stream directly to storage.";
+    }
 
     const handleFilesSelect = (newFiles: File[]) => {
         setFiles((prev) => {
@@ -32,7 +55,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
             );
             return [...prev, ...uniqueNewFiles];
         });
-    }
+    };
 
     const handleRemoveFile = (index: number) => {
         setFiles((prev) => prev.filter((_, i) => i !== index));
@@ -129,13 +152,17 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 />
             </div>
 
-            {isUploading && <UploadProgress progress={uploadState.progress} /> }
+            {warningMessage && (
+                <StatusAlert variant="warning" message={warningMessage} />
+            )}
+
+            {isUploading && <UploadProgress progress={uploadState.progress} />}
 
             <Button
                 type="submit"
                 variant="primary"
                 size="lg"
-                disabled={files.length === 0}
+                disabled={isSubmitDisabled}
                 isLoading={isUploading}
                 loadingText="Processing Upload..."
             >
