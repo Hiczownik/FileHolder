@@ -2,6 +2,9 @@ import { useReducer } from "react";
 import { uploadApi } from "../api/uploadApi";
 import type { UploadFormValues, UploadState, PresignedItem } from "../types";
 import { parseApiError } from "../../../shared/utils/parseApiError";
+import { cryptoEngine } from "../../../shared/utils/crypto/cryptoUtils";
+import { zipUtils } from "../../../shared/utils/crypto/zipUtils";
+import type { FileItemMetadata } from "../../download/types";
 
 type UploadAction =
     | { type: 'START_UPLOAD' }
@@ -36,6 +39,80 @@ export const useFileUpload = () => {
         dispatch({ type: 'START_UPLOAD' });
 
         try {
+
+            if (formValues.isEncrypted) {
+                const key = await cryptoEngine.generateKey();
+                const keyString = await cryptoEngine.exportKeyToBase64Url(key);
+
+                let rawPayloadBytes: Uint8Array;
+                if (files.length === 1) {
+                    rawPayloadBytes = new Uint8Array(await files[0].arrayBuffer());
+                } else {
+                    rawPayloadBytes = await zipUtils.createZipFromFiles(files);
+                }
+
+                const encryptedPayload = await cryptoEngine.encryptBytes(key, rawPayloadBytes);
+
+                const manifestData: FileItemMetadata[] = files.map((f) => ({
+                    id: crypto.randomUUID(),
+                    fileName: f.name,
+                    sizeBytes: f.size,
+                    contentType: f.type || 'application/octet-stream',
+                }));
+                
+                const encryptedManifest = await cryptoEngine.encryptJson(key, manifestData);
+
+                const presign = await uploadApi.getPresignedUrl({
+                    title: formValues.title || undefined,
+                    files: [
+                        {
+                            fileName: files.length === 1 ? `${files[0].name}.enc` : 'fileGroup.zip.enc',
+                            contentType: 'application/octet-stream',
+                            sizeBytes: encryptedPayload.byteLength,
+                        },
+                    ],
+                    expireInHours: Number(formValues.expireInHours),
+                    maxDownloads: Number(formValues.maxDownloads),
+                    password: formValues.password || undefined,
+                    isEncrypted: true,
+                });
+
+                const targetItem = (presign.items || (presign as any).Items || [])[0];
+                if (!targetItem) throw new Error('Failed to acquire storage upload URL.');
+
+                const encryptedFileObj = new File([encryptedPayload as BlobPart], targetItem.fileName, {
+                    type: 'application/octet-stream',
+                });
+
+                await uploadApi.uploadDirectToS3(targetItem.uploadUrl, encryptedFileObj, (percent) => {
+                    dispatch({ type: 'SET_PROGRESS', payload: Math.min(percent, 99) });
+                });
+
+                dispatch({ type: 'SET_PROGRESS', payload: 100 });
+
+                const shareToken = await uploadApi.confirmUpload({
+                    uploadToken: presign.uploadToken,
+                    title: formValues.title || undefined,
+                    files: [
+                        {
+                            storageKey: targetItem.storageKey,
+                            fileName: targetItem.fileName,
+                            contentType: 'application/octet-stream',
+                            sizeBytes: encryptedPayload.byteLength,
+                        },
+                    ],
+                    expireInHours: Number(formValues.expireInHours),
+                    maxDownloads: Number(formValues.maxDownloads),
+                    password: formValues.password || undefined,
+                    isEncrypted: true,
+                    encryptedManifest: encryptedManifest,
+                });
+            
+                const fullShareUrl = `${window.location.origin}/f/${shareToken}#key=${keyString}`;
+                dispatch({ type: 'UPLOAD_SUCCESS', payload: fullShareUrl });
+                return;
+            }
+
             const presign = await uploadApi.getPresignedUrl({
                 title: formValues.title || undefined,
                 files: files.map((f) => ({
@@ -46,6 +123,7 @@ export const useFileUpload = () => {
                 expireInHours: Number(formValues.expireInHours),
                 maxDownloads: Number(formValues.maxDownloads),
                 password: formValues.password || undefined,
+                isEncrypted: false,
             });
 
             const items: PresignedItem[] = presign.items || (presign as any).Items || [];
@@ -75,6 +153,7 @@ export const useFileUpload = () => {
                 expireInHours: Number(formValues.expireInHours),
                 maxDownloads: Number(formValues.maxDownloads),
                 password: formValues.password || undefined,
+                isEncrypted: false,
             });
 
             const fullShareUrl = `${window.location.origin}/f/${shareToken}`;

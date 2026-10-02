@@ -13,6 +13,9 @@ public class FileGroup
     public DateTime? ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public bool IsDeleted { get; set; } = false;
+
+    public bool IsEncrypted { get; set; } = false;
+    public string? EncryptedManifest { get; set; }
     
     public ICollection<SharedFile> Files { get; set; } = new List<SharedFile>();
 

@@ -27,6 +27,8 @@ public record FileGroupMetadataResponseDto(
     [property: JsonPropertyName("fileCount")] int FileCount,
     [property: JsonPropertyName("requiresPassword")] bool RequiresPassword,
     [property: JsonPropertyName("isUnlocked")] bool IsUnlocked,
+    [property: JsonPropertyName("isEncrypted")] bool IsEncrypted,
+    [property: JsonPropertyName("encryptedManifest")] string? EncryptedManifest,
     [property: JsonPropertyName("expiresAt")] DateTime? ExpiresAt,
     [property: JsonPropertyName("remainingDownloads")] int? RemainingDownloads,
     [property: JsonPropertyName("isExpired")] bool IsExpired,

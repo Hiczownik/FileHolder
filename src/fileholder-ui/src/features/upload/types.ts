@@ -10,6 +10,7 @@ export interface CreatePresignedUrlRequest {
     expireInHours?: number;
     maxDownloads?: number;
     password?: string;
+    isEncrypted?: boolean;
 }
 
 export interface PresignedItem {
@@ -37,6 +38,8 @@ export interface ConfirmUploadRequest {
     expireInHours?: number;
     maxDownloads?: number;
     password?: string;
+    isEncrypted?: boolean;
+    encryptedManifest?: string;
 }
 
 export interface UploadFormValues {
@@ -44,6 +47,7 @@ export interface UploadFormValues {
     expireInHours: number;
     maxDownloads: number;
     password?: string;
+    isEncrypted?: boolean;
 }
 
 export type UploadState =

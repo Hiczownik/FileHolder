@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { UploadFormValues, UploadState } from "../types";
 import { useForm } from "react-hook-form";
-import { Clock, Download, Folder, Lock } from "lucide-react";
+import { Clock, Download, Folder, Lock, ShieldCheck } from "lucide-react";
 import { FileDropzone } from "./FileDropzone";
 import { UploadProgress } from "./UploadProgress";
 import { Button } from "../../../shared/components/Button";
@@ -109,6 +109,23 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                     placeholder="Leave empty for public link"
                     {...register('password')}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                />
+            </div>
+
+            <div className="bg-slate-950 p-4 rounded-xl border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0" />
+                    <div>
+                        <p className="text-xs font-semibold text-slate-200">Zero-Knowledge End-To-End Encryption</p>
+                        <p className="text-[11px] text-slate-500">
+                            Encrypt files in your browser before upload. Decryption key lives only in the link.
+                        </p>
+                    </div>
+                </div>
+                <input
+                    type="checkbox"
+                    {...register('isEncrypted')}
+                    className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
                 />
             </div>
 

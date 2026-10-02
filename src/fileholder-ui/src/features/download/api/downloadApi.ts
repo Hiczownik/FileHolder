@@ -9,13 +9,13 @@ export const downloadApi = {
         return response.data;
     },
 
-  unlockGroup: async (shareToken: string, password: string): Promise<FileGroupMetadataResponse> => {
-    const response = await axios.post<FileGroupMetadataResponse>(
-      `${API_BASE_URL}/${shareToken}/unlock`,
-      { password }
-    );
-    return response.data;
-  },
+    unlockGroup: async (shareToken: string, password: string): Promise<FileGroupMetadataResponse> => {
+        const response = await axios.post<FileGroupMetadataResponse>(
+            `${API_BASE_URL}/${shareToken}/unlock`,
+            { password }
+        );
+        return response.data;
+    },
 
     getDownloadUrl: async (shareToken: string, fileId: string, password?: string): Promise<string> => {
         const response = await axios.post<DownloadUrlResponse>(
@@ -23,6 +23,11 @@ export const downloadApi = {
             { password }
         );
         return response.data.downloadUrl;
+    },
+
+    downloadCiphertextBlob: async (url: string): Promise<ArrayBuffer> => {
+        const response = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer' });
+        return response.data;
     },
 
     downloadAllZip: async (
@@ -48,7 +53,7 @@ export const downloadApi = {
         const link = document.createElement('a');
         link.href = downloadUrl;
 
-        const safeTitle = bundleTitle ? bundleTitle.replace(/[^\w\.\-]/g, '_'): 'bundle';
+        const safeTitle = bundleTitle ? bundleTitle.replace(/[^\w\.\-]/g, '_') : 'bundle';
         link.setAttribute('download', `${safeTitle}_${shareToken}.zip`);
 
         document.body.appendChild(link);

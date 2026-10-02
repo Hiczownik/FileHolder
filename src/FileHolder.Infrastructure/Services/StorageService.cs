@@ -1,5 +1,6 @@
 ﻿using System.IO.Compression;
 using System.IO.Pipelines;
+using System.Threading.Tasks.Dataflow;
 using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Core.Configuration;
@@ -57,6 +58,24 @@ public class StorageService : IStorageService
         var uploadToken = Guid.NewGuid().ToString("N");
         var items = new List<PresignedItemDto>();
 
+        if (dto.IsEncrypted)
+        {
+            var storageKey = $"uploads/{Guid.NewGuid():N}.enc";
+            var request = new GetPreSignedUrlRequest
+            {
+                BucketName = _options.BucketName,
+                Key = storageKey,
+                Verb = HttpVerb.PUT,
+                Expires = _dateTimeProvider.UtcNow.AddMinutes(15),
+                Protocol = Protocol.HTTP
+            };
+
+            string presignedUrl = _presignS3Client.GetPreSignedURL(request);
+            items.Add(new PresignedItemDto("fileGroup.enc", presignedUrl, storageKey));
+
+            return new PresignedUrlResponseDto(uploadToken, items);
+        }
+        
         foreach (var file in dto.Files)
         {
             var storageKey = FileSecurityUtils.GenerateStorageKey(file.FileName);
@@ -105,7 +124,9 @@ public class StorageService : IStorageService
             PasswordHash = passwordHash,
             MaxDownloads = dto.MaxDownloads,
             ExpiresAt = dto.ExpireInHours.HasValue ? _dateTimeProvider.UtcNow.AddHours(dto.ExpireInHours.Value) : null,
-            CreatedAt = _dateTimeProvider.UtcNow
+            CreatedAt = _dateTimeProvider.UtcNow,
+            IsEncrypted = dto.IsEncrypted,
+            EncryptedManifest = dto.EncryptedManifest
         };
 
         foreach (var item in dto.Files)
@@ -150,6 +171,8 @@ public class StorageService : IStorageService
                 group.Files.Count,
                 true,
                 false,
+                group.IsEncrypted,
+                group.EncryptedManifest,
                 group.ExpiresAt,
                 group.RemainingDownloads,
                 false,
@@ -171,6 +194,8 @@ public class StorageService : IStorageService
             fileItemDtos.Count,
             group.RequiresPassword,
             !group.RequiresPassword,
+            group.IsEncrypted,
+            group.EncryptedManifest,
             group.ExpiresAt,
             group.RemainingDownloads,
             group.IsExpired(now),
@@ -215,6 +240,8 @@ public class StorageService : IStorageService
             fileItemDtos.Count,
             true,
             true, 
+            group.IsEncrypted,
+            group.EncryptedManifest,
             group.ExpiresAt,
             group.RemainingDownloads,
             false,
@@ -229,7 +256,9 @@ public class StorageService : IStorageService
         var group = await _dbContext.FileGroups
             .Include(g => g.Files)
             .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted);
-
+        
+        
+        
         if (group == null) return new DownloadResult(false, true, null);
 
         if (!group.VerifyPassword(password))

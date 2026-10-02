@@ -22,6 +22,14 @@ public class FileGroupConfiguration : IEntityTypeConfiguration<FileGroup>
         builder.Property(g => g.PasswordHash)
             .HasMaxLength(255);
 
+        builder.Property(g => g.IsEncrypted)
+            .IsRequired()
+            .HasDefaultValue(false);
+
+        builder.Property(g => g.EncryptedManifest)
+            .HasColumnType("text")
+            .IsRequired(false);
+
         builder.HasIndex(g => g.ShareToken)
             .IsUnique()
             .HasFilter("\"IsDeleted\" = FALSE");

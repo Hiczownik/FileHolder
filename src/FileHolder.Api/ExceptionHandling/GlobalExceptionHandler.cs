@@ -1,16 +1,23 @@
 ﻿using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace FileHolder.Api.ExceptionHandling;
 
-public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IExceptionHandler
+public class GlobalExceptionHandler(
+    ILogger<GlobalExceptionHandler> logger,
+    IHostEnvironment environment) : IExceptionHandler
 {
-    private readonly ILogger<GlobalExceptionHandler> _logger = logger;
-
-    public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception,
+    public async ValueTask<bool> TryHandleAsync(
+        HttpContext httpContext,
+        Exception exception,
         CancellationToken cancellationToken)
     {
-        _logger.LogError(exception, "Unhandled exception occurred. {Message}", exception.Message);
+        logger.LogError(
+            exception,
+            "Unhandled exception occurred. Message: {Message}. InnerException: {InnerMessage}",
+            exception.Message,
+            exception.InnerException?.Message);
 
         var problemDetails = new ProblemDetails
         {
@@ -25,10 +32,20 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
                 problemDetails.Status = StatusCodes.Status400BadRequest;
                 problemDetails.Title = "Bad Request";
                 break;
+
             case KeyNotFoundException:
                 problemDetails.Status = StatusCodes.Status404NotFound;
                 problemDetails.Title = "Resource Not Found";
                 break;
+
+            case DbUpdateException dbEx:
+                problemDetails.Status = StatusCodes.Status500InternalServerError;
+                problemDetails.Title = "Database Persistence Error";
+                problemDetails.Detail = environment.IsDevelopment()
+                    ? (dbEx.InnerException?.Message ?? dbEx.Message)
+                    : "An error occurred while saving entity changes to the database.";
+                break;
+
             default:
                 problemDetails.Status = StatusCodes.Status500InternalServerError;
                 problemDetails.Title = "Internal Server Error";

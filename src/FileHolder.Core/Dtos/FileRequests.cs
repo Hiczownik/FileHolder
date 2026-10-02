@@ -11,7 +11,8 @@ public record CreatePresignedUrlRequestDto(
     List<FileItemInputDto> Files,
     int? ExpireInHours,
     int? MaxDownloads,
-    string? Password
+    string? Password,
+    bool IsEncrypted = false
     );
 
 public record ConfirmedFileItemDto(
@@ -27,7 +28,9 @@ public record ConfirmUploadRequestDto(
     List<ConfirmedFileItemDto> Files,
     int? ExpireInHours,
     int? MaxDownloads,
-    string? Password
+    string? Password,
+    bool IsEncrypted = false,
+    string? EncryptedManifest = null
     );
 
 public record DownloadRequestDto(
