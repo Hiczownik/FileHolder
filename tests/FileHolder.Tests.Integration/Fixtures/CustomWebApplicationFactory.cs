@@ -1,10 +1,12 @@
 using System.Collections.Concurrent;
 using System.Text;
+using System.Threading.RateLimiting;
 using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Infrastructure.Data;
 using FileHolder.Infrastructure.Workers;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -117,7 +119,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 services.Remove(cleanupWorkerDescriptor);
             }
 
-            // 1. Remove the existing RateLimiter configuration registered in Program.cs
+            // Remove existing policy configurations
             var rateLimiterDescriptors = services
                 .Where(d => d.ServiceType == typeof(IConfigureOptions<RateLimiterOptions>))
                 .ToList();
@@ -127,22 +129,14 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 services.Remove(descriptor);
             }
 
-            // 2. Register relaxed test policies (10,000 permits) cleanly without name collision
+            // Register zero-limiter test policies matching the exact production names
             services.Configure<RateLimiterOptions>(options =>
             {
-                options.RejectionStatusCode = Microsoft.AspNetCore.Http.StatusCodes.Status429TooManyRequests;
+                options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-                options.AddFixedWindowLimiter("UploadPolicy", policy =>
-                {
-                    policy.PermitLimit = 10_000;
-                    policy.Window = TimeSpan.FromMinutes(1);
-                });
-
-                options.AddFixedWindowLimiter("DownloadPolicy", policy =>
-                {
-                    policy.PermitLimit = 10_000;
-                    policy.Window = TimeSpan.FromMinutes(1);
-                });
+                options.AddPolicy("UploadInitiatePolicy", _ => RateLimitPartition.GetNoLimiter("test"));
+                options.AddPolicy("MultipartPipelinePolicy", _ => RateLimitPartition.GetNoLimiter("test"));
+                options.AddPolicy("DownloadPolicy", _ => RateLimitPartition.GetNoLimiter("test"));
             });
 
             var sp = services.BuildServiceProvider();

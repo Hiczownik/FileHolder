@@ -1,6 +1,11 @@
 import { useReducer } from "react";
 import { uploadApi } from "../api/uploadApi";
-import type { UploadFormValues, UploadState, PresignedItem, CompletedPartInput } from "../types";
+import type {
+    UploadFormValues,
+    UploadState,
+    PresignedItem,
+    CompletedPartInput,
+} from "../types";
 import { E2EE_MAX_BUNDLE_BYTES, E2EE_MAX_SINGLE_FILE_BYTES } from "../types";
 import type { FileItemMetadata } from "../../download/types";
 import { parseApiError } from "../../../shared/utils/parseApiError";
@@ -57,7 +62,7 @@ export const useFileUpload = () => {
                 storageKey,
                 uploadId,
                 startPartNumber: partNumber,
-                count: 20,
+                count: 50, // Optimized from 20 to 50 parts per batch
             });
 
             for (const p of batch.parts) {
@@ -65,7 +70,6 @@ export const useFileUpload = () => {
             }
 
             const url = presignedUrls.get(partNumber);
-
             if (!url) {
                 throw new Error(`Failed to acquire upload URL for part ${partNumber}`);
             }
@@ -187,7 +191,9 @@ export const useFileUpload = () => {
                 });
 
                 const targetItem = (presign.items || (presign as any).Items || [])[0];
-                if (!targetItem || !targetItem.uploadUrl) throw new Error('Failed to acquire storage upload URL.');
+                if (!targetItem || !targetItem.uploadUrl) {
+                    throw new Error('Failed to acquire storage upload URL.');
+                }
 
                 const encryptedFileObj = new File([encryptedPayload as BlobPart], targetItem.fileName, {
                     type: 'application/octet-stream',
@@ -243,7 +249,7 @@ export const useFileUpload = () => {
                 const totalLoaded = fileUploadedBytes.reduce((acc, b) => acc + b, 0);
                 const percent = Math.min(Math.round((totalLoaded / totalBytesAllFiles) * 100), 99);
                 dispatch({ type: 'SET_PROGRESS', payload: percent });
-            }
+            };
 
             const uploadTasks = items.map(async (item, index) => {
                 const currentFile = files[index];

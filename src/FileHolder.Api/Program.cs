@@ -1,3 +1,4 @@
+using System.Threading.RateLimiting;
 using Amazon.S3;
 using FileHolder.Api.Endpoints;
 using FileHolder.Api.ExceptionHandling;
@@ -8,6 +9,7 @@ using FileHolder.Infrastructure.Data;
 using FileHolder.Infrastructure.Services;
 using FileHolder.Infrastructure.Workers;
 using FluentValidation;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
@@ -76,21 +78,54 @@ builder.Services.AddHostedService<FileCleanupWorker>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+});
+
+static string ResolveClientIp(HttpContext context)
+{
+    if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwarded) && 
+        !string.IsNullOrWhiteSpace(forwarded))
+    {
+        return forwarded.ToString().Split(',')[0].Trim();
+    }
+    return context.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+}
+
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    
-    options.AddFixedWindowLimiter("UploadPolicy", policy =>
-    {
-        policy.PermitLimit = 10;
-        policy.Window = TimeSpan.FromMinutes(1);
-    });
 
-    options.AddFixedWindowLimiter("DownloadPolicy", policy =>
-    {
-        policy.PermitLimit = 30;
-        policy.Window = TimeSpan.FromMinutes(1);
-    });
+    // 1. Front Door: Strict 10 / min per IP
+    options.AddPolicy("UploadInitiatePolicy", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ResolveClientIp(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1)
+            }));
+
+    // 2. In-Flight Pipeline: High throughput 100 / min per IP
+    options.AddPolicy("MultipartPipelinePolicy", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ResolveClientIp(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 100,
+                Window = TimeSpan.FromMinutes(1)
+            }));
+
+    // 3. Downloader & Vault: 30 / min per IP
+    options.AddPolicy("DownloadPolicy", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ResolveClientIp(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1)
+            }));
 });
 
 builder.Services.AddCors(options =>
@@ -112,6 +147,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.UseExceptionHandler();
+app.UseForwardedHeaders();
 app.UseSecurityHeaders();
 app.UseCors("AllowReactApp");
 app.UseRateLimiter();

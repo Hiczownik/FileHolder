@@ -14,22 +14,20 @@ public static class FileEndpoints
 
         group.MapPost("/presign", GetPresignedUploadUrl)
             .AddEndpointFilter<ValidationFilter<CreatePresignedUrlRequestDto>>()
-            .RequireRateLimiting("UploadPolicy")
+            .RequireRateLimiting("UploadInitiatePolicy")
             .WithName("GetPresignedUploadUrl");
 
         var multipart = group.MapGroup("/multipart")
-            .WithTags("Multipart Uploads");
+            .WithTags("Multipart Uploads")
+            .RequireRateLimiting("MultipartPipelinePolicy");
 
         multipart.MapPost("/presign-batch", PresignPartBatch)
-            .RequireRateLimiting("UploadPolicy")
             .WithName("PresignPartBatch");
 
         multipart.MapPost("/complete", CompleteMultipartUpload)
-            .RequireRateLimiting("UploadPolicy")
             .WithName("CompleteMultipartUpload");
-        
+
         multipart.MapPost("/abort", AbortMultipartUpload)
-            .RequireRateLimiting("UploadPolicy")
             .WithName("AbortMultipartUpload");
 
         group.MapPost("/confirm", ConfirmUpload)
@@ -83,7 +81,7 @@ public static class FileEndpoints
         var success = await storageService.AbortMultipartUploadAsync(dto);
         return TypedResults.Ok(success);
     }
-    
+
     public static async Task<Results<Ok<FileGroupMetadataResponseDto>, NotFound, ProblemHttpResult>> GetGroupMetadata(
         string shareToken,
         IStorageService storageService)
@@ -170,7 +168,6 @@ public static class FileEndpoints
             HttpContext context,
             IStorageService storageService)
     {
-        
         var result = await storageService.StreamBundleZipAsync(
             shareToken,
             dto.Password, 
