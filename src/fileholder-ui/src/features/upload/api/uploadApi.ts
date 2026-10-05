@@ -3,6 +3,10 @@ import type {
     CreatePresignedUrlRequest,
     PresignedUrlResponse,
     ConfirmUploadRequest,
+    PresignPartBatchRequest,
+    PresignPartBatchResponse,
+    CompleteMultipartUploadRequest,
+    AbortMultipartUploadRequest
 } from '../types'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1/files';
@@ -29,6 +33,34 @@ export const uploadApi = {
                 }
             },
         });
+    },
+
+    presignPartBatch: async (request: PresignPartBatchRequest): Promise<PresignPartBatchResponse> => {
+        const response = await axios.post<PresignPartBatchResponse>(`${API_BASE_URL}/multipart/presign-batch`, request);
+        return response.data;
+    },
+
+    uploadMultipartChunkDirectToS3: async (
+        uploadUrl: string,
+        chunk: Blob,
+    ): Promise<string> => {
+        const response = await axios.put(uploadUrl, chunk, {
+            headers: {
+                'Content-Type': 'application/octet-stream',
+            },
+        });
+        const eTag = response.headers['etag'] || response.headers['ETag'] || '';
+        return eTag ? String(eTag).replace(/['"]/g, '') : '';
+    },
+
+    completeMultipartUpload: async (request: CompleteMultipartUploadRequest): Promise<boolean> => {
+        const response = await axios.post<boolean>(`${API_BASE_URL}/multipart/complete`, request);
+        return response.data;
+    },
+    
+    abortMultipartUpload: async (request: AbortMultipartUploadRequest): Promise<boolean> => {
+        const response = await axios.post<boolean>(`${API_BASE_URL}/multipart/abort`, request);
+        return response.data;
     },
 
     confirmUpload: async (request: ConfirmUploadRequest): Promise<string> => {

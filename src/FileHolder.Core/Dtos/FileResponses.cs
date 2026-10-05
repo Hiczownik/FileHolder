@@ -1,16 +1,35 @@
 ﻿using System.Text.Json.Serialization;
 
 namespace FileHolder.Core.Dtos;
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum UploadMode
+{
+    Single,
+    Multipart
+}
 
 public record PresignedItemDto(
     [property: JsonPropertyName("fileName")] string FileName,
-    [property: JsonPropertyName("uploadUrl")] string UploadUrl,
-    [property: JsonPropertyName("storageKey")] string StorageKey
+    [property: JsonPropertyName("storageKey")] string StorageKey,
+    [property: JsonPropertyName("uploadMode")] UploadMode UploadMode,
+    [property: JsonPropertyName("uploadUrl")] string? UploadUrl,
+    [property: JsonPropertyName("uploadId")] string? UploadId,
+    [property: JsonPropertyName("partSizeBytes")] long? PartSizeBytes,
+    [property: JsonPropertyName("totalParts")] int? TotalParts
 );
 
 public record PresignedUrlResponseDto(
     [property: JsonPropertyName("uploadToken")] string UploadToken,
     [property: JsonPropertyName("items")] List<PresignedItemDto> Items
+);
+
+public record PartPresignedUrlDto(
+    [property: JsonPropertyName("partNumber")] int PartNumber,
+    [property: JsonPropertyName("uploadUrl")] string UploadUrl
+);
+
+public record PresignPartBatchResponseDto(
+    [property: JsonPropertyName("parts")] List<PartPresignedUrlDto> Parts
 );
 
 public record FileItemMetadataDto(

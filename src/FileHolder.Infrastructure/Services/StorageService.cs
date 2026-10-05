@@ -17,6 +17,9 @@ namespace FileHolder.Infrastructure.Services;
 
 public class StorageService : IStorageService
 {
+    private const long MultipartThreshold = 50L * 1024 * 1024;
+    private const long MinPartISizeBytes = 16L * 1024 * 1024;
+    
     private readonly IAmazonS3 _internalS3Client;
     private readonly IAmazonS3 _presignS3Client;
     private readonly AppDbContext _dbContext;
@@ -53,11 +56,20 @@ public class StorageService : IStorageService
         _presignS3Client = new AmazonS3Client(_options.AccessKey, _options.SecretKey, presignConfig);
     }
 
+    private static (long PartSizeBytes, int TotalParts) CalculatePartSizing(long totalSizeBytes)
+    {
+        long calculatedPartSize = (long)Math.Ceiling((double)totalSizeBytes / 9000);
+        long partSize = Math.Max(MinPartISizeBytes, calculatedPartSize);
+        int totalParts = (int)Math.Ceiling((double)totalSizeBytes / partSize);
+        return (partSize, totalParts);
+    }
+    
     public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto)
     {
         var uploadToken = Guid.NewGuid().ToString("N");
         var items = new List<PresignedItemDto>();
-
+        bool sessionsAdded = false;
+        
         if (dto.IsEncrypted)
         {
             var storageKey = $"uploads/{Guid.NewGuid():N}.enc";
@@ -71,7 +83,7 @@ public class StorageService : IStorageService
             };
 
             string presignedUrl = _presignS3Client.GetPreSignedURL(request);
-            items.Add(new PresignedItemDto("fileGroup.enc", presignedUrl, storageKey));
+            items.Add(new PresignedItemDto("fileGroup.enc",storageKey, UploadMode.Single, presignedUrl, null, null, null));
 
             return new PresignedUrlResponseDto(uploadToken, items);
         }
@@ -80,20 +92,163 @@ public class StorageService : IStorageService
         {
             var storageKey = FileSecurityUtils.GenerateStorageKey(file.FileName);
 
+            if (file.SizeBytes > MultipartThreshold)
+            {
+                var (partSizeBytes, totalParts) = CalculatePartSizing(file.SizeBytes);
+
+                var s3Response = await _internalS3Client.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
+                {
+                    BucketName = _options.BucketName,
+                    Key = storageKey,
+                    ContentType = file.ContentType,
+                });
+
+                var session = new MultipartUploadSession
+                {
+                    UploadToken = uploadToken,
+                    UploadId = s3Response.UploadId,
+                    StorageKey = storageKey,
+                    FileName = FileSecurityUtils.SanitizeFileName(file.FileName),
+                    ContentType = file.ContentType,
+                    TotalSizeBytes = file.SizeBytes,
+                    PartSizeBytes = partSizeBytes,
+                    TotalParts = totalParts,
+                    ExpiresAt = _dateTimeProvider.UtcNow.AddHours(24),
+                    CreatedAt = _dateTimeProvider.UtcNow
+                };
+                
+                _dbContext.MultipartUploadSessions.Add(session);
+                sessionsAdded = true;
+                
+                items.Add(new PresignedItemDto(
+                    file.FileName,
+                    storageKey,
+                    UploadMode.Multipart,
+                    null,
+                    s3Response.UploadId,
+                    partSizeBytes,
+                    totalParts
+                ));
+            }
+            else
+            {
+                var request = new GetPreSignedUrlRequest
+                {
+                    BucketName = _options.BucketName,
+                    Key = storageKey,
+                    Verb = HttpVerb.PUT,
+                    Expires = _dateTimeProvider.UtcNow.AddMinutes(15),
+                    Protocol = Protocol.HTTP
+                };
+
+                string presignedUrl = _presignS3Client.GetPreSignedURL(request);
+                items.Add(new PresignedItemDto(file.FileName, storageKey, UploadMode.Single, presignedUrl, null, null, null));
+            }
+        }
+
+        if (sessionsAdded)
+        {
+            await _dbContext.SaveChangesAsync();
+        }
+        
+        return new PresignedUrlResponseDto(uploadToken, items);       
+    }
+
+    public async Task<PresignPartBatchResponseDto> PresignPartBatchAsync(PresignPartBatchRequestDto dto)
+    {
+        var session = await _dbContext.MultipartUploadSessions
+            .FirstOrDefaultAsync(s =>
+                s.UploadToken == dto.UploadToken && s.UploadId == dto.UploadId && !s.IsCompleted && !s.IsAborted);
+
+        if (session == null)
+        {
+            throw new KeyNotFoundException("Active multipart upload session was not found.");
+        }
+
+        var parts = new List<PartPresignedUrlDto>();
+        int endPart = Math.Min(dto.StartPartNumber + dto.Count - 1, session.TotalParts);
+
+        for (int partNumber = dto.StartPartNumber; partNumber <= endPart; partNumber++)
+        {
             var request = new GetPreSignedUrlRequest
             {
                 BucketName = _options.BucketName,
-                Key = storageKey,
+                Key = session.StorageKey,
                 Verb = HttpVerb.PUT,
-                Expires = _dateTimeProvider.UtcNow.AddMinutes(15),
+                UploadId = dto.UploadId,
+                PartNumber = partNumber,
+                Expires = _dateTimeProvider.UtcNow.AddMinutes(30),
                 Protocol = Protocol.HTTP
             };
 
             string presignedUrl = _presignS3Client.GetPreSignedURL(request);
-            items.Add(new PresignedItemDto(file.FileName, presignedUrl, storageKey));
+            parts.Add(new PartPresignedUrlDto(partNumber, presignedUrl));
         }
+
+        return new PresignPartBatchResponseDto(parts);
+    }
+
+    public async Task<bool> CompleteMultipartUploadAsync(CompleteMultipartUploadRequestDto dto)
+    {
+        var session = await _dbContext.MultipartUploadSessions
+            .FirstOrDefaultAsync(s =>
+                s.UploadToken == dto.UploadToken && s.UploadId == dto.UploadId && !s.IsCompleted && !s.IsAborted);
+
+        if (session == null)
+        {
+            throw new KeyNotFoundException("Active multipart upload session was not found.");
+        }
+
+        var partETags = dto.Parts
+            .OrderBy(p => p.PartNumber)
+            .Select(p => new PartETag { PartNumber = p.PartNumber, ETag = p.ETag.Trim('\"') })
+            .ToList();
+
+        var completeRequest = new CompleteMultipartUploadRequest
+        {
+            BucketName = _options.BucketName,
+            Key = session.StorageKey,
+            UploadId = session.UploadId,
+            PartETags = partETags
+        };
+
+        await _internalS3Client.CompleteMultipartUploadAsync(completeRequest);
+
+        session.IsCompleted = true;
+        await _dbContext.SaveChangesAsync();
         
-        return new PresignedUrlResponseDto(uploadToken, items);       
+        return true;
+    }
+
+    public async Task<bool> AbortMultipartUploadAsync(AbortMultipartUploadRequestDto dto)
+    {
+        var session = await _dbContext.MultipartUploadSessions
+            .FirstOrDefaultAsync(s =>
+                s.UploadToken == dto.UploadToken && s.UploadId == dto.UploadId && !s.IsCompleted && !s.IsAborted);
+
+        if (session == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            await _internalS3Client.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+            {
+                BucketName = _options.BucketName,
+                Key = session.StorageKey,
+                UploadId = session.UploadId
+            });
+        }
+        catch (AmazonS3Exception)
+        {
+            
+        }
+
+        session.IsAborted = true;
+        await _dbContext.SaveChangesAsync();
+
+        return true;
     }
 
     public async Task<string> ConfirmAndPersistFileGroupAsync(ConfirmUploadRequestDto dto)
@@ -310,8 +465,7 @@ public class StorageService : IStorageService
         var now = _dateTimeProvider.UtcNow;
         DownloadLease? currentLease = null;
         FileGroup? group = null;
-
-        // Step 2: Handle Existing Lease Check Cleanly
+        
         if (!string.IsNullOrWhiteSpace(existingLeaseToken))
         {
             currentLease = await _dbContext.DownloadLeases
@@ -346,14 +500,11 @@ public class StorageService : IStorageService
                 }
             }
         }
-
-        // Step 3: Atomic Lock & Direct Database Lease Count
+        
         if (currentLease == null)
         {
-            // 1. Begin database transaction
             await using var tx = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
-
-            // 2. Acquire exclusive pessimistic lock on the single row (no JOINs)
+            
             var lockedGroup = await _dbContext.FileGroups
                 .FromSqlInterpolated($"SELECT * FROM \"FileGroups\" WHERE \"ShareToken\" = {shareToken} FOR UPDATE")
                 .FirstOrDefaultAsync(cancellationToken);
@@ -363,8 +514,7 @@ public class StorageService : IStorageService
                 await tx.RollbackAsync(cancellationToken);
                 return new StreamZipResult(StreamZipStatus.NotFound, null);
             }
-
-            // 3. Verify Domain Invariants under Lock
+            
             if (!lockedGroup.VerifyPassword(password))
             {
                 await tx.RollbackAsync(cancellationToken);
@@ -376,8 +526,7 @@ public class StorageService : IStorageService
                 await tx.RollbackAsync(cancellationToken);
                 return new StreamZipResult(StreamZipStatus.Expired, null);
             }
-
-            // 4. Load Child Files explicitly for the locked group
+            
             await _dbContext.Entry(lockedGroup).Collection(g => g.Files).LoadAsync(cancellationToken);
 
             if (lockedGroup.Files.Count == 0)
@@ -385,8 +534,7 @@ public class StorageService : IStorageService
                 await tx.RollbackAsync(cancellationToken);
                 return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
             }
-
-            // 5. Query Active Leases directly from committed database state under the lock
+            
             int activeLeases = await _dbContext.DownloadLeases
                 .CountAsync(
                     l => l.FileGroupId == lockedGroup.Id && l.Status == LeaseStatus.Active && l.ExpiresAt > now, 
@@ -397,8 +545,7 @@ public class StorageService : IStorageService
                 await tx.RollbackAsync(cancellationToken);
                 return new StreamZipResult(StreamZipStatus.CapacityReached, null);
             }
-
-            // 6. Create Lease, Save & Commit
+            
             currentLease = new DownloadLease
             {
                 FileGroupId = lockedGroup.Id,
@@ -510,7 +657,33 @@ public class StorageService : IStorageService
     public async Task<int> PurgeExpiredFilesAsync(CancellationToken cancellationToken = default)
     {
         var now = _dateTimeProvider.UtcNow;
-        
+
+        // 1. Purge and abort expired incomplete multipart sessions
+        var expiredSessions = await _dbContext.MultipartUploadSessions
+            .Where(s => !s.IsCompleted && !s.IsAborted && s.ExpiresAt <= now)
+            .Take(50)
+            .ToListAsync(cancellationToken);
+
+        foreach (var session in expiredSessions)
+        {
+            try
+            {
+                await _internalS3Client.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+                {
+                    BucketName = _options.BucketName,
+                    Key = session.StorageKey,
+                    UploadId = session.UploadId
+                }, cancellationToken);
+            }
+            catch (AmazonS3Exception)
+            {
+                // S3 upload may already be aborted or expired on bucket lifecycle
+            }
+
+            session.IsAborted = true;
+        }
+
+        // 2. Query expired file groups (by expiration time or exhausted download limits)
         var expiredGroups = await _dbContext.FileGroups
             .Include(g => g.Files)
             .Where(g => !g.IsDeleted && (
@@ -520,8 +693,15 @@ public class StorageService : IStorageService
             .OrderBy(g => g.CreatedAt)
             .Take(100)
             .ToListAsync(cancellationToken);
-        
-        if (expiredGroups.Count == 0) return 0;
+
+        if (expiredGroups.Count == 0)
+        {
+            if (expiredSessions.Count > 0)
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+            return 0;
+        }
 
         var allKeysToDelete = expiredGroups
             .SelectMany(g => g.Files)
@@ -542,7 +722,6 @@ public class StorageService : IStorageService
             }
             catch (AmazonS3Exception)
             {
-                
             }
         }
 
@@ -551,7 +730,7 @@ public class StorageService : IStorageService
             group.IsDeleted = true;
             await _cache.RemoveAsync($"file_group:{group.ShareToken}", cancellationToken);
         }
-        
+
         await _dbContext.SaveChangesAsync(cancellationToken);
         return expiredGroups.Count;       
     }

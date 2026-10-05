@@ -36,3 +36,29 @@ public record ConfirmUploadRequestDto(
 public record DownloadRequestDto(
     string? Password
 ); 
+
+public record PresignPartBatchRequestDto(
+    string UploadToken,
+    string StorageKey,
+    string UploadId,
+    int StartPartNumber,
+    int Count
+);
+
+public record CompletedPartInputDto(
+    int PartNumber,
+    string ETag
+);
+
+public record CompleteMultipartUploadRequestDto(
+    string UploadToken,
+    string StorageKey,
+    string UploadId,
+    List<CompletedPartInputDto> Parts
+);
+
+public record AbortMultipartUploadRequestDto(
+    string UploadToken,
+    string StorageKey,
+    string UploadId
+);

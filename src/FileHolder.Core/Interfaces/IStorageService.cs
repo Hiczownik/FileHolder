@@ -5,6 +5,9 @@ namespace FileHolder.Core.Interfaces;
 public interface IStorageService
 {
     Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto request);
+    Task<PresignPartBatchResponseDto> PresignPartBatchAsync(PresignPartBatchRequestDto dto);
+    Task<bool> CompleteMultipartUploadAsync(CompleteMultipartUploadRequestDto dto);
+    Task<bool> AbortMultipartUploadAsync(AbortMultipartUploadRequestDto dto);
     Task<string> ConfirmAndPersistFileGroupAsync(ConfirmUploadRequestDto request);
     Task<FileGroupMetadataResponseDto?> GetGroupMetadataByTokenAsync(string shareToken);
     Task<UnlockResult> UnlockGroupAsync(string shareToken, string password);

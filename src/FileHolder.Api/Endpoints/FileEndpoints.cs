@@ -17,6 +17,21 @@ public static class FileEndpoints
             .RequireRateLimiting("UploadPolicy")
             .WithName("GetPresignedUploadUrl");
 
+        var multipart = group.MapGroup("/multipart")
+            .WithTags("Multipart Uploads");
+
+        multipart.MapPost("/presign-batch", PresignPartBatch)
+            .RequireRateLimiting("UploadPolicy")
+            .WithName("PresignPartBatch");
+
+        multipart.MapPost("/complete", CompleteMultipartUpload)
+            .RequireRateLimiting("UploadPolicy")
+            .WithName("CompleteMultipartUpload");
+        
+        multipart.MapPost("/abort", AbortMultipartUpload)
+            .RequireRateLimiting("UploadPolicy")
+            .WithName("AbortMultipartUpload");
+
         group.MapPost("/confirm", ConfirmUpload)
             .AddEndpointFilter<ValidationFilter<ConfirmUploadRequestDto>>()
             .WithName("ConfirmUpload");
@@ -45,6 +60,30 @@ public static class FileEndpoints
         return TypedResults.Ok(response);
     }
 
+    public static async Task<Ok<PresignPartBatchResponseDto>> PresignPartBatch(
+        PresignPartBatchRequestDto dto,
+        IStorageService storageService)
+    {
+        var response = await storageService.PresignPartBatchAsync(dto);
+        return TypedResults.Ok(response);
+    }
+
+    public static async Task<Ok<bool>> CompleteMultipartUpload(
+        CompleteMultipartUploadRequestDto dto,
+        IStorageService storageService)
+    {
+        var success = await storageService.CompleteMultipartUploadAsync(dto);
+        return TypedResults.Ok(success);
+    }
+
+    public static async Task<Ok<bool>> AbortMultipartUpload(
+        AbortMultipartUploadRequestDto dto,
+        IStorageService storageService)
+    {
+        var success = await storageService.AbortMultipartUploadAsync(dto);
+        return TypedResults.Ok(success);
+    }
+    
     public static async Task<Results<Ok<FileGroupMetadataResponseDto>, NotFound, ProblemHttpResult>> GetGroupMetadata(
         string shareToken,
         IStorageService storageService)

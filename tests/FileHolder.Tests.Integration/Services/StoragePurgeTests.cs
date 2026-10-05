@@ -137,4 +137,58 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
             (metadataA == null || metadataA.IsExpired).Should().BeTrue();
         }
     }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_WhenIncompleteMultipartSessionsExpired_AbortsAndMarksAborted()
+    {
+        string targetUploadId = "expired_upload_id_" + Guid.NewGuid().ToString("N");
+        string targetStorageKey = "uploads/expired_part_file.bin";
+
+        var utcNow = DateTime.UtcNow;
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var expiredSession = new MultipartUploadSession
+            {
+                UploadToken = Guid.NewGuid().ToString("N"),
+                UploadId = targetUploadId,
+                StorageKey = targetStorageKey,
+                FileName = "expired_part_file.bin",
+                ContentType = "application/octet-stream",
+                TotalSizeBytes = 100 * 1024 * 1024,
+                PartSizeBytes = 16 * 1024 * 1024,
+                TotalParts = 7,
+                IsCompleted = false,
+                IsAborted = false,
+                ExpiresAt = DateTime.SpecifyKind(utcNow.AddHours(-2), DateTimeKind.Utc),
+                CreatedAt = DateTime.SpecifyKind(utcNow.AddHours(-26), DateTimeKind.Utc)
+            };
+
+            dbContext.MultipartUploadSessions.Add(expiredSession);
+            await dbContext.SaveChangesAsync();
+        }
+
+        factory.MockS3Client.ClearReceivedCalls();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var storageService = scope.ServiceProvider.GetRequiredService<IStorageService>();
+            await storageService.PurgeExpiredFilesAsync(CancellationToken.None);
+        }
+        
+        await factory.MockS3Client.Received(1).AbortMultipartUploadAsync(
+            Arg.Is<AbortMultipartUploadRequest>(r => r.UploadId == targetUploadId && r.Key == targetStorageKey),
+            Arg.Any<CancellationToken>()
+        );
+        
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var session = await dbContext.MultipartUploadSessions.FirstOrDefaultAsync(s => s.UploadId == targetUploadId);
+            session.Should().NotBeNull();
+            session!.IsAborted.Should().BeTrue();
+        }
+    }
 }

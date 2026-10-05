@@ -1,13 +1,17 @@
 using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
+using Amazon.S3.Model;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
+using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
 using FileHolder.Tests.Integration.Fixtures;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 
 namespace FileHolder.Tests.Integration.Endpoints;
 
@@ -455,6 +459,126 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         var response = await _client.GetAsync("/api/v1/files/non_existent_token_999");
         
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    #endregion
+    
+   #region 6. Direct-to-S3 Presigned Multipart Tests
+
+    [Fact]
+    public async Task GetPresignedUrl_WhenFileExceeds50MB_InitiatesMultipartAndPresignsPartBatch()
+    {
+        long fileSize120MB = 120L * 1024 * 1024; // 125,829,120 bytes
+
+        var request = new CreatePresignedUrlRequestDto(
+            Title: "Large Video Asset",
+            Files: new List<FileItemInputDto>
+            {
+                new("raw_footage.mp4", "video/mp4", fileSize120MB)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 10,
+            Password: null,
+            IsEncrypted: false
+        );
+
+        var response = await _client.PostAsJsonAsync("/api/v1/files/presign", request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var result = await response.Content.ReadFromJsonAsync<PresignedUrlResponseDto>();
+        result.Should().NotBeNull();
+        result!.UploadToken.Should().NotBeNullOrWhiteSpace();
+        result.Items.Should().HaveCount(1);
+
+        var item = result.Items[0];
+        item.UploadMode.Should().Be(UploadMode.Multipart);
+        item.TotalParts.Should().Be(8);
+        item.PartSizeBytes.Should().Be(16_777_216L); // 16 MB
+        item.UploadId.Should().NotBeNullOrWhiteSpace();
+        item.UploadUrl.Should().BeNull();
+
+        // Presign batch 1..4
+        var batchRequest = new PresignPartBatchRequestDto(
+            UploadToken: result.UploadToken,
+            StorageKey: item.StorageKey,
+            UploadId: item.UploadId!,
+            StartPartNumber: 1,
+            Count: 4
+        );
+
+        var batchResponse = await _client.PostAsJsonAsync("/api/v1/files/multipart/presign-batch", batchRequest);
+        batchResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var batchResult = await batchResponse.Content.ReadFromJsonAsync<PresignPartBatchResponseDto>();
+        batchResult.Should().NotBeNull();
+        batchResult!.Parts.Should().HaveCount(4);
+        batchResult.Parts[0].PartNumber.Should().Be(1);
+        batchResult.Parts[0].UploadUrl.Should().Contain("partNumber=1");
+        batchResult.Parts[3].PartNumber.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task CompleteMultipartUpload_WithValidParts_MarksSessionCompletedAndAllowsConfirm()
+    {
+        long fileSize120Mb = 120L * 1024 * 1024;
+
+        var presignRequest = new CreatePresignedUrlRequestDto(
+            Title: "Archive File",
+            Files: new List<FileItemInputDto>
+            {
+                new("archive.tar", "application/x-tar", fileSize120Mb)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 10,
+            Password: null,
+            IsEncrypted: false
+        );
+
+        var presignResponse = await _client.PostAsJsonAsync("/api/v1/files/presign", presignRequest);
+        var presignResult = await presignResponse.Content.ReadFromJsonAsync<PresignedUrlResponseDto>();
+        var item = presignResult!.Items[0];
+
+        // Seed object size in S3 mock so ConfirmUpload validation succeeds
+        factory.SeedS3Object(item.StorageKey, fileSize120Mb);
+
+        var parts = Enumerable.Range(1, 8)
+            .Select(i => new CompletedPartInputDto(i, $"\"mock_etag_{i}\""))
+            .ToList();
+
+        var completeRequest = new CompleteMultipartUploadRequestDto(
+            UploadToken: presignResult.UploadToken,
+            StorageKey: item.StorageKey,
+            UploadId: item.UploadId!,
+            Parts: parts
+        );
+
+        var completeResponse = await _client.PostAsJsonAsync("/api/v1/files/multipart/complete", completeRequest);
+        completeResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Verify in DB that session is marked Completed
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var session = await dbContext.MultipartUploadSessions.FirstOrDefaultAsync(s => s.UploadId == item.UploadId);
+            session.Should().NotBeNull();
+            session!.IsCompleted.Should().BeTrue();
+        }
+
+        // Complete the bundle via /confirm
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: presignResult.UploadToken,
+            Title: "Archive File",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new(item.StorageKey, "archive.tar", "application/x-tar", fileSize120Mb)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 10,
+            Password: null
+        );
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     #endregion

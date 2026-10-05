@@ -6,9 +6,11 @@ using FileHolder.Infrastructure.Data;
 using FileHolder.Infrastructure.Workers;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Testcontainers.PostgreSql;
 
@@ -37,6 +39,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
 
         MockS3Client.GetPreSignedURL(Arg.Any<GetPreSignedUrlRequest>())
             .Returns("http://localhost:9000/fileholder-bucket/test_key?sig=dummy");
+
+        MockS3Client.InitiateMultipartUploadAsync(Arg.Any<InitiateMultipartUploadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => new InitiateMultipartUploadResponse
+            {
+                UploadId = "mock_upload_id_" + Guid.NewGuid().ToString("N")
+            });
+
+        MockS3Client.CompleteMultipartUploadAsync(Arg.Any<CompleteMultipartUploadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new CompleteMultipartUploadResponse { ETag = "\"mock_complete_etag\"" });
+
+        MockS3Client.AbortMultipartUploadAsync(Arg.Any<AbortMultipartUploadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new AbortMultipartUploadResponse());
 
         MockS3Client.GetObjectMetadataAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
@@ -93,7 +107,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
 
             services.AddSingleton(MockS3Client);
 
-            // Remove the background purge worker during integration testing
+            // Remove background purge worker during integration testing
             var cleanupWorkerDescriptor = services.SingleOrDefault(d =>
                 d.ImplementationType == typeof(FileCleanupWorker) ||
                 (d.ServiceType == typeof(IHostedService) && d.ImplementationFactory?.Method.ReturnType == typeof(FileCleanupWorker)));
@@ -102,6 +116,34 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
             {
                 services.Remove(cleanupWorkerDescriptor);
             }
+
+            // 1. Remove the existing RateLimiter configuration registered in Program.cs
+            var rateLimiterDescriptors = services
+                .Where(d => d.ServiceType == typeof(IConfigureOptions<RateLimiterOptions>))
+                .ToList();
+
+            foreach (var descriptor in rateLimiterDescriptors)
+            {
+                services.Remove(descriptor);
+            }
+
+            // 2. Register relaxed test policies (10,000 permits) cleanly without name collision
+            services.Configure<RateLimiterOptions>(options =>
+            {
+                options.RejectionStatusCode = Microsoft.AspNetCore.Http.StatusCodes.Status429TooManyRequests;
+
+                options.AddFixedWindowLimiter("UploadPolicy", policy =>
+                {
+                    policy.PermitLimit = 10_000;
+                    policy.Window = TimeSpan.FromMinutes(1);
+                });
+
+                options.AddFixedWindowLimiter("DownloadPolicy", policy =>
+                {
+                    policy.PermitLimit = 10_000;
+                    policy.Window = TimeSpan.FromMinutes(1);
+                });
+            });
 
             var sp = services.BuildServiceProvider();
             using var scope = sp.CreateScope();

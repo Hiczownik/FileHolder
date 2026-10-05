@@ -14,8 +14,8 @@ public class CreatePresignedUrlValidator : AbstractValidator<CreatePresignedUrlR
             .WithMessage("You can upload between 1 and 50 files per share bundle");
 
         RuleFor(x => x.Files)
-            .Must(files => files == null || files.Sum(f => f.SizeBytes) <= 5_368_709_120)
-            .WithMessage("Total aggregate batch file size cannot exceed 5 GB.");
+            .Must(files => files == null || files.Sum(f => f.SizeBytes) <= 5_497_558_138_880L) // 5 TB
+            .WithMessage("Total aggregate batch file size cannot exceed 5 TB.");
 
         // 1 GB + 64 KB margin for IV, AES-GCM authentication tag, and container headers
         const long maxEncryptedPayloadBytes = 1_073_741_824L + 65_536L;
