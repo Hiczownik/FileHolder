@@ -7,7 +7,6 @@ using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
-using Microsoft.Extensions.Logging;
 
 namespace FileHolder.Infrastructure.Services;
 
@@ -15,8 +14,8 @@ public class BundleStreamService(
     AppDbContext dbContext,
     IS3StorageProvider storageProvider,
     HybridCache cache,
-    IDateTimeProvider dateTimeProvider,
-    ILogger<BundleStreamService> logger)
+    IDateTimeProvider dateTimeProvider
+    )
     : IBundleStreamService
 {
     private static readonly HashSet<string> PreCompressedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -29,8 +28,7 @@ public class BundleStreamService(
     private readonly IS3StorageProvider _storageProvider = storageProvider;
     private readonly HybridCache _cache = cache;
     private readonly IDateTimeProvider _dateTimeProvider = dateTimeProvider;
-    private readonly ILogger<BundleStreamService> _logger = logger;
-
+    
     public async Task<AcquireLeaseResult> AcquireLeaseAsync(string shareToken, string? password, string? existingLeaseToken, CancellationToken ct = default)
     {
         var now = _dateTimeProvider.UtcNow;

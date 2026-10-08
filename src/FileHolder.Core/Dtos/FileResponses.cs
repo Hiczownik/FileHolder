@@ -1,7 +1,9 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Serialization;
 
 namespace FileHolder.Core.Dtos;
 
+[SuppressMessage("Naming", "CA1720:Identifiers should not contain type names", Justification = "Refers to single-file upload mode, not System.Single")]
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum UploadMode
 {

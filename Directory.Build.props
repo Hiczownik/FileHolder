@@ -1,0 +1,29 @@
+<Project>
+    <PropertyGroup>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+        <AnalysisLevel>latest-recommended</AnalysisLevel>
+        <!-- CA1848: LoggerMessage delegates recommendation -->
+        <!-- CA1873: Argument evaluation in logging methods -->
+        <NoWarn>$(NoWarn);CA1848;CA1873</NoWarn>
+    </PropertyGroup>
+    
+    <ItemGroup>
+        <PackageReference Include="SonarAnalyzer.CSharp" Version="10.*">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; native; contentFiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+    </ItemGroup>
+    
+    <PropertyGroup Condition="$(MSBuildProjectName.Contains('Tests'))">
+        <!--
+          CA1707: Identifiers should not contain underscores (allows BDD test naming)
+          S100:   Methods should be PascalCase
+          S2699:  Tests should contain assertions (allows FluentAssertions .Should())
+          S1186:  Methods should not be empty
+          S8969:  Redundant null-forgiving operators (common in test assertions)
+          CA1806: Unused results (common in assertion evaluations)
+          S6966:  Async method preference in test mock setups
+        -->
+        <NoWarn>$(NoWarn);CA1707;S100;S2699;S1186;S8969;CA1806;S6966</NoWarn>
+    </PropertyGroup>
+</Project>

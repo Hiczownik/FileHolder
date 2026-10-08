@@ -11,8 +11,8 @@ public class MultipartUploadSession
     public long TotalSizeBytes { get; set; }
     public long PartSizeBytes { get; set; }
     public int TotalParts { get; set; }
-    public bool IsCompleted { get; set; } = false;
-    public bool IsAborted { get; set; } = false;
+    public bool IsCompleted { get; set; }
+    public bool IsAborted { get; set; }
     public DateTime ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

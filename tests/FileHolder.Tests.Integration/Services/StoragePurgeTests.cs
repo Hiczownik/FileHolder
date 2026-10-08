@@ -124,6 +124,7 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
             // S3 Deletion Invariants: Group A and B keys deleted, Control Group C kept untouched
             await factory.MockS3Client.Received(1).DeleteObjectsAsync(
                 Arg.Is<DeleteObjectsRequest>(req =>
+                    req != null &&
                     req.Objects.Any(o => o.Key == "uploads/purge_a.pdf") &&
                     req.Objects.Any(o => o.Key == "uploads/purge_b.png") &&
                     req.Objects.All(o => o.Key != "uploads/keep_c.pdf")
@@ -179,7 +180,7 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
         }
 
         await factory.MockS3Client.Received(1).AbortMultipartUploadAsync(
-            Arg.Is<AbortMultipartUploadRequest>(r => r.UploadId == targetUploadId && r.Key == targetStorageKey),
+            Arg.Is<AbortMultipartUploadRequest>(r => r != null && r.UploadId == targetUploadId && r.Key == targetStorageKey),
             Arg.Any<CancellationToken>()
         );
 
@@ -188,7 +189,7 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var session = await dbContext.MultipartUploadSessions.FirstOrDefaultAsync(s => s.UploadId == targetUploadId);
             session.Should().NotBeNull();
-            session!.IsAborted.Should().BeTrue();
+            session.IsAborted.Should().BeTrue();
         }
     }
 }

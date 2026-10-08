@@ -19,7 +19,7 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Host.UseSerilog((ctx, lc) => lc.WriteTo.Console());
+builder.Host.UseSerilog((ctx, lc) => lc.WriteTo.Console(formatProvider: System.Globalization.CultureInfo.InvariantCulture));
 
 builder.Services.AddOptions<StorageOptions>()
     .Bind(builder.Configuration.GetSection(StorageOptions.SectionName))
@@ -157,7 +157,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    dbContext.Database.EnsureCreated();
+    await dbContext.Database.EnsureCreatedAsync(CancellationToken.None);
 }
 
 app.UseExceptionHandler();
@@ -181,6 +181,9 @@ if (app.Environment.IsDevelopment())
 app.MapFileEndpoints();
 app.MapHealthEndpoints();
 
-app.Run();
+await app.RunAsync(CancellationToken.None);
 
-public partial class Program { }
+public partial class Program
+{
+    protected Program() { }
+}

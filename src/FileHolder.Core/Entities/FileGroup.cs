@@ -9,12 +9,12 @@ public class FileGroup
     public string? Title { get; set; }
     public string? PasswordHash { get; set; }
     public int? MaxDownloads { get; set; }
-    public int DownloadCount { get; set; } = 0;
+    public int DownloadCount { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-    public bool IsDeleted { get; set; } = false;
+    public bool IsDeleted { get; set; }
 
-    public bool IsEncrypted { get; set; } = false;
+    public bool IsEncrypted { get; set; }
     public string? EncryptedManifest { get; set; }
 
     public ICollection<SharedFile> Files { get; set; } = new List<SharedFile>();

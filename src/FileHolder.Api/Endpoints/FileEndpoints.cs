@@ -195,7 +195,12 @@ public static class FileEndpoints
         }
 
         var safeTitle = leaseResult.BundleTitle != null
-            ? System.Text.RegularExpressions.Regex.Replace(leaseResult.BundleTitle, @"[^\w\.\-]", "_")
+            ? System.Text.RegularExpressions.Regex.Replace(
+                leaseResult.BundleTitle,
+                @"[^\w.-]",
+                "_",
+                System.Text.RegularExpressions.RegexOptions.None,
+                    TimeSpan.FromSeconds(1))
             : "bundle";
 
         context.Response.ContentType = "application/zip";

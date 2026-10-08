@@ -1,4 +1,3 @@
-using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
@@ -6,7 +5,6 @@ using FileHolder.Core.Security;
 using FileHolder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
-using Microsoft.Extensions.Options;
 
 namespace FileHolder.Infrastructure.Services;
 
@@ -20,15 +18,13 @@ public class FileGroupService
     private readonly IS3StorageProvider _storageProvider;
     private readonly HybridCache _cache;
     private readonly IDateTimeProvider _dateTimeProvider;
-    private readonly StorageOptions _options;
 
-    public FileGroupService(AppDbContext dbContext, IS3StorageProvider storageProvider, HybridCache cache, IDateTimeProvider dateTimeProvider, IOptions<StorageOptions> options)
+    public FileGroupService(AppDbContext dbContext, IS3StorageProvider storageProvider, HybridCache cache, IDateTimeProvider dateTimeProvider)
     {
         _dbContext = dbContext;
         _storageProvider = storageProvider;
         _cache = cache;
         _dateTimeProvider = dateTimeProvider;
-        _options = options.Value;
     }
 
     private static (long PartSizeBytes, int TotalParts) CalculatePartSizing(long totalSizeBytes)

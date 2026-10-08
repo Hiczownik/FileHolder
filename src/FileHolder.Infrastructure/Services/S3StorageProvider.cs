@@ -110,7 +110,7 @@ public class S3StorageProvider(
         }
         catch (AmazonS3Exception)
         {
-
+            // Ignored: Multipart upload may have already been aborted or completed
         }
     }
 
@@ -160,7 +160,7 @@ public class S3StorageProvider(
         }
         catch (AmazonS3Exception)
         {
-
+            // Ignored: S3 objects may already be deleted or non-existent
         }
     }
 }
