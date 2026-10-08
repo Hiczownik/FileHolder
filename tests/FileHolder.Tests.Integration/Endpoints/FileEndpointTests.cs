@@ -449,6 +449,140 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
+    [Fact]
+    public async Task StreamBundleZip_WhenClientAbortsMidStream_ReleasesLeaseImmediately_AllowingSubsequentDownload()
+    {
+        factory.SeedS3Object("uploads/abort_file_1.pdf", 1024 * 1024);
+        factory.SeedS3Object("uploads/abort_file_2.png", 1024 * 1024);
+
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: "abort_test_token",
+            Title: "Abort Mid-Stream Bundle",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new("uploads/abort_file_1.pdf", "abort_1.pdf", "application/pdf", 1024 * 1024),
+                new("uploads/abort_file_2.png", "abort_2.png", "image/png", 1024 * 1024)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 1,
+            Password: null
+        );
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
+        shareToken.Should().NotBeNullOrWhiteSpace();
+
+        bool isFirstCall = true;
+        var dummyBytes = "Mock payload for abort testing"u8.ToArray();
+
+        factory.MockS3Client.GetObjectAsync(
+                Arg.Is<GetObjectRequest>(r => r != null && r.Key == "uploads/abort_file_1.pdf"),
+                Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                if (isFirstCall)
+                {
+                    isFirstCall = false;
+                    return new GetObjectResponse
+                    {
+                        ResponseStream = new ThrottledStream(dummyBytes),
+                        ContentLength = dummyBytes.Length
+                    };
+                }
+
+                // Client 2 receives an unthrottled stream
+                return new GetObjectResponse
+                {
+                    ResponseStream = new MemoryStream(dummyBytes),
+                    ContentLength = dummyBytes.Length
+                };
+            });
+        
+        // 1. Client 1 initiates stream and aborts mid-stream
+        using var cts = new CancellationTokenSource();
+        using var abortRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/files/{shareToken}/download-all");
+        abortRequest.Content = JsonContent.Create(new DownloadRequestDto(null));
+
+        string? initialLeaseToken = null;
+        try
+        {
+            using var response1 = await _client.SendAsync(abortRequest, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+            response1.StatusCode.Should().Be(HttpStatusCode.OK);
+            initialLeaseToken = response1.Headers.GetValues("X-Download-Lease").FirstOrDefault();
+
+            // Read the initial chunk (using CancellationToken.None so this read succeeds)
+            var stream = await response1.Content.ReadAsStreamAsync(CancellationToken.None);
+            Memory<byte> buffer = new byte[64];
+            int bytesRead = await stream.ReadAsync(buffer, CancellationToken.None);
+            bytesRead.Should().BeGreaterThan(0, "the server should have begun streaming bytes");
+
+            // Abruptly sever the client connection mid-stream
+            await cts.CancelAsync();
+            await stream.DisposeAsync(); 
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or HttpRequestException or IOException)
+        {
+            // Expected client abortion
+        }
+
+        initialLeaseToken.Should().NotBeNullOrWhiteSpace();
+
+        // 2. Verify in DB that the initial lease was marked Expired via ReleaseLeaseAsync
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            for (int i = 0; i < 50; i++)
+            {
+                var isExpired = await dbContext.DownloadLeases
+                    .AsNoTracking()
+                    .AnyAsync(l => l.LeaseToken == initialLeaseToken && l.Status == LeaseStatus.Expired, CancellationToken.None);
+
+                if (isExpired)
+                {
+                    break;
+                }
+
+                await Task.Delay(50, CancellationToken.None);
+            }
+
+            var initialLease = await dbContext.DownloadLeases
+                .AsNoTracking()
+                .FirstOrDefaultAsync(l => l.LeaseToken == initialLeaseToken, CancellationToken.None);
+
+            initialLease.Should().NotBeNull();
+            initialLease!.Status.Should().Be(LeaseStatus.Expired);
+        }
+
+        // 3. Client 2 immediately requests download-all; must succeed with 200 OK (slot reclaimed)
+        var response2 = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/download-all",
+            new DownloadRequestDto(null), CancellationToken.None);
+
+        response2.StatusCode.Should().Be(HttpStatusCode.OK);
+        response2.Content.Headers.ContentType?.MediaType.Should().Be("application/zip");
+        var secondLeaseToken = response2.Headers.GetValues("X-Download-Lease").FirstOrDefault();
+        secondLeaseToken.Should().NotBeNullOrWhiteSpace();
+        secondLeaseToken.Should().NotBe(initialLeaseToken);
+
+        // 4. Verify DB state: first lease Expired, second lease Completed, DownloadCount incremented
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var group = await dbContext.FileGroups
+                .Include(g => g.Leases)
+                .FirstOrDefaultAsync(g => g.ShareToken == shareToken, CancellationToken.None);
+
+            group.Should().NotBeNull();
+            group!.DownloadCount.Should().Be(1);
+
+            var leases = group.Leases.ToList();
+            leases.Should().ContainSingle(l => l.LeaseToken == initialLeaseToken && l.Status == LeaseStatus.Expired);
+            leases.Should().ContainSingle(l => l.LeaseToken == secondLeaseToken && l.Status == LeaseStatus.Completed);
+        }
+    }
+    
     #endregion
 
     #region 5. Expiration & Not Found Tests
@@ -468,13 +602,13 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task GetPresignedUrl_WhenFileExceeds50MB_InitiatesMultipartAndPresignsPartBatch()
     {
-        long fileSize120MB = 120L * 1024 * 1024; // 125,829,120 bytes
+        long fileSize120Mb = 120L * 1024 * 1024; // 125,829,120 bytes
 
         var request = new CreatePresignedUrlRequestDto(
             Title: "Large Video Asset",
             Files: new List<FileItemInputDto>
             {
-                new("raw_footage.mp4", "video/mp4", fileSize120MB)
+                new("raw_footage.mp4", "video/mp4", fileSize120Mb)
             },
             ExpireInHours: 24,
             MaxDownloads: 10,
@@ -582,4 +716,18 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     #endregion
+    
+    private sealed class ThrottledStream(byte[] data) : MemoryStream(data)
+    {
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await base.ReadAsync(buffer, cancellationToken);
+            if (read > 0)
+            {
+                await Task.Delay(2000, cancellationToken);
+            }
+
+            return read;
+        }
+    }
 }

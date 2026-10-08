@@ -208,14 +208,33 @@ public static class FileEndpoints
         context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
         context.Response.Headers.Append("X-Download-Lease", leaseResult.LeaseToken);
 
-        await bundleStreamService.StreamArchiveAsync(leaseResult.Files!, context.Response.Body, context.RequestAborted);
+        try
+        {
+            await bundleStreamService.StreamArchiveAsync(
+                leaseResult.Files!,
+                context.Response.Body,
+                context.RequestAborted
+            );
 
-        await bundleStreamService.FinalizeLeaseAsync(
-            leaseResult.LeaseToken!,
-            leaseResult.FileGroupId!.Value,
-            shareToken,
-            CancellationToken.None);
+            await bundleStreamService.FinalizeLeaseAsync(
+                leaseResult.LeaseToken!,
+                leaseResult.FileGroupId!.Value,
+                shareToken,
+                CancellationToken.None
+            );
 
+        }
+        catch (Exception)
+        {
+            await bundleStreamService.ReleaseLeaseAsync(
+                leaseResult.LeaseToken!,
+                leaseResult.FileGroupId!.Value,
+                CancellationToken.None
+            );
+            
+            throw;
+        }
+        
         return TypedResults.Empty;
     }
 

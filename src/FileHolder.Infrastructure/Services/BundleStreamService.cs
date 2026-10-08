@@ -154,49 +154,65 @@ public class BundleStreamService(
             useSynchronizationContext: false));
 
         var fileList = files.ToList();
-
+        
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        
         var producerTask = Task.Run(async () =>
         {
             Exception? producerException = null;
             try
             {
-                await using var pipeStream = pipe.Writer.AsStream();
-                await using (var zipArchive = new ZipArchive(pipeStream, ZipArchiveMode.Create, leaveOpen: true))
+                await using var pipeStream = pipe.Writer.AsStream(leaveOpen: true);
+                await using var zipArchive = new ZipArchive(pipeStream, ZipArchiveMode.Create, leaveOpen: true);
+                foreach (var file in fileList)
                 {
-                    foreach (var file in fileList)
-                    {
-                        ct.ThrowIfCancellationRequested();
+                    // ReSharper disable AccessToDisposedClosure
+                    linkedCts.Token.ThrowIfCancellationRequested();
 
-                        var compressionLevel = DetermineCompressionLevel(file.OriginalFileName);
-                        var entry = zipArchive.CreateEntry(file.OriginalFileName, compressionLevel);
+                    var compressionLevel = DetermineCompressionLevel(file.OriginalFileName);
+                    var entry = zipArchive.CreateEntry(file.OriginalFileName, compressionLevel);
 
-                        await using var entryStream = await entry.OpenAsync(ct);
-                        await using var s3Stream = await _storageProvider.OpenReadStreamAsync(file.StorageKey, ct);
+                    await using var entryStream = await entry.OpenAsync(linkedCts.Token);
+                    await using var s3Stream = await _storageProvider.OpenReadStreamAsync(file.StorageKey, linkedCts.Token);
 
-                        await s3Stream.CopyToAsync(entryStream, 65536, ct);
-                    }
+                    await s3Stream.CopyToAsync(entryStream, 65536, linkedCts.Token);
                 }
             }
             catch (Exception ex)
             {
                 producerException = ex;
+                throw;
             }
             finally
             {
                 await pipe.Writer.CompleteAsync(producerException);
             }
-        }, ct);
+        }, linkedCts.Token);
+
+        Exception? consumerException = null;
 
         try
         {
-            await pipe.Reader.CopyToAsync(destinationStream, ct);
+            await pipe.Reader.CopyToAsync(destinationStream, linkedCts.Token);
+        }
+        catch (Exception ex)
+        {
+            consumerException = ex;
+            await linkedCts.CancelAsync();
+            throw;
         }
         finally
         {
-            await pipe.Reader.CompleteAsync();
+            await pipe.Reader.CompleteAsync(consumerException);
+            try
+            {
+                await producerTask;
+            }
+            catch when (consumerException != null)
+            {
+                // preserve the original consumer/client exception
+            }
         }
-
-        await producerTask;
     }
 
     public async Task FinalizeLeaseAsync(string leaseToken, Guid fileGroupId, string shareToken, CancellationToken ct = default)
@@ -236,6 +252,28 @@ public class BundleStreamService(
                 {
                     await _storageProvider.DeleteObjectsAsync(keysToDelete, CancellationToken.None);
                 }
+            }
+        }
+    }
+
+    public async Task ReleaseLeaseAsync(string leaseToken, Guid fileGroupId, CancellationToken ct = default)
+    {
+        var lease = await _dbContext.DownloadLeases
+            .Include(l => l.FileGroup)
+            .FirstOrDefaultAsync(l => l.LeaseToken == leaseToken &&
+                                      l.FileGroupId == fileGroupId && 
+                                      l.Status == LeaseStatus.Active, ct);
+
+        if (lease != null)
+        {
+            lease.Status = LeaseStatus.Expired;
+            lease.CompletedAt = _dateTimeProvider.UtcNow;
+
+            await _dbContext.SaveChangesAsync(ct);
+
+            if (lease.FileGroup != null)
+            {
+                await _cache.RemoveAsync($"file_group:{lease.FileGroup.ShareToken}", ct);
             }
         }
     }

@@ -23,4 +23,10 @@ public interface IBundleStreamService
         string shareToken,
         CancellationToken ct = default
     );
+
+    Task ReleaseLeaseAsync(
+        string leaseToken,
+        Guid fileGroupId,
+        CancellationToken ct = default
+    );
 }
