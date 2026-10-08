@@ -1,3 +1,5 @@
+export type UploadMode = 'Single' | 'Multipart';
+
 export interface FileItemInput {
     fileName: string;
     contentType: string;
@@ -10,17 +12,57 @@ export interface CreatePresignedUrlRequest {
     expireInHours?: number;
     maxDownloads?: number;
     password?: string;
+    isEncrypted?: boolean;
 }
 
 export interface PresignedItem {
     fileName: string;
-    uploadUrl: string;
     storageKey: string;
+    uploadMode: UploadMode;
+    uploadUrl?: string;
+    uploadId?: string | null;
+    partSizeBytes?: number | null;
+    totalParts?: number | null;
 }
 
 export interface PresignedUrlResponse {
     uploadToken: string;
     items: PresignedItem[];
+}
+
+export interface PresignPartBatchRequest {
+    uploadToken: string;
+    storageKey: string;
+    uploadId: string;
+    startPartNumber: number;
+    count: number;
+}
+
+export interface PartPresignedUrl {
+    partNumber: number;
+    uploadUrl: string;
+}
+
+export interface PresignPartBatchResponse {
+    parts: PartPresignedUrl[];
+}
+
+export interface CompletedPartInput {
+    partNumber: number;
+    eTag: string;
+}
+
+export interface CompleteMultipartUploadRequest {
+    uploadToken: string;
+    storageKey: string;
+    uploadId: string;
+    parts: CompletedPartInput[];
+}
+
+export interface AbortMultipartUploadRequest {
+    uploadToken: string;
+    storageKey: string;
+    uploadId: string;
 }
 
 export interface ConfirmedFileItem {
@@ -37,6 +79,8 @@ export interface ConfirmUploadRequest {
     expireInHours?: number;
     maxDownloads?: number;
     password?: string;
+    isEncrypted?: boolean;
+    encryptedManifest?: string;
 }
 
 export interface FileItemMetadata {
@@ -52,6 +96,9 @@ export interface FileGroupMetadataResponse {
     totalSizeBytes: number;
     fileCount: number;
     requiresPassword: boolean;
+    isUnlocked: boolean;
+    isEncrypted: boolean;
+    encryptedManifest?: string;
     expiresAt?: string;
     remainingDownloads?: number;
     isExpired: boolean;

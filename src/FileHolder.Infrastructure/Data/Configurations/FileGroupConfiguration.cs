@@ -9,9 +9,9 @@ public class FileGroupConfiguration : IEntityTypeConfiguration<FileGroup>
     public void Configure(EntityTypeBuilder<FileGroup> builder)
     {
         builder.ToTable("FileGroups");
-        
+
         builder.HasKey(g => g.Id);
-        
+
         builder.Property(g => g.ShareToken)
             .IsRequired()
             .HasMaxLength(32);
@@ -36,7 +36,7 @@ public class FileGroupConfiguration : IEntityTypeConfiguration<FileGroup>
 
         builder.HasIndex(g => new { g.ExpiresAt, g.DownloadCount, g.MaxDownloads })
             .HasFilter("\"IsDeleted\" = FALSE");
-        
+
         builder.HasMany(g => g.Files)
             .WithOne(f => f.FileGroup)
             .HasForeignKey(f => f.FileGroupId)

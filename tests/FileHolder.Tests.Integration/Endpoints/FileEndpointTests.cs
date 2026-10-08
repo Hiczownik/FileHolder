@@ -31,7 +31,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         MaxDownloads: 10,
         Password: "ValidPassword123!"
     );
-    
+
     #endregion
 
     #region 1. Validation Boundary Tests ([Theory] Data-Driven)
@@ -77,21 +77,21 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         var request = CreateValidPresignRequest() with { Files = new List<FileItemInputDto>() };
 
         var response = await _client.PostAsJsonAsync("/api/v1/files/presign", request);
-        
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);       
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
-    
+
     #endregion
-    
+
     #region 2. Happy Path Upload & Metadata Tests
 
     [Fact]
     public async Task GetPresignedUrl_Returns200OK_WhenPayloadIsValid()
     {
         var request = CreateValidPresignRequest();
-        
+
         var response = await _client.PostAsJsonAsync("/api/v1/files/presign", request);
-        
+
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var result = await response.Content.ReadFromJsonAsync<PresignedUrlResponseDto>();
         result.Should().NotBeNull();
@@ -99,7 +99,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         result.Items.Should().HaveCount(1);
         result.Items[0].UploadUrl.Should().Contain("http://localhost:9000");
     }
-    
+
     [Fact]
     public async Task ConfirmAndGetMetadataFlow_SuccessfullyStoresAndRetrievesBundle()
     {
@@ -121,7 +121,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-        
+
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
         shareToken.Should().NotBeNullOrWhiteSpace();
 
@@ -137,9 +137,9 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         metadata.RemainingDownloads.Should().Be(10);
         metadata.IsExpired.Should().BeFalse();
     }
-    
+
     #endregion
-    
+
     #region 3. Authentication & Download Tests
 
     [Fact]
@@ -161,7 +161,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
-        
+
         var response = await _client.GetAsync($"/api/v1/files/{shareToken}");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -169,7 +169,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         metadata.Should().NotBeNull();
         metadata!.RequiresPassword.Should().BeTrue();
         metadata.IsUnlocked.Should().BeFalse();
-        metadata.Files.Should().BeEmpty(); 
+        metadata.Files.Should().BeEmpty();
         metadata.TotalSizeBytes.Should().Be(0);
     }
 
@@ -203,7 +203,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             $"/api/v1/files/{shareToken}/unlock",
             new DownloadRequestDto("CorrectVaultPassword!")
         );
-        
+
         successUnlockResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var unlockedMetadata = await successUnlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         unlockedMetadata.Should().NotBeNull();
@@ -232,14 +232,14 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
-        
+
         var unlockResponse = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/unlock",
             new DownloadRequestDto("CorrectPassword123!")
         );
         var metadata = await unlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         var fileId = metadata!.Files[0].Id;
-        
+
         var downloadResponse = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/download/{fileId}",
             new DownloadRequestDto("WrongPassword!")
@@ -267,14 +267,14 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
-        
+
         var unlockResponse = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/unlock",
             new DownloadRequestDto("CorrectPassword123!")
         );
         var metadata = await unlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         var fileId = metadata!.Files[0].Id;
-        
+
         var downloadResponse = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/download/{fileId}",
             new DownloadRequestDto("CorrectPassword123!")
@@ -287,7 +287,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     #endregion
-    
+
     #region 4. Real-Time Streaming ZIP Archive Tests
 
     [Fact]
@@ -343,7 +343,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             MaxDownloads: 1,
             Password: null
         );
-        
+
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
@@ -351,7 +351,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         var responseClient1 = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/download-all",
             new DownloadRequestDto(null));
-        
+
         responseClient1.StatusCode.Should().Be(HttpStatusCode.OK);
         var leaseToken = responseClient1.Headers.GetValues("X-Download-Lease").FirstOrDefault();
         leaseToken.Should().NotBeNullOrWhiteSpace();
@@ -359,13 +359,13 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         var responseClient2 = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/download-all",
             new DownloadRequestDto(null));
-        
+
         responseClient2.StatusCode.Should().Be(HttpStatusCode.Gone);
-        
+
         var responseAfterExhaustion = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/download-all?lease={leaseToken}",
             new DownloadRequestDto(null));
-        
+
         responseAfterExhaustion.StatusCode.Should().Be(HttpStatusCode.Gone);
     }
 
@@ -445,25 +445,25 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var response = await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download-all",
             new DownloadRequestDto("WrongPassword2@"));
-        
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);       
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
-    
+
     #endregion
-    
+
     #region 5. Expiration & Not Found Tests
 
     [Fact]
     public async Task GetGroupMetadata_Returns404NotFound_WhenTokenDoesNotExist()
     {
         var response = await _client.GetAsync("/api/v1/files/non_existent_token_999");
-        
+
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     #endregion
-    
-   #region 6. Direct-to-S3 Presigned Multipart Tests
+
+    #region 6. Direct-to-S3 Presigned Multipart Tests
 
     [Fact]
     public async Task GetPresignedUrl_WhenFileExceeds50MB_InitiatesMultipartAndPresignsPartBatch()

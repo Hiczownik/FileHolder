@@ -2,6 +2,7 @@
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 
 namespace FileHolder.Api.Endpoints;
 
@@ -44,7 +45,7 @@ public static class FileEndpoints
         group.MapPost("/{shareToken}/download/{fileId:guid}", GenerateDownloadLink)
             .RequireRateLimiting("DownloadPolicy")
             .WithName("GenerateDownloadLink");
-        
+
         group.MapPost("/{shareToken}/download-all", StreamBundleZip)
             .RequireRateLimiting("DownloadPolicy")
             .WithName("StreamBundleZip");
@@ -52,41 +53,41 @@ public static class FileEndpoints
 
     public static async Task<Ok<PresignedUrlResponseDto>> GetPresignedUploadUrl(
         CreatePresignedUrlRequestDto dto,
-        IStorageService storageService)
+        IFileGroupService fileGroupService)
     {
-        var response = await storageService.CreatePresignedUploadUrlAsync(dto);
+        var response = await fileGroupService.CreatePresignedUploadUrlAsync(dto);
         return TypedResults.Ok(response);
     }
 
     public static async Task<Ok<PresignPartBatchResponseDto>> PresignPartBatch(
         PresignPartBatchRequestDto dto,
-        IStorageService storageService)
+        IMultipartUploadService multipartService)
     {
-        var response = await storageService.PresignPartBatchAsync(dto);
+        var response = await multipartService.PresignPartBatchAsync(dto);
         return TypedResults.Ok(response);
     }
 
     public static async Task<Ok<bool>> CompleteMultipartUpload(
         CompleteMultipartUploadRequestDto dto,
-        IStorageService storageService)
+        IMultipartUploadService multipartService)
     {
-        var success = await storageService.CompleteMultipartUploadAsync(dto);
+        var success = await multipartService.CompleteMultipartUploadAsync(dto);
         return TypedResults.Ok(success);
     }
 
     public static async Task<Ok<bool>> AbortMultipartUpload(
         AbortMultipartUploadRequestDto dto,
-        IStorageService storageService)
+        IMultipartUploadService multipartService)
     {
-        var success = await storageService.AbortMultipartUploadAsync(dto);
+        var success = await multipartService.AbortMultipartUploadAsync(dto);
         return TypedResults.Ok(success);
     }
 
     public static async Task<Results<Ok<FileGroupMetadataResponseDto>, NotFound, ProblemHttpResult>> GetGroupMetadata(
         string shareToken,
-        IStorageService storageService)
+        IFileGroupService fileGroupService)
     {
-        var metadata = await storageService.GetGroupMetadataByTokenAsync(shareToken);
+        var metadata = await fileGroupService.GetGroupMetadataByTokenAsync(shareToken);
         if (metadata == null)
         {
             return TypedResults.NotFound();
@@ -106,9 +107,9 @@ public static class FileEndpoints
     public static async Task<Results<Ok<FileGroupMetadataResponseDto>, NotFound, ProblemHttpResult>> UnlockGroup(
         string shareToken,
         DownloadRequestDto dto,
-        IStorageService storageService)
+        IFileGroupService fileGroupService)
     {
-        var result = await storageService.UnlockGroupAsync(shareToken, dto.Password ?? string.Empty);
+        var result = await fileGroupService.UnlockGroupAsync(shareToken, dto.Password ?? string.Empty);
 
         if (result.IsPasswordInvalid)
         {
@@ -133,15 +134,15 @@ public static class FileEndpoints
 
         return TypedResults.Ok(result.Metadata);
     }
-    
+
     public static async Task<Results<Ok<DownloadUrlResponseDto>, UnauthorizedHttpResult, ProblemHttpResult>>
         GenerateDownloadLink(
             string shareToken,
             Guid fileId,
             DownloadRequestDto dto,
-            IStorageService storageService)
+            IFileGroupService fileGroupService)
     {
-        var result = await storageService.CreatePresignedDownloadUrlAsync(shareToken, fileId, dto.Password);
+        var result = await fileGroupService.CreatePresignedDownloadUrlAsync(shareToken, fileId, dto.Password);
 
         if (result.IsPasswordInvalid)
         {
@@ -164,47 +165,60 @@ public static class FileEndpoints
         StreamBundleZip(
             string shareToken,
             DownloadRequestDto dto,
-            [Microsoft.AspNetCore.Mvc.FromQuery] string? lease,
+            [FromQuery] string? lease,
             HttpContext context,
-            IStorageService storageService)
+            IBundleStreamService bundleStreamService)
     {
-        var result = await storageService.StreamBundleZipAsync(
+        var leaseResult = await bundleStreamService.AcquireLeaseAsync(
             shareToken,
-            dto.Password, 
-            lease, 
-            context.Response.Body,
-            leaseToken =>
-            {
-                context.Response.ContentType = "application/zip";
-                context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"bundle_{shareToken}.zip\"");
-                context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
-                context.Response.Headers.Append("X-Download-Lease", leaseToken);
-            },
+            dto.Password,
+            lease,
             context.RequestAborted);
-        
-        return result.Status switch
+
+        if (leaseResult.Status != StreamZipStatus.Success)
         {
-            StreamZipStatus.NotFound => TypedResults.NotFound(),
-            StreamZipStatus.InvalidPassword => TypedResults.Unauthorized(),
-            StreamZipStatus.Expired => TypedResults.Problem(
-                detail: "Bundle has expired or reached maximum download limit.",
-                statusCode: StatusCodes.Status410Gone,
-                title: "Link Expired"),
-            StreamZipStatus.CapacityReached => TypedResults.Problem(
-                detail: "All download slots are currently in use or exhausted.",
-                statusCode: StatusCodes.Status410Gone,
-                title: "Download Limit Reached"),
-            StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
-            StreamZipStatus.Success => TypedResults.Empty,
-            _ => TypedResults.Empty
-        };
+            return leaseResult.Status switch
+            {
+                StreamZipStatus.NotFound => TypedResults.NotFound(),
+                StreamZipStatus.InvalidPassword => TypedResults.Unauthorized(),
+                StreamZipStatus.Expired => TypedResults.Problem(
+                    detail: "Bundle has expired or reached maximum download limit.",
+                    statusCode: StatusCodes.Status410Gone,
+                    title: "Link Expired"),
+                StreamZipStatus.CapacityReached => TypedResults.Problem(
+                    detail: "All download slots are currently in use or exhausted.",
+                    statusCode: StatusCodes.Status410Gone,
+                    title: "Download Limit Reached"),
+                StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
+                _ => TypedResults.NotFound()
+            };
+        }
+
+        var safeTitle = leaseResult.BundleTitle != null
+            ? System.Text.RegularExpressions.Regex.Replace(leaseResult.BundleTitle, @"[^\w\.\-]", "_")
+            : "bundle";
+
+        context.Response.ContentType = "application/zip";
+        context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{safeTitle}_{shareToken}.zip\"");
+        context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        context.Response.Headers.Append("X-Download-Lease", leaseResult.LeaseToken);
+
+        await bundleStreamService.StreamArchiveAsync(leaseResult.Files!, context.Response.Body, context.RequestAborted);
+
+        await bundleStreamService.FinalizeLeaseAsync(
+            leaseResult.LeaseToken!,
+            leaseResult.FileGroupId!.Value,
+            shareToken,
+            CancellationToken.None);
+
+        return TypedResults.Empty;
     }
-    
+
     public static async Task<Ok<string>> ConfirmUpload(
         ConfirmUploadRequestDto dto,
-        IStorageService storageService)
+        IFileGroupService fileGroupService)
     {
-        var shareToken = await storageService.ConfirmAndPersistFileGroupAsync(dto);
-        return TypedResults.Ok(shareToken);       
+        var shareToken = await fileGroupService.ConfirmAndPersistFileGroupAsync(dto);
+        return TypedResults.Ok(shareToken);
     }
 }

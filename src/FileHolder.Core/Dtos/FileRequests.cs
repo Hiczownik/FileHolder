@@ -35,7 +35,7 @@ public record ConfirmUploadRequestDto(
 
 public record DownloadRequestDto(
     string? Password
-); 
+);
 
 public record PresignPartBatchRequestDto(
     string UploadToken,

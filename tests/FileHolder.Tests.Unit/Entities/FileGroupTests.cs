@@ -27,8 +27,8 @@ public class FileGroupTests
         {
             ExpiresAt = now.AddHours(24)
         };
-        
-        group.IsExpired(now).Should().BeFalse();       
+
+        group.IsExpired(now).Should().BeFalse();
     }
 
     [Fact]
@@ -40,8 +40,8 @@ public class FileGroupTests
             MaxDownloads = 5,
             DownloadCount = 5
         };
-        
-        group.IsExpired(now).Should().BeTrue();      
+
+        group.IsExpired(now).Should().BeTrue();
     }
 
     [Fact]
@@ -52,9 +52,9 @@ public class FileGroupTests
         {
             PasswordHash = CryptoUtils.HashPassword(rawPassword)
         };
-        
+
         group.VerifyPassword(rawPassword).Should().BeTrue();
-        group.VerifyPassword("WrongPassword").Should().BeFalse();      
+        group.VerifyPassword("WrongPassword").Should().BeFalse();
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public class FileGroupTests
                 new() { SizeBytes = 200 }
             }
         };
-        
+
         group.TotalSizeBytes.Should().Be(300);
     }
 }

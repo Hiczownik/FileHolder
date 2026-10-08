@@ -3,7 +3,7 @@ import { parseApiError } from '../parseApiError';
 import { AxiosError, AxiosHeaders } from 'axios';
 
 describe('parseApiError Utility', () => {
-    const createMockAxiosError = (status: number, data: any): AxiosError => {
+    const createMockAxiosError = (status: number, data: unknown ): AxiosError => {
         return new AxiosError(
             'Request failed with status code ' + status,
             'ERR_BAD_REQUEST',

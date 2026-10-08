@@ -40,7 +40,7 @@ public class CreatePresignedUrlValidator : AbstractValidator<CreatePresignedUrlR
             file.RuleFor(f => f.SizeBytes)
                 .GreaterThan(0).WithMessage("File size must be greater than 0 bytes.");
         });
-        
+
         RuleFor(x => x.ExpireInHours)
             .InclusiveBetween(1, 168).When(x => x.ExpireInHours.HasValue)
             .WithMessage("Expiration time must be between 1 hour and 168 hours (7 days).");

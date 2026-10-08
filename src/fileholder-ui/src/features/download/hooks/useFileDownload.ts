@@ -1,123 +1,58 @@
 import { useEffect, useRef, useState } from "react";
-import type { FileGroupMetadataResponse, FileItemMetadata } from "../types";
+import type { FileGroupMetadataResponse } from "../types";
 import { downloadApi } from "../api/downloadApi";
+import { bundleDecryptionService } from "../services/bundleDecryptionService";
+import { saveBlobAsFile, triggerDirectDownload } from "../../../shared/utils/downloadUtils";
 import { parseApiError } from "../../../shared/utils/parseApiError";
-import { cryptoEngine } from "../../../shared/utils/crypto/cryptoUtils";
-
-interface ManifestItemInput {
-    id?: string;
-    fileName?: string;
-    filename?: string;
-    sizeBytes: number;
-    contentType?: string;
-}
 
 export const useFileDownload = (shareToken?: string) => {
     const [metadata, setMetadata] = useState<FileGroupMetadataResponse | null>(null);
     const [password, setPassword] = useState<string>('');
-    const [isLoading, setIsLoading] = useState<boolean>(true);
+    const [isLoading, setIsLoading] = useState<boolean>(Boolean(shareToken));
     const [isUnlocking, setIsUnlocking] = useState<boolean>(false);
     const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
     const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
     const [activeLeaseToken, setActiveLeaseToken] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    const serverFileIdRef = useRef<string | null>(null);
-    const cryptoKeyRef = useRef<CryptoKey | null>(null);
+const serverFileIdRef = useRef<string | null>(null);
 
-    const extractKeyFromHash = (): string | null => {
-        const hash = window.location.hash;
-        const match = hash.match(/(?:^|[#&])key=([A-Za-z0-9_-]+)/);
-        return match ? match[1] : null;
-    };
-
-    const triggerBlobDownload = (blob: Blob, filename: string) => {
-        const objectUrl = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.setAttribute('download', filename);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(objectUrl);
-    };
-
-    const processMetadata = async (
-        rawMetadata: FileGroupMetadataResponse,
-        keyString: string | null
-    ): Promise<FileGroupMetadataResponse> => {
-        if (rawMetadata.files && rawMetadata.files.length > 0 && !serverFileIdRef.current) {
-            serverFileIdRef.current = rawMetadata.files[0].id;
+    const fetchAndHydrate = async (fetcher: () => Promise<FileGroupMetadataResponse>) => {
+        const raw = await fetcher();
+        if (raw.files && raw.files.length > 0 && !serverFileIdRef.current) {
+            serverFileIdRef.current = raw.files[0].id;
         }
-
-        if (!rawMetadata.isEncrypted) {
-            return rawMetadata;
-        }
-
-        if (!keyString) {
-            throw new Error('This transfer is end-to-end encrypted, but no decryption key was found in the link fragment (#key=...).');
-        }
-
-        let key = cryptoKeyRef.current;
-        if (!key) {
-            try {
-                key = await cryptoEngine.importKeyFromBase64Url(keyString);
-                cryptoKeyRef.current = key;
-            } catch {
-                throw new Error('Invalid cryptographic key format in share link.');
-            }
-        }
-
-        if (rawMetadata.requiresPassword && !rawMetadata.isUnlocked) {
-            return rawMetadata;
-        }
-
-        if (rawMetadata.encryptedManifest) {
-            let items: ManifestItemInput[];
-            try {
-                items = await cryptoEngine.decryptJson<ManifestItemInput[]>(key, rawMetadata.encryptedManifest);
-            } catch (err: unknown) {
-                if (err instanceof SyntaxError) {
-                    throw new Error('Failed to parse decrypted metadata manifest.');
-                }
-                throw new Error('Decryption failed: Cryptographic authentication mismatch. The link key may be invalid or the data corrupted.');
-            }
-
-            const decryptedFiles: FileItemMetadata[] = items.map((item) => ({
-                id: item.id || crypto.randomUUID(),
-                fileName: item.fileName || item.filename || 'unnamed_file',
-                sizeBytes: Number(item.sizeBytes) || 0,
-                contentType: item.contentType || 'application/octet-stream',
-            }));
-
-            return {
-                ...rawMetadata,
-                files: decryptedFiles,
-                fileCount: decryptedFiles.length,
-                totalSizeBytes: decryptedFiles.reduce((acc, f) => acc + f.sizeBytes, 0),
-            };
-        }
-
-        return rawMetadata;
+        const keyString = bundleDecryptionService.extractKeyFromHash();
+        return bundleDecryptionService.hydrateEncryptedMetadata(raw, keyString);
     };
 
     useEffect(() => {
-        if (shareToken) {
-            setIsLoading(true);
-            setError(null);
-            const keyString = extractKeyFromHash();
+        if (!shareToken) return;
 
-            downloadApi
-                .getGroupMetadata(shareToken)
-                .then(async (data) => {
-                    const hydrated = await processMetadata(data, keyString);
+        let isCancelled = false;
+
+        const fetchMetadata = async () => {
+            try {
+                const hydrated = await fetchAndHydrate(() => downloadApi.getGroupMetadata(shareToken));
+                if (!isCancelled) {
                     setMetadata(hydrated);
-                })
-                .catch((err: unknown) => {
+                }
+            } catch (err: unknown) {
+                if (!isCancelled) {
                     setError(parseApiError(err));
-                })
-                .finally(() => setIsLoading(false));
-        }
+                }
+            } finally {
+                if (!isCancelled) {
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        void fetchMetadata();
+
+        return () => {
+            isCancelled = true;
+        };
     }, [shareToken]);
 
     const handleUnlock = async (e: React.FormEvent) => {
@@ -128,15 +63,21 @@ export const useFileDownload = (shareToken?: string) => {
         setError(null);
 
         try {
-            const keyString = extractKeyFromHash();
-            const unlockedData = await downloadApi.unlockGroup(shareToken, password);
-            const hydrated = await processMetadata(unlockedData, keyString);
+            const hydrated = await fetchAndHydrate(() => downloadApi.unlockGroup(shareToken, password));
             setMetadata(hydrated);
         } catch (err: unknown) {
             setError(parseApiError(err));
         } finally {
             setIsUnlocking(false);
         }
+    };
+
+    const resolveCryptoKey = async (): Promise<CryptoKey> => {
+        const keyString = bundleDecryptionService.extractKeyFromHash();
+        if (!keyString) {
+            throw new Error('This transfer is end-to-end encrypted, but no decryption key was found in the link fragment (#key=...).');
+        }
+        return bundleDecryptionService.importKey(keyString);
     };
 
     const handleDownloadFile = async (fileId: string) => {
@@ -148,49 +89,19 @@ export const useFileDownload = (shareToken?: string) => {
         try {
             if (metadata.isEncrypted) {
                 const targetServerId = serverFileIdRef.current || fileId;
-                let key = cryptoKeyRef.current;
-                if (!key) {
-                    const keyString = extractKeyFromHash();
-                    if (!keyString) {
-                        throw new Error('This transfer is end-to-end encrypted, but no decryption key was found in the link fragment (#key=...).');
-                    }
-                    try {
-                        key = await cryptoEngine.importKeyFromBase64Url(keyString);
-                        cryptoKeyRef.current = key;
-                    } catch {
-                        throw new Error('Invalid cryptographic key format in share link.');
-                    }
-                }
-
-                const downloadUrl = await downloadApi.getDownloadUrl(
-                    shareToken,
-                    targetServerId,
-                    password || undefined
-                );
-
+                const key = await resolveCryptoKey();
+                const downloadUrl = await downloadApi.getDownloadUrl(shareToken, targetServerId, password || undefined);
                 const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
-
-                let decryptedBytes: Uint8Array;
-                try {
-                    decryptedBytes = await cryptoEngine.decryptBytes(
-                        key,
-                        new Uint8Array(ciphertextBuffer)
-                    );
-                } catch {
-                    throw new Error('Decryption failed: Cryptographic authentication mismatch. The link key may be invalid or the data corrupted.');
-                }
+                const decryptedBytes = await bundleDecryptionService.decryptPayload(ciphertextBuffer, key);
 
                 const fileMeta = metadata.files.find((f) => f.id === fileId) || metadata.files[0];
-                const contentType = fileMeta?.contentType || 'application/octet-stream';
-                const fileName = fileMeta?.fileName || 'downloaded_file';
-
-                const blob = new Blob([decryptedBytes as BlobPart], { type: contentType });
-                triggerBlobDownload(blob, fileName);
+                const blob = new Blob([decryptedBytes as BlobPart], { type: fileMeta?.contentType || 'application/octet-stream' });
+                saveBlobAsFile(blob, fileMeta?.fileName || 'downloaded_file');
                 return;
             }
 
             const downloadUrl = await downloadApi.getDownloadUrl(shareToken, fileId, password || undefined);
-            window.location.href = downloadUrl;
+            triggerDirectDownload(downloadUrl);
         } catch (err: unknown) {
             setError(parseApiError(err));
         } finally {
@@ -210,42 +121,14 @@ export const useFileDownload = (shareToken?: string) => {
                 if (!targetServerId) {
                     throw new Error('Target encrypted storage identifier could not be resolved.');
                 }
-
-                let key = cryptoKeyRef.current;
-                if (!key) {
-                    const keyString = extractKeyFromHash();
-                    if (!keyString) {
-                        throw new Error('This transfer is end-to-end encrypted, but no decryption key was found in the link fragment (#key=...).');
-                    }
-                    try {
-                        key = await cryptoEngine.importKeyFromBase64Url(keyString);
-                        cryptoKeyRef.current = key;
-                    } catch {
-                        throw new Error('Invalid cryptographic key format in share link.');
-                    }
-                }
-
-                const downloadUrl = await downloadApi.getDownloadUrl(
-                    shareToken,
-                    targetServerId,
-                    password || undefined
-                );
-
+                const key = await resolveCryptoKey();
+                const downloadUrl = await downloadApi.getDownloadUrl(shareToken, targetServerId, password || undefined);
                 const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
-
-                let decryptedBytes: Uint8Array;
-                try {
-                    decryptedBytes = await cryptoEngine.decryptBytes(
-                        key,
-                        new Uint8Array(ciphertextBuffer)
-                    );
-                } catch {
-                    throw new Error('Decryption failed: Cryptographic authentication mismatch. The link key may be invalid or the data corrupted.');
-                }
+                const decryptedBytes = await bundleDecryptionService.decryptPayload(ciphertextBuffer, key);
 
                 const blob = new Blob([decryptedBytes as BlobPart], { type: 'application/zip' });
-                const safeTitle = metadata.title ? metadata.title.replace(/[^\w\.\-]/g, '_') : 'bundle';
-                triggerBlobDownload(blob, `${safeTitle}_${shareToken}.zip`);
+                const safeTitle = metadata.title ? metadata.title.replace(/[^\w.-]/g, '_') : 'bundle';
+                saveBlobAsFile(blob, `${safeTitle}_${shareToken}.zip`);
                 return;
             }
 

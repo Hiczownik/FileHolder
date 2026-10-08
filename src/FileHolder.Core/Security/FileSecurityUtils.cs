@@ -1,5 +1,5 @@
 ﻿using System.Text.RegularExpressions;
-    
+
 namespace FileHolder.Core.Security;
 
 public static partial class FileSecurityUtils
@@ -18,21 +18,21 @@ public static partial class FileSecurityUtils
     public static string SanitizeFileName(string fileName)
     {
         if (string.IsNullOrWhiteSpace(fileName)) return "unnamed_file";
-        
+
         string extension = Path.GetExtension(fileName);
         string nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
 
         string sanitizedBody = InvalidCharRegex().Replace(nameWithoutExt, "_");
-        
+
         if (sanitizedBody.Length > 190)
         {
             sanitizedBody = sanitizedBody[..190];
         }
-        
+
         string sanitizedExt = InvalidCharRegex().Replace(extension, "");
-        
+
         string finalName = $"{sanitizedBody}{sanitizedExt}";
-        
+
         return string.IsNullOrWhiteSpace(finalName) || finalName == sanitizedExt ? $"unnamed_file{sanitizedExt}" : finalName;
     }
 

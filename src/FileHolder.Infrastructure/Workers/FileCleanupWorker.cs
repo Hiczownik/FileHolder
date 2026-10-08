@@ -19,7 +19,7 @@ public class FileCleanupWorker(IServiceProvider serviceProvider, ILogger<FileCle
             try
             {
                 using var scope = serviceProvider.CreateScope();
-                var storageService = scope.ServiceProvider.GetRequiredService<IStorageService>();
+                var storageService = scope.ServiceProvider.GetRequiredService<IStoragePurgeService>();
 
                 int purgedCount = await storageService.PurgeExpiredFilesAsync(stoppingToken);
 
@@ -33,7 +33,7 @@ public class FileCleanupWorker(IServiceProvider serviceProvider, ILogger<FileCle
             {
                 logger.LogError(ex, "An error occurred while executing the file cleanup background task.");
             }
-            
+
             await Task.Delay(_checkInterval, stoppingToken);
         }
     }

@@ -10,7 +10,7 @@ using NSubstitute;
 
 namespace FileHolder.Tests.Integration.Services;
 
-public class StoragePurgeTests(CustomWebApplicationFactory factory) 
+public class StoragePurgeTests(CustomWebApplicationFactory factory)
     : IClassFixture<CustomWebApplicationFactory>
 {
     [Fact]
@@ -102,8 +102,8 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
         int purgedCount;
         using (var purgeScope = factory.Services.CreateScope())
         {
-            var storageService = purgeScope.ServiceProvider.GetRequiredService<IStorageService>();
-            purgedCount = await storageService.PurgeExpiredFilesAsync(CancellationToken.None);
+            var purgeService = purgeScope.ServiceProvider.GetRequiredService<IStoragePurgeService>();
+            purgedCount = await purgeService.PurgeExpiredFilesAsync(CancellationToken.None);
         }
 
         purgedCount.Should().Be(2);
@@ -132,8 +132,8 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
             );
 
             // Cache Invalidation Check
-            var storageService = verifyScope.ServiceProvider.GetRequiredService<IStorageService>();
-            var metadataA = await storageService.GetGroupMetadataByTokenAsync(groupARecord.ShareToken);
+            var fileGroupService = verifyScope.ServiceProvider.GetRequiredService<IFileGroupService>();
+            var metadataA = await fileGroupService.GetGroupMetadataByTokenAsync(groupARecord.ShareToken);
             (metadataA == null || metadataA.IsExpired).Should().BeTrue();
         }
     }
@@ -174,15 +174,15 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
 
         using (var scope = factory.Services.CreateScope())
         {
-            var storageService = scope.ServiceProvider.GetRequiredService<IStorageService>();
-            await storageService.PurgeExpiredFilesAsync(CancellationToken.None);
+            var purgeService = scope.ServiceProvider.GetRequiredService<IStoragePurgeService>();
+            await purgeService.PurgeExpiredFilesAsync(CancellationToken.None);
         }
-        
+
         await factory.MockS3Client.Received(1).AbortMultipartUploadAsync(
             Arg.Is<AbortMultipartUploadRequest>(r => r.UploadId == targetUploadId && r.Key == targetStorageKey),
             Arg.Any<CancellationToken>()
         );
-        
+
         using (var scope = factory.Services.CreateScope())
         {
             var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();

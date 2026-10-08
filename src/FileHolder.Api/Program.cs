@@ -10,7 +10,6 @@ using FileHolder.Infrastructure.Services;
 using FileHolder.Infrastructure.Workers;
 using FluentValidation;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Options;
@@ -47,7 +46,7 @@ builder.Services.AddProblemDetails();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection")));
 
-builder.Services.AddSingleton<IAmazonS3>(sp =>
+builder.Services.AddKeyedSingleton<IAmazonS3>("InternalS3", (sp, _) =>
 {
     var storageOptions = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
     var config = new AmazonS3Config
@@ -57,11 +56,27 @@ builder.Services.AddSingleton<IAmazonS3>(sp =>
         UseHttp = true,
         AuthenticationRegion = "us-east-1"
     };
-    return new AmazonS3Client(
-        storageOptions.AccessKey,
-        storageOptions.SecretKey,
-        config);
+    return new AmazonS3Client(storageOptions.AccessKey, storageOptions.SecretKey, config);
 });
+
+builder.Services.AddKeyedSingleton<IAmazonS3>("PresignS3", (sp, _) =>
+{
+    var storageOptions = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
+    var config = new AmazonS3Config
+    {
+        ServiceURL = storageOptions.PublicBaseUrl,
+        ForcePathStyle = true,
+        UseHttp = true,
+        AuthenticationRegion = "us-east-1"
+    };
+    return new AmazonS3Client(storageOptions.AccessKey, storageOptions.SecretKey, config);
+});
+
+builder.Services.AddSingleton<IS3StorageProvider, S3StorageProvider>();
+builder.Services.AddScoped<IFileGroupService, FileGroupService>();
+builder.Services.AddScoped<IMultipartUploadService, MultipartUploadService>();
+builder.Services.AddScoped<IBundleStreamService, BundleStreamService>();
+builder.Services.AddScoped<IStoragePurgeService, StoragePurgeService>();
 
 builder.Services.AddOpenTelemetry()
     .WithMetrics(metrics =>
@@ -73,7 +88,6 @@ builder.Services.AddOpenTelemetry()
     });
 
 builder.Services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
-builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddHostedService<FileCleanupWorker>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
@@ -85,7 +99,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 static string ResolveClientIp(HttpContext context)
 {
-    if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwarded) && 
+    if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwarded) &&
         !string.IsNullOrWhiteSpace(forwarded))
     {
         return forwarded.ToString().Split(',')[0].Trim();

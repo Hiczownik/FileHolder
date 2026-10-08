@@ -25,22 +25,27 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
         .WithUsername("test_user")
         .WithPassword("test_password")
         .Build();
-    
+
     public IAmazonS3 MockS3Client { get; private set; } = Substitute.For<IAmazonS3>();
-    
+
     public ConcurrentDictionary<string, long> S3ObjectRegistry { get; } = new();
 
     public void SeedS3Object(string storageKey, long sizeBytes)
     {
         S3ObjectRegistry[storageKey] = sizeBytes;
     }
-    
+
     public async Task InitializeAsync()
     {
         await _postgresContainer.StartAsync();
 
         MockS3Client.GetPreSignedURL(Arg.Any<GetPreSignedUrlRequest>())
-            .Returns("http://localhost:9000/fileholder-bucket/test_key?sig=dummy");
+            .Returns(callInfo =>
+            {
+                var req = callInfo.ArgAt<GetPreSignedUrlRequest>(0);
+                var url = "http://localhost:9000/fileholder-bucket/test_key?sig=dummy";
+                return req.PartNumber > 0 ? $"{url}&partNumber={req.PartNumber}" : url;
+            });
 
         MockS3Client.InitiateMultipartUploadAsync(Arg.Any<InitiateMultipartUploadRequest>(), Arg.Any<CancellationToken>())
             .Returns(callInfo => new InitiateMultipartUploadResponse
@@ -70,7 +75,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 {
                     return new GetObjectMetadataResponse { ContentLength = registeredSize };
                 }
-                
+
                 return new GetObjectMetadataResponse { ContentLength = 38219032 };
             });
 
@@ -101,15 +106,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
             services.AddDbContext<AppDbContext>(options =>
                 options.UseNpgsql(_postgresContainer.GetConnectionString()));
 
-            var s3Descriptor = services.SingleOrDefault(d => d.ServiceType == typeof(IAmazonS3));
-            if (s3Descriptor != null)
+            var s3Descriptors = services
+                .Where(d => d.ServiceType == typeof(IAmazonS3))
+                .ToList();
+
+            foreach (var descriptor in s3Descriptors)
             {
-                services.Remove(s3Descriptor);
+                services.Remove(descriptor);
             }
 
-            services.AddSingleton(MockS3Client);
+            services.AddKeyedSingleton<IAmazonS3>("InternalS3", MockS3Client);
+            services.AddKeyedSingleton<IAmazonS3>("PresignS3", MockS3Client);
 
-            // Remove background purge worker during integration testing
             var cleanupWorkerDescriptor = services.SingleOrDefault(d =>
                 d.ImplementationType == typeof(FileCleanupWorker) ||
                 (d.ServiceType == typeof(IHostedService) && d.ImplementationFactory?.Method.ReturnType == typeof(FileCleanupWorker)));
@@ -119,7 +127,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 services.Remove(cleanupWorkerDescriptor);
             }
 
-            // Remove existing policy configurations
             var rateLimiterDescriptors = services
                 .Where(d => d.ServiceType == typeof(IConfigureOptions<RateLimiterOptions>))
                 .ToList();
@@ -129,7 +136,6 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 services.Remove(descriptor);
             }
 
-            // Register zero-limiter test policies matching the exact production names
             services.Configure<RateLimiterOptions>(options =>
             {
                 options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;

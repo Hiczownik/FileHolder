@@ -21,14 +21,14 @@ public class ValidationFilter<T> : IEndpointFilter where T : class
                 statusCode: StatusCodes.Status400BadRequest
             );
         }
-        
+
         var validationResult = await validator.ValidateAsync(argument, context.HttpContext.RequestAborted);
         if (!validationResult.IsValid)
         {
             var errors = validationResult.ToDictionary();
             return TypedResults.ValidationProblem(errors);
         }
-        
-        return await next(context);       
-    }   
+
+        return await next(context);
+    }
 }

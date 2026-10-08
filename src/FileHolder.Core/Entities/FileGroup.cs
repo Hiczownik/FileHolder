@@ -16,13 +16,13 @@ public class FileGroup
 
     public bool IsEncrypted { get; set; } = false;
     public string? EncryptedManifest { get; set; }
-    
+
     public ICollection<SharedFile> Files { get; set; } = new List<SharedFile>();
 
     public ICollection<DownloadLease> Leases { get; set; } = new List<DownloadLease>();
-    
+
     // Rich Domain Model VVV
-    
+
     /// <summary>
     /// Calculates the total size of all files in the group.
     /// </summary>
@@ -42,8 +42,8 @@ public class FileGroup
         int activeLeases = Leases.Count(l => l.IsActive(utcNow));
         return DownloadCount + activeLeases < MaxDownloads.Value;
     }
-    
-    
+
+
     /// <summary>
     /// Indicates whether a password is required to access this group.
     /// </summary>

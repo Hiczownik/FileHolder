@@ -1,13 +1,12 @@
 import axios from 'axios';
-import type {
-    CreatePresignedUrlRequest,
-    PresignedUrlResponse,
-    ConfirmUploadRequest,
-    PresignPartBatchRequest,
-    PresignPartBatchResponse,
-    CompleteMultipartUploadRequest,
-    AbortMultipartUploadRequest
-} from '../types'
+import type { 
+    CreatePresignedUrlRequest, 
+    PresignedUrlResponse, 
+    PresignPartBatchRequest, 
+    PresignPartBatchResponse, 
+    CompleteMultipartUploadRequest, 
+    AbortMultipartUploadRequest, 
+    ConfirmUploadRequest } from '../../download/types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1/files';
 

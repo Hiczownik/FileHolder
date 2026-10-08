@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { FileGroupMetadataResponse, DownloadUrlResponse } from '../types';
+import { saveBlobAsFile } from '../../../shared/utils/downloadUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1/files';
 
@@ -49,17 +50,8 @@ export const downloadApi = {
         const issuedLease = (response.headers['x-download-lease'] as string) || null;
 
         const blob = new Blob([response.data], { type: 'application/zip' });
-        const downloadUrl = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-
-        const safeTitle = bundleTitle ? bundleTitle.replace(/[^\w\.\-]/g, '_') : 'bundle';
-        link.setAttribute('download', `${safeTitle}_${shareToken}.zip`);
-
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(downloadUrl);
+        const safeTitle = bundleTitle ? bundleTitle.replace(/[^\w.-]/g, '_') : 'bundle';
+        saveBlobAsFile(blob, `${safeTitle}_${shareToken}.zip`);
 
         return issuedLease;
     },

@@ -1,6 +1,7 @@
 ﻿using System.Text.Json.Serialization;
 
 namespace FileHolder.Core.Dtos;
+
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum UploadMode
 {

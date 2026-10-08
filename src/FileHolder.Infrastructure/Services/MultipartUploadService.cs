@@ -1,0 +1,84 @@
+using FileHolder.Core.Dtos;
+using FileHolder.Core.Interfaces;
+using FileHolder.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
+
+namespace FileHolder.Infrastructure.Services;
+
+public class MultipartUploadService(
+    AppDbContext dbContext,
+    IS3StorageProvider storageProvider,
+    IDateTimeProvider dateTimeProvider)
+    : IMultipartUploadService
+{
+    private readonly AppDbContext _dbContext = dbContext;
+    private readonly IS3StorageProvider _storageProvider = storageProvider;
+    private readonly IDateTimeProvider _dateTimeProvider = dateTimeProvider;
+
+    public async Task<PresignPartBatchResponseDto> PresignPartBatchAsync(PresignPartBatchRequestDto dto)
+    {
+        var session = await _dbContext.MultipartUploadSessions
+            .FirstOrDefaultAsync(s =>
+                s.UploadToken == dto.UploadToken && s.UploadId == dto.UploadId && !s.IsCompleted && !s.IsAborted);
+
+        if (session == null)
+        {
+            throw new KeyNotFoundException("Active multipart upload session not found.");
+        }
+
+        var parts = new List<PartPresignedUrlDto>();
+        int endPart = Math.Min(dto.StartPartNumber + dto.Count - 1, session.TotalParts);
+
+        for (int partNumber = dto.StartPartNumber; partNumber <= endPart; partNumber++)
+        {
+            string presignedUrl = _storageProvider.GeneratePresignedPartUploadUrl(
+                session.StorageKey,
+                dto.UploadId,
+                partNumber,
+                _dateTimeProvider.UtcNow.AddMinutes(30));
+
+            parts.Add(new PartPresignedUrlDto(partNumber, presignedUrl));
+        }
+
+        return new PresignPartBatchResponseDto(parts);
+    }
+
+    public async Task<bool> CompleteMultipartUploadAsync(CompleteMultipartUploadRequestDto dto)
+    {
+        var session = await _dbContext.MultipartUploadSessions
+            .FirstOrDefaultAsync(s =>
+                s.UploadToken == dto.UploadToken && s.UploadId == dto.UploadId && !s.IsCompleted && !s.IsAborted);
+
+        if (session == null)
+        {
+            throw new KeyNotFoundException("Active multipart upload session was not found.");
+        }
+
+        var parts = dto.Parts.Select(p => (p.PartNumber, p.ETag));
+        await _storageProvider.CompleteMultipartUploadAsync(session.StorageKey, session.UploadId, parts);
+
+        session.IsCompleted = true;
+        await _dbContext.SaveChangesAsync();
+
+        return true;
+    }
+
+    public async Task<bool> AbortMultipartUploadAsync(AbortMultipartUploadRequestDto dto)
+    {
+        var session = await _dbContext.MultipartUploadSessions
+            .FirstOrDefaultAsync(s =>
+                s.UploadToken == dto.UploadToken && s.UploadId == dto.UploadId && !s.IsCompleted && !s.IsAborted);
+
+        if (session == null)
+        {
+            return false;
+        }
+
+        await _storageProvider.AbortMultipartUploadAsync(session.StorageKey, session.UploadId);
+
+        session.IsAborted = true;
+        await _dbContext.SaveChangesAsync();
+
+        return true;
+    }
+}

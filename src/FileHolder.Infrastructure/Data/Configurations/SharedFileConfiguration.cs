@@ -9,13 +9,13 @@ public class SharedFileConfiguration : IEntityTypeConfiguration<SharedFile>
     public void Configure(EntityTypeBuilder<SharedFile> builder)
     {
         builder.ToTable("SharedFiles");
-        
+
         builder.HasKey(f => f.Id);
 
         builder.Property(f => f.OriginalFileName)
             .IsRequired()
             .HasMaxLength(255);
-        
+
         builder.Property(f => f.StorageKey)
             .IsRequired()
             .HasMaxLength(512);

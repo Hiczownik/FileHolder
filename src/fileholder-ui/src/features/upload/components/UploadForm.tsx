@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { UploadFormValues, UploadState } from "../types";
 import { E2EE_MAX_BUNDLE_BYTES, E2EE_MAX_SINGLE_FILE_BYTES } from "../types";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { Clock, Download, Folder, Lock, ShieldCheck } from "lucide-react";
 import { FileDropzone } from "./FileDropzone";
 import { UploadProgress } from "./UploadProgress";
@@ -17,7 +17,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
     const [files, setFiles] = useState<File[]>([]);
     const isUploading = uploadState.status === "uploading";
 
-    const { register, handleSubmit, watch } = useForm<UploadFormValues>({
+    const { register, handleSubmit, control } = useForm<UploadFormValues>({
         defaultValues: {
             title: '',
             expireInHours: 24,
@@ -27,7 +27,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
         },
     });
 
-    const isEncrypted = watch('isEncrypted') ?? false;
+    const isEncrypted = useWatch({ control, name: 'isEncrypted' }) ?? false;
     const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
 
     const isMultiFileLimitExceeded =
