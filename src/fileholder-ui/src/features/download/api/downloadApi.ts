@@ -34,25 +34,16 @@ export const downloadApi = {
     downloadAllZip: async (
         shareToken: string,
         bundleTitle?: string,
-        password?: string,
-        leaseToken?: string | null
-    ): Promise<string | null> => {
-        const url = leaseToken
-            ? `${API_BASE_URL}/${shareToken}/download-all?lease=${encodeURIComponent(leaseToken)}`
-            : `${API_BASE_URL}/${shareToken}/download-all`;
-
+        password?: string
+    ): Promise<void> => {
         const response = await axios.post(
-            url,
+            `${API_BASE_URL}/${shareToken}/download-all`,
             { password },
             { responseType: 'blob' }
         );
 
-        const issuedLease = (response.headers['x-download-lease'] as string) || null;
-
         const blob = new Blob([response.data], { type: 'application/zip' });
         const safeTitle = bundleTitle ? bundleTitle.replace(/[^\w.-]/g, '_') : 'bundle';
         saveBlobAsFile(blob, `${safeTitle}_${shareToken}.zip`);
-
-        return issuedLease;
     },
 };

@@ -86,6 +86,5 @@ public enum StreamZipStatus
 
 public record StreamZipResult(
     StreamZipStatus Status,
-    string? BundleTitle,
-    string? LeaseToken = null
+    string? BundleTitle
 );

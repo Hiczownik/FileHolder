@@ -2,7 +2,6 @@ using System.Data;
 using System.IO.Compression;
 using System.IO.Pipelines;
 using FileHolder.Core.Dtos;
-using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -28,56 +27,23 @@ public class BundleStreamService(
     private readonly IS3StorageProvider _storageProvider = storageProvider;
     private readonly HybridCache _cache = cache;
     private readonly IDateTimeProvider _dateTimeProvider = dateTimeProvider;
-    
-    public async Task<AcquireLeaseResult> AcquireLeaseAsync(string shareToken, string? password, string? existingLeaseToken, CancellationToken ct = default)
+
+    public Task<StreamZipResult> StreamBundleZipAsync(
+        string shareToken,
+        string? password,
+        Stream destinationStream,
+        CancellationToken ct = default)
     {
-        var now = _dateTimeProvider.UtcNow;
+        return StreamBundleZipAsync(shareToken, password, destinationStream, null, ct);
+    }
 
-        if (!string.IsNullOrWhiteSpace(existingLeaseToken))
-        {
-            var currentLease = await _dbContext.DownloadLeases
-                .Include(l => l.FileGroup)
-                .ThenInclude(g => g.Files)
-                .FirstOrDefaultAsync(
-                    l => l.LeaseToken == existingLeaseToken && l.Status == LeaseStatus.Active && l.ExpiresAt > now,
-                    ct);
-
-            if (currentLease != null)
-            {
-                var group = currentLease.FileGroup;
-                if (group == null)
-                {
-                    return new AcquireLeaseResult(StreamZipStatus.NotFound);
-                }
-
-                if (!group.VerifyPassword(password))
-                {
-                    return new AcquireLeaseResult(StreamZipStatus.InvalidPassword);
-                }
-
-                if (group.IsExpired(now))
-                {
-                    return new AcquireLeaseResult(StreamZipStatus.Expired);
-                }
-
-                if (group.Files.Count == 0)
-                {
-                    return new AcquireLeaseResult(StreamZipStatus.EmptyBundle);
-                }
-
-                var cachedFiles = group.Files
-                    .Select(f => new BundleFileEntry(f.OriginalFileName, f.StorageKey))
-                    .ToList();
-
-                return new AcquireLeaseResult(
-                    StreamZipStatus.Success,
-                    currentLease.LeaseToken,
-                    group.Title ?? group.ShareToken,
-                    group.Id,
-                    cachedFiles);
-            }
-        }
-
+    public async Task<StreamZipResult> StreamBundleZipAsync(
+        string shareToken,
+        string? password,
+        Stream destinationStream,
+        Action<string>? onBeforeStream = null,
+        CancellationToken ct = default)
+    {
         await using var tx = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
 
         var lockedGroup = await _dbContext.FileGroups
@@ -87,19 +53,20 @@ public class BundleStreamService(
         if (lockedGroup == null)
         {
             await tx.RollbackAsync(ct);
-            return new AcquireLeaseResult(StreamZipStatus.NotFound);
+            return new StreamZipResult(StreamZipStatus.NotFound, null);
         }
 
         if (!lockedGroup.VerifyPassword(password))
         {
             await tx.RollbackAsync(ct);
-            return new AcquireLeaseResult(StreamZipStatus.InvalidPassword);
+            return new StreamZipResult(StreamZipStatus.InvalidPassword, null);
         }
 
+        var now = _dateTimeProvider.UtcNow;
         if (lockedGroup.IsExpired(now))
         {
             await tx.RollbackAsync(ct);
-            return new AcquireLeaseResult(StreamZipStatus.Expired);
+            return new StreamZipResult(StreamZipStatus.Expired, null);
         }
 
         await _dbContext.Entry(lockedGroup).Collection(g => g.Files).LoadAsync(ct);
@@ -107,46 +74,49 @@ public class BundleStreamService(
         if (lockedGroup.Files.Count == 0)
         {
             await tx.RollbackAsync(ct);
-            return new AcquireLeaseResult(StreamZipStatus.EmptyBundle);
+            return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
         }
 
-        int activeLeases = await _dbContext.DownloadLeases
-                .CountAsync(l =>
-                    l.FileGroupId == lockedGroup.Id && l.Status == LeaseStatus.Active && l.ExpiresAt > now, ct);
-
-        if (lockedGroup.MaxDownloads.HasValue &&
-            (lockedGroup.DownloadCount + activeLeases >= lockedGroup.MaxDownloads.Value))
+        if (lockedGroup.MaxDownloads.HasValue && lockedGroup.DownloadCount >= lockedGroup.MaxDownloads.Value)
         {
             await tx.RollbackAsync(ct);
-            return new AcquireLeaseResult(StreamZipStatus.CapacityReached);
+            return new StreamZipResult(StreamZipStatus.CapacityReached, null);
         }
 
-        var newLease = new DownloadLease
+        lockedGroup.DownloadCount++;
+        bool shouldPurgeImmediately = lockedGroup.MaxDownloads.HasValue && lockedGroup.DownloadCount >= lockedGroup.MaxDownloads.Value;
+        if (shouldPurgeImmediately)
         {
-            FileGroupId = lockedGroup.Id,
-            LeaseToken = Guid.NewGuid().ToString("N"),
-            Status = LeaseStatus.Active,
-            ExpiresAt = now.AddMinutes(15),
-            CreatedAt = now
-        };
+            lockedGroup.IsDeleted = true;
+        }
 
-        _dbContext.DownloadLeases.Add(newLease);
         await _dbContext.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        await _cache.RemoveAsync($"file_group:{shareToken}", CancellationToken.None);
 
         var fileEntries = lockedGroup.Files
             .Select(f => new BundleFileEntry(f.OriginalFileName, f.StorageKey))
             .ToList();
 
-        return new AcquireLeaseResult(
-            StreamZipStatus.Success,
-            newLease.LeaseToken,
-            lockedGroup.Title ?? lockedGroup.ShareToken,
-            lockedGroup.Id,
-            fileEntries);
+        var keysToDelete = shouldPurgeImmediately
+            ? lockedGroup.Files.Select(f => f.StorageKey).ToList()
+            : null;
+
+        var bundleTitle = lockedGroup.Title ?? lockedGroup.ShareToken;
+
+        onBeforeStream?.Invoke(bundleTitle);
+
+        await StreamArchiveInternalAsync(fileEntries, destinationStream, ct);
+
+        if (shouldPurgeImmediately && keysToDelete != null && keysToDelete.Count > 0)
+        {
+            await _storageProvider.DeleteObjectsAsync(keysToDelete, CancellationToken.None);
+        }
+
+        return new StreamZipResult(StreamZipStatus.Success, bundleTitle);
     }
 
-    public async Task StreamArchiveAsync(IEnumerable<BundleFileEntry> files, Stream destinationStream, CancellationToken ct = default)
+    private async Task StreamArchiveInternalAsync(IEnumerable<BundleFileEntry> files, Stream destinationStream, CancellationToken ct)
     {
         var pipe = new Pipe(new PipeOptions(
             pauseWriterThreshold: 128 * 1024,
@@ -154,9 +124,8 @@ public class BundleStreamService(
             useSynchronizationContext: false));
 
         var fileList = files.ToList();
-        
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        
+
         var producerTask = Task.Run(async () =>
         {
             Exception? producerException = null;
@@ -166,7 +135,6 @@ public class BundleStreamService(
                 await using var zipArchive = new ZipArchive(pipeStream, ZipArchiveMode.Create, leaveOpen: true);
                 foreach (var file in fileList)
                 {
-                    // ReSharper disable AccessToDisposedClosure
                     linkedCts.Token.ThrowIfCancellationRequested();
 
                     var compressionLevel = DetermineCompressionLevel(file.OriginalFileName);
@@ -190,7 +158,6 @@ public class BundleStreamService(
         }, linkedCts.Token);
 
         Exception? consumerException = null;
-
         try
         {
             await pipe.Reader.CopyToAsync(destinationStream, linkedCts.Token);
@@ -210,70 +177,7 @@ public class BundleStreamService(
             }
             catch when (consumerException != null)
             {
-                // preserve the original consumer/client exception
-            }
-        }
-    }
-
-    public async Task FinalizeLeaseAsync(string leaseToken, Guid fileGroupId, string shareToken, CancellationToken ct = default)
-    {
-        var lease = await _dbContext.DownloadLeases
-            .FirstOrDefaultAsync(l => l.LeaseToken == leaseToken, ct);
-
-        if (lease != null)
-        {
-            lease.Status = LeaseStatus.Completed;
-            lease.CompletedAt = _dateTimeProvider.UtcNow;
-        }
-
-        var group = await _dbContext.FileGroups
-            .Include(g => g.Files)
-            .FirstOrDefaultAsync(g => g.Id == fileGroupId, ct);
-
-        if (group != null)
-        {
-            group.DownloadCount++;
-
-            bool shouldPurgeImmediately =
-                group.MaxDownloads.HasValue && group.DownloadCount >= group.MaxDownloads.Value;
-
-            if (shouldPurgeImmediately)
-            {
-                group.IsDeleted = true;
-            }
-
-            await _dbContext.SaveChangesAsync(CancellationToken.None);
-            await _cache.RemoveAsync($"file_group:{shareToken}", CancellationToken.None);
-
-            if (shouldPurgeImmediately)
-            {
-                var keysToDelete = group.Files.Select(f => f.StorageKey).ToList();
-                if (keysToDelete.Count > 0)
-                {
-                    await _storageProvider.DeleteObjectsAsync(keysToDelete, CancellationToken.None);
-                }
-            }
-        }
-    }
-
-    public async Task ReleaseLeaseAsync(string leaseToken, Guid fileGroupId, CancellationToken ct = default)
-    {
-        var lease = await _dbContext.DownloadLeases
-            .Include(l => l.FileGroup)
-            .FirstOrDefaultAsync(l => l.LeaseToken == leaseToken &&
-                                      l.FileGroupId == fileGroupId && 
-                                      l.Status == LeaseStatus.Active, ct);
-
-        if (lease != null)
-        {
-            lease.Status = LeaseStatus.Expired;
-            lease.CompletedAt = _dateTimeProvider.UtcNow;
-
-            await _dbContext.SaveChangesAsync(ct);
-
-            if (lease.FileGroup != null)
-            {
-                await _cache.RemoveAsync($"file_group:{lease.FileGroup.ShareToken}", ct);
+                // Preserve the original consumer/client exception
             }
         }
     }

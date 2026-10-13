@@ -12,10 +12,9 @@ export const useFileDownload = (shareToken?: string) => {
     const [isUnlocking, setIsUnlocking] = useState<boolean>(false);
     const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
     const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
-    const [activeLeaseToken, setActiveLeaseToken] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-const serverFileIdRef = useRef<string | null>(null);
+    const serverFileIdRef = useRef<string | null>(null);
 
     const fetchAndHydrate = async (fetcher: () => Promise<FileGroupMetadataResponse>) => {
         const raw = await fetcher();
@@ -132,16 +131,11 @@ const serverFileIdRef = useRef<string | null>(null);
                 return;
             }
 
-            const issuedLease = await downloadApi.downloadAllZip(
+            await downloadApi.downloadAllZip(
                 shareToken,
                 metadata.title,
-                password || undefined,
-                activeLeaseToken
+                password || undefined
             );
-
-            if (issuedLease) {
-                setActiveLeaseToken(issuedLease);
-            }
         } catch (err: unknown) {
             setError(parseApiError(err));
         } finally {

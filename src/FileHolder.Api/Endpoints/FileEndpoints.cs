@@ -2,7 +2,6 @@
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.Mvc;
 
 namespace FileHolder.Api.Endpoints;
 
@@ -165,77 +164,46 @@ public static class FileEndpoints
         StreamBundleZip(
             string shareToken,
             DownloadRequestDto dto,
-            [FromQuery] string? lease,
             HttpContext context,
             IBundleStreamService bundleStreamService)
     {
-        var leaseResult = await bundleStreamService.AcquireLeaseAsync(
+        var result = await bundleStreamService.StreamBundleZipAsync(
             shareToken,
             dto.Password,
-            lease,
+            context.Response.Body,
+            bundleTitle =>
+            {
+                var safeTitle = !string.IsNullOrWhiteSpace(bundleTitle)
+                    ? System.Text.RegularExpressions.Regex.Replace(
+                        bundleTitle,
+                        @"[^\w.-]",
+                        "_",
+                        System.Text.RegularExpressions.RegexOptions.None,
+                        TimeSpan.FromSeconds(1))
+                    : "bundle";
+
+                context.Response.ContentType = "application/zip";
+                context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{safeTitle}_{shareToken}.zip\"");
+                context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+            },
             context.RequestAborted);
 
-        if (leaseResult.Status != StreamZipStatus.Success)
+        return result.Status switch
         {
-            return leaseResult.Status switch
-            {
-                StreamZipStatus.NotFound => TypedResults.NotFound(),
-                StreamZipStatus.InvalidPassword => TypedResults.Unauthorized(),
-                StreamZipStatus.Expired => TypedResults.Problem(
-                    detail: "Bundle has expired or reached maximum download limit.",
-                    statusCode: StatusCodes.Status410Gone,
-                    title: "Link Expired"),
-                StreamZipStatus.CapacityReached => TypedResults.Problem(
-                    detail: "All download slots are currently in use or exhausted.",
-                    statusCode: StatusCodes.Status410Gone,
-                    title: "Download Limit Reached"),
-                StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
-                _ => TypedResults.NotFound()
-            };
-        }
-
-        var safeTitle = leaseResult.BundleTitle != null
-            ? System.Text.RegularExpressions.Regex.Replace(
-                leaseResult.BundleTitle,
-                @"[^\w.-]",
-                "_",
-                System.Text.RegularExpressions.RegexOptions.None,
-                    TimeSpan.FromSeconds(1))
-            : "bundle";
-
-        context.Response.ContentType = "application/zip";
-        context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{safeTitle}_{shareToken}.zip\"");
-        context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
-        context.Response.Headers.Append("X-Download-Lease", leaseResult.LeaseToken);
-
-        try
-        {
-            await bundleStreamService.StreamArchiveAsync(
-                leaseResult.Files!,
-                context.Response.Body,
-                context.RequestAborted
-            );
-
-            await bundleStreamService.FinalizeLeaseAsync(
-                leaseResult.LeaseToken!,
-                leaseResult.FileGroupId!.Value,
-                shareToken,
-                CancellationToken.None
-            );
-
-        }
-        catch (Exception)
-        {
-            await bundleStreamService.ReleaseLeaseAsync(
-                leaseResult.LeaseToken!,
-                leaseResult.FileGroupId!.Value,
-                CancellationToken.None
-            );
-            
-            throw;
-        }
-        
-        return TypedResults.Empty;
+            StreamZipStatus.NotFound => TypedResults.NotFound(),
+            StreamZipStatus.InvalidPassword => TypedResults.Unauthorized(),
+            StreamZipStatus.Expired => TypedResults.Problem(
+                detail: "Bundle has expired or reached maximum download limit.",
+                statusCode: StatusCodes.Status410Gone,
+                title: "Link Expired"),
+            StreamZipStatus.CapacityReached => TypedResults.Problem(
+                detail: "All download slots are currently in use or exhausted.",
+                statusCode: StatusCodes.Status410Gone,
+                title: "Download Limit Reached"),
+            StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
+            StreamZipStatus.Success => TypedResults.Empty,
+            _ => TypedResults.Empty
+        };
     }
 
     public static async Task<Ok<string>> ConfirmUpload(

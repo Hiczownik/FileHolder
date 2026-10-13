@@ -226,7 +226,7 @@ public class FileGroupService
         var now = _dateTimeProvider.UtcNow;
         if (group.IsExpired(now))
         {
-            return new UnlockResult(false, true, false, null);
+            return new UnlockResult(false, true, true, null);
         }
 
         if (!group.VerifyPassword(password))
@@ -273,7 +273,7 @@ public class FileGroupService
         }
 
         var now = _dateTimeProvider.UtcNow;
-        if (group.IsExpired(now))
+        if (group.IsExpired(now) || !group.HasDownloadCapacity(now))
         {
             return new DownloadResult(false, true, null);
         }
@@ -282,6 +282,12 @@ public class FileGroupService
         if (childFile == null) return new DownloadResult(false, false, null);
 
         group.DownloadCount++;
+
+        if (group.MaxDownloads.HasValue && group.DownloadCount >= group.MaxDownloads.Value)
+        {
+            group.IsDeleted = true;
+        }
+
         await _dbContext.SaveChangesAsync();
 
         await _cache.RemoveAsync($"file_group:{shareToken}");

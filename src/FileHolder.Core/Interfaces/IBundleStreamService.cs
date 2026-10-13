@@ -4,29 +4,16 @@ namespace FileHolder.Core.Interfaces;
 
 public interface IBundleStreamService
 {
-    Task<AcquireLeaseResult> AcquireLeaseAsync(
+    Task<StreamZipResult> StreamBundleZipAsync(
         string shareToken,
         string? password,
-        string? existingLeaseToken,
-        CancellationToken ct = default
-    );
-
-    Task StreamArchiveAsync(
-        IEnumerable<BundleFileEntry> files,
         Stream destinationStream,
-        CancellationToken ct = default
-    );
+        Action<string>? onBeforeStream = null,
+        CancellationToken ct = default);
 
-    Task FinalizeLeaseAsync(
-        string leaseToken,
-        Guid fileGroupId,
+    Task<StreamZipResult> StreamBundleZipAsync(
         string shareToken,
-        CancellationToken ct = default
-    );
-
-    Task ReleaseLeaseAsync(
-        string leaseToken,
-        Guid fileGroupId,
-        CancellationToken ct = default
-    );
+        string? password,
+        Stream destinationStream,
+        CancellationToken ct = default);
 }
