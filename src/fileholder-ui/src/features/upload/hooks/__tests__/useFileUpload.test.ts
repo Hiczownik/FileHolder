@@ -109,7 +109,10 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
   it('encrypts payload and manifest without leaking raw key to confirmUpload when isEncrypted is true', async () => {
     vi.spyOn(uploadApi, 'getPresignedUrl').mockResolvedValue({
       uploadToken: 'token_enc_123',
-      items: [{ fileName: 'fileGroup.enc', uploadUrl: 'http://test.url/enc', storageKey: 'uploads/enc_key', uploadMode: 'Single' }],
+      items: [
+        { fileName: 'mock_1.enc', uploadUrl: 'http://test.url/enc1', storageKey: 'uploads/enc_key1', uploadMode: 'Single' },
+        { fileName: 'mock_2.enc', uploadUrl: 'http://test.url/enc2', storageKey: 'uploads/enc_key2', uploadMode: 'Single' },
+      ],
     });
     vi.spyOn(uploadApi, 'uploadDirectToS3').mockResolvedValue();
     const confirmUploadSpy = vi.spyOn(uploadApi, 'confirmUpload').mockResolvedValue('share_enc_abc');
@@ -120,25 +123,26 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
 
     await act(async () => {
       await result.current.upload(
-        { title: 'Encrypted Vault', expireInHours: 24, maxDownloads: 5, isEncrypted: true },
+        { title: 'Encrypted Vault', expireInHours: 24, maxDownloads: 5, isEncrypted: true, password: 'VaultPassword123!' },
         [file1, file2]
       );
     });
 
     expect(result.current.uploadState.status).toBe('success');
     if (result.current.uploadState.status === 'success') {
-      expect(result.current.uploadState.shareLink).toContain('/f/share_enc_abc#key=');
-
-      const hashKey = result.current.uploadState.shareLink.split('#key=')[1];
-      expect(hashKey).toBeDefined();
-      expect(hashKey.length).toBeGreaterThan(10);
+      expect(result.current.uploadState.shareLink).toContain('/f/share_enc_abc');
+      expect(result.current.uploadState.shareLink).not.toContain('#key=');
 
       expect(confirmUploadSpy).toHaveBeenCalledTimes(1);
       const confirmArg = confirmUploadSpy.mock.calls[0][0];
       expect(confirmArg.isEncrypted).toBe(true);
+      expect(confirmArg.keyEnvelope).toBeDefined();
+      expect(typeof confirmArg.keyEnvelope).toBe('string');
+      expect(confirmArg.keySalt).toBeDefined();
+      expect(typeof confirmArg.keySalt).toBe('string');
       expect(confirmArg.encryptedManifest).toBeDefined();
       expect(typeof confirmArg.encryptedManifest).toBe('string');
-      expect(confirmArg.encryptedManifest).not.toBe(hashKey);
+      expect(confirmArg.password).not.toBe('VaultPassword123!'); // kAuth token is sent, not raw password
     }
   });
 

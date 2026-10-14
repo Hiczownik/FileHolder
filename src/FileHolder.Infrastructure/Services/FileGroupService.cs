@@ -35,26 +35,17 @@ public class FileGroupService
         return (partSize, totalParts);
     }
 
-    public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto)
+public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto)
     {
         var uploadToken = Guid.NewGuid().ToString("N");
         var items = new List<PresignedItemDto>();
         bool sessionsAdded = false;
 
-        if (dto.IsEncrypted)
-        {
-            var storageKey = $"uploads/{Guid.NewGuid():N}.enc";
-            var presignedUrl = _storageProvider.GeneratePresignedUploadUrl(
-                storageKey,
-                _dateTimeProvider.UtcNow.AddMinutes(15));
-
-            items.Add(new PresignedItemDto("fileGroup.enc", storageKey, UploadMode.Single, presignedUrl, null, null, null));
-            return new PresignedUrlResponseDto(uploadToken, items);
-        }
-
         foreach (var file in dto.Files)
         {
-            var storageKey = FileSecurityUtils.GenerateStorageKey(file.FileName);
+            var storageKey = dto.IsEncrypted
+                ? $"uploads/{Guid.NewGuid():N}.enc"
+                : FileSecurityUtils.GenerateStorageKey(file.FileName);
 
             if (file.SizeBytes > MultipartThreshold)
             {
@@ -134,7 +125,9 @@ public class FileGroupService
             MaxDownloads = dto.MaxDownloads,
             ExpiresAt = dto.ExpireInHours.HasValue ? _dateTimeProvider.UtcNow.AddHours(dto.ExpireInHours.Value) : null,
             IsEncrypted = dto.IsEncrypted,
-            EncryptedManifest = dto.EncryptedManifest
+            EncryptedManifest = dto.EncryptedManifest,
+            KeyEnvelope = dto.KeyEnvelope,
+            KeySalt = dto.KeySalt
         };
 
         foreach (var item in dto.Files)
@@ -180,7 +173,9 @@ public class FileGroupService
                 true,
                 false,
                 group.IsEncrypted,
-                group.EncryptedManifest,
+                null,
+                null,
+                group.KeySalt,
                 group.ExpiresAt,
                 group.RemainingDownloads,
                 false,
@@ -204,6 +199,8 @@ public class FileGroupService
             !group.RequiresPassword,
             group.IsEncrypted,
             group.EncryptedManifest,
+            group.KeyEnvelope,
+            group.KeySalt,
             group.ExpiresAt,
             group.RemainingDownloads,
             group.IsExpired(now),
@@ -226,7 +223,7 @@ public class FileGroupService
         var now = _dateTimeProvider.UtcNow;
         if (group.IsExpired(now))
         {
-            return new UnlockResult(false, true, true, null);
+            return new UnlockResult(false, true, false, null);
         }
 
         if (!group.VerifyPassword(password))
@@ -250,6 +247,8 @@ public class FileGroupService
             true,
             group.IsEncrypted,
             group.EncryptedManifest,
+            group.KeyEnvelope,
+            group.KeySalt,
             group.ExpiresAt,
             group.RemainingDownloads,
             false,

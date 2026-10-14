@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import type { FileGroupMetadataResponse } from "../types";
+import type { FileGroupMetadataResponse, FileItemMetadata } from "../types";
 import { downloadApi } from "../api/downloadApi";
 import { bundleDecryptionService } from "../services/bundleDecryptionService";
 import { saveBlobAsFile, triggerDirectDownload } from "../../../shared/utils/downloadUtils";
 import { parseApiError } from "../../../shared/utils/parseApiError";
+import JSZip from "jszip";
 
 export const useFileDownload = (shareToken?: string) => {
     const [metadata, setMetadata] = useState<FileGroupMetadataResponse | null>(null);
@@ -14,16 +15,7 @@ export const useFileDownload = (shareToken?: string) => {
     const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
-    const serverFileIdRef = useRef<string | null>(null);
-
-    const fetchAndHydrate = async (fetcher: () => Promise<FileGroupMetadataResponse>) => {
-        const raw = await fetcher();
-        if (raw.files && raw.files.length > 0 && !serverFileIdRef.current) {
-            serverFileIdRef.current = raw.files[0].id;
-        }
-        const keyString = bundleDecryptionService.extractKeyFromHash();
-        return bundleDecryptionService.hydrateEncryptedMetadata(raw, keyString);
-    };
+    const cachedKAuthRef = useRef<string | null>(null);
 
     useEffect(() => {
         if (!shareToken) return;
@@ -32,9 +24,9 @@ export const useFileDownload = (shareToken?: string) => {
 
         const fetchMetadata = async () => {
             try {
-                const hydrated = await fetchAndHydrate(() => downloadApi.getGroupMetadata(shareToken));
+                const raw = await downloadApi.getGroupMetadata(shareToken);
                 if (!isCancelled) {
-                    setMetadata(hydrated);
+                    setMetadata(raw);
                 }
             } catch (err: unknown) {
                 if (!isCancelled) {
@@ -56,27 +48,58 @@ export const useFileDownload = (shareToken?: string) => {
 
     const handleUnlock = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!shareToken || !password) return;
+        if (!shareToken || !password || !metadata) return;
 
         setIsUnlocking(true);
         setError(null);
 
         try {
-            const hydrated = await fetchAndHydrate(() => downloadApi.unlockGroup(shareToken, password));
-            setMetadata(hydrated);
+            if (metadata.isEncrypted) {
+                if (!metadata.keySalt) {
+                    throw new Error('Cryptographic salt is missing from file vault.');
+                }
+
+                const { kAuth, kWrap } = await bundleDecryptionService.deriveKAuth(password, metadata.keySalt, shareToken);
+                cachedKAuthRef.current = kAuth;
+
+                const unlockedRaw = await downloadApi.unlockGroup(shareToken, kAuth);
+
+                if (!unlockedRaw.keyEnvelope || !unlockedRaw.encryptedManifest) {
+                    throw new Error('Encrypted envelope or manifest missing in unlocked response.');
+                }
+
+                const masterKey = await bundleDecryptionService.unwrapMasterKey(unlockedRaw.keyEnvelope, kWrap);
+                const manifestItems = await bundleDecryptionService.decryptManifest(unlockedRaw.encryptedManifest, masterKey);
+
+                const mappedFiles: FileItemMetadata[] = manifestItems.map((item, idx) => {
+                    const serverFile = unlockedRaw.files[idx] || unlockedRaw.files.find((f) => f.fileName.includes(item.id));
+                    const serverId = serverFile ? serverFile.id : item.id;
+                    bundleDecryptionService.registerFileMapping(serverId, item.id);
+
+                    return {
+                        id: serverId,
+                        fileName: item.fileName,
+                        sizeBytes: item.sizeBytes,
+                        contentType: item.contentType,
+                    };
+                });
+
+                setMetadata({
+                    ...unlockedRaw,
+                    isUnlocked: true,
+                    files: mappedFiles,
+                    fileCount: mappedFiles.length,
+                    totalSizeBytes: mappedFiles.reduce((acc, f) => acc + f.sizeBytes, 0),
+                });
+            } else {
+                const unlocked = await downloadApi.unlockGroup(shareToken, password);
+                setMetadata(unlocked);
+            }
         } catch (err: unknown) {
             setError(parseApiError(err));
         } finally {
             setIsUnlocking(false);
         }
-    };
-
-    const resolveCryptoKey = async (): Promise<CryptoKey> => {
-        const keyString = bundleDecryptionService.extractKeyFromHash();
-        if (!keyString) {
-            throw new Error('This transfer is end-to-end encrypted, but no decryption key was found in the link fragment (#key=...).');
-        }
-        return bundleDecryptionService.importKey(keyString);
     };
 
     const handleDownloadFile = async (fileId: string) => {
@@ -87,11 +110,11 @@ export const useFileDownload = (shareToken?: string) => {
 
         try {
             if (metadata.isEncrypted) {
-                const targetServerId = serverFileIdRef.current || fileId;
-                const key = await resolveCryptoKey();
-                const downloadUrl = await downloadApi.getDownloadUrl(shareToken, targetServerId, password || undefined);
+                const manifestId = bundleDecryptionService.getManifestIdForServerFile(fileId);
+                const authCredential = bundleDecryptionService.getKAuth(shareToken) || cachedKAuthRef.current || password;
+                const downloadUrl = await downloadApi.getDownloadUrl(shareToken, fileId, authCredential || undefined);
                 const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
-                const decryptedBytes = await bundleDecryptionService.decryptPayload(ciphertextBuffer, key);
+                const decryptedBytes = await bundleDecryptionService.decryptFile(ciphertextBuffer, manifestId);
 
                 const fileMeta = metadata.files.find((f) => f.id === fileId) || metadata.files[0];
                 const blob = new Blob([decryptedBytes as BlobPart], { type: fileMeta?.contentType || 'application/octet-stream' });
@@ -116,18 +139,26 @@ export const useFileDownload = (shareToken?: string) => {
 
         try {
             if (metadata.isEncrypted) {
-                const targetServerId = serverFileIdRef.current || metadata.files[0]?.id;
-                if (!targetServerId) {
-                    throw new Error('Target encrypted storage identifier could not be resolved.');
-                }
-                const key = await resolveCryptoKey();
-                const downloadUrl = await downloadApi.getDownloadUrl(shareToken, targetServerId, password || undefined);
-                const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
-                const decryptedBytes = await bundleDecryptionService.decryptPayload(ciphertextBuffer, key);
+                const zip = new JSZip();
+                const authCredential = bundleDecryptionService.getKAuth(shareToken) || cachedKAuthRef.current || password;
 
-                const blob = new Blob([decryptedBytes as BlobPart], { type: 'application/zip' });
+                for (const file of metadata.files) {
+                    const manifestId = bundleDecryptionService.getManifestIdForServerFile(file.id);
+                    const downloadUrl = await downloadApi.getDownloadUrl(shareToken, file.id, authCredential || undefined);
+                    const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
+                    const decryptedBytes = await bundleDecryptionService.decryptFile(ciphertextBuffer, manifestId);
+
+                    zip.file(file.fileName, decryptedBytes);
+                }
+
+                const zipBlob = await zip.generateAsync({
+                    type: 'blob',
+                    compression: 'DEFLATE',
+                    compressionOptions: { level: 6 },
+                });
+
                 const safeTitle = metadata.title ? metadata.title.replace(/[^\w.-]/g, '_') : 'bundle';
-                saveBlobAsFile(blob, `${safeTitle}_${shareToken}.zip`);
+                saveBlobAsFile(zipBlob, `${safeTitle}_${shareToken}.zip`);
                 return;
             }
 

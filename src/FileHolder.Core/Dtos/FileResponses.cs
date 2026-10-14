@@ -51,6 +51,8 @@ public record FileGroupMetadataResponseDto(
     [property: JsonPropertyName("isUnlocked")] bool IsUnlocked,
     [property: JsonPropertyName("isEncrypted")] bool IsEncrypted,
     [property: JsonPropertyName("encryptedManifest")] string? EncryptedManifest,
+    [property: JsonPropertyName("keyEnvelope")] string? KeyEnvelope,
+    [property: JsonPropertyName("keySalt")] string? KeySalt,
     [property: JsonPropertyName("expiresAt")] DateTime? ExpiresAt,
     [property: JsonPropertyName("remainingDownloads")] int? RemainingDownloads,
     [property: JsonPropertyName("isExpired")] bool IsExpired,

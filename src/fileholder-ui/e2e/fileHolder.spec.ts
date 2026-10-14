@@ -34,7 +34,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await selects.nth(0).selectOption('24');
     await selects.nth(1).selectOption('1');
 
-    const passwordInput = page.getByPlaceholder(/Leave empty for public link/i);
+    const passwordInput = page.locator('input[type="password"]');
     await passwordInput.fill('PlaywrightPass123!');
 
     await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
@@ -62,7 +62,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await expect(downloaderPage.getByText(testFile1.name)).not.toBeVisible();
     await expect(downloaderPage.getByText(testFile2.name)).not.toBeVisible();
 
-    const vaultPasswordInput = downloaderPage.getByPlaceholder(/Enter password/i);
+    const vaultPasswordInput = downloaderPage.locator('input[type="password"]');
     await vaultPasswordInput.fill('WrongPassword!');
     await downloaderPage.getByRole('button', { name: /Unlock Files/i }).click();
     await expect(downloaderPage.getByText(/Incorrect password|unauthorized/i)).toBeVisible();
@@ -132,7 +132,12 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await downloaderContext.close();
   });
 
-  test('4. Zero-Knowledge E2EE Bundle Journey: Client Encryption, Key Isolation, Decrypted Manifest & Payload Integrity', async ({ page, browser }) => {
+  test('4. Zero-Knowledge E2EE Bundle Journey: Password Envelope Encryption, Clean URL & Decrypted Manifest', async ({ page, browser }) => {
+    test.setTimeout(60000);
+
+    page.on('console', (msg) => console.log(`[Browser ${msg.type()}]: ${msg.text()}`));
+    page.on('pageerror', (err) => console.log(`[Browser Exception]: ${err.message}`));
+
     await page.goto('/');
     await expect(page.getByRole('heading', { name: /Secure File Sharing/i })).toBeVisible();
 
@@ -143,8 +148,11 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await expect(page.getByText('Selected Files (2)')).toBeVisible();
 
     const e2eeCheckbox = page.locator('input[type="checkbox"]');
-    await e2eeCheckbox.check();
+    await e2eeCheckbox.click();
     await expect(e2eeCheckbox).toBeChecked();
+
+    const passwordInput = page.locator('input[type="password"]');
+    await passwordInput.fill('ClassifiedPass123!');
 
     const confirmRequestPromise = page.waitForRequest(
       (req) => req.url().includes('/api/v1/files/confirm') && req.method() === 'POST'
@@ -157,37 +165,61 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     const rawPostData = confirmRequest.postData() || '';
 
     expect(postData.isEncrypted).toBe(true);
-    expect(postData.files).toHaveLength(1);
+    expect(postData.files).toHaveLength(2);
+    expect(postData.keyEnvelope).toBeTruthy();
+    expect(postData.keySalt).toBeTruthy();
     expect(postData.encryptedManifest).toBeTruthy();
-    expect(typeof postData.encryptedManifest).toBe('string');
+
+    // Verify plaintext password is never sent over the wire
+    expect(rawPostData).not.toContain('ClassifiedPass123!');
 
     const shareLinkInput = page.locator('input[readonly]');
     await expect(shareLinkInput).toBeVisible({ timeout: 30000 });
 
     const shareUrl = await shareLinkInput.inputValue();
-    expect(shareUrl).toMatch(/\/f\/[A-Za-z0-9_-]+#key=[A-Za-z0-9_-]+/);
-
-    const keyMatch = shareUrl.match(/#key=([A-Za-z0-9_-]+)/);
-    const rawKeyString = keyMatch ? keyMatch[1] : '';
-    expect(rawKeyString.length).toBeGreaterThan(10);
-
-    expect(postData.encryptedManifest).not.toBe(rawKeyString);
-    expect(rawPostData).not.toContain(rawKeyString);
+    // Clean URL invariant: Share URL MUST NOT contain any #key= fragment
+    expect(shareUrl).toMatch(/\/f\/[A-Za-z0-9_-]+$/);
+    expect(shareUrl).not.toContain('#key=');
 
     const downloaderContext = await browser.newContext();
     const downloaderPage = await downloaderContext.newPage();
 
+    downloaderPage.on('console', (msg) => console.log(`[Downloader ${msg.type()}]: ${msg.text()}`));
+    downloaderPage.on('pageerror', (err) => console.log(`[Downloader Exception]: ${err.message}`));
+
     await downloaderPage.goto(shareUrl);
 
-    await expect(downloaderPage.getByRole('heading', { name: 'E2EE Classified Archive' })).toBeVisible();
+    // Initial state: locked password prompt visible, files hidden
+    await expect(downloaderPage.getByText(/Password Protected Transfer/i)).toBeVisible();
+    await expect(downloaderPage.getByText(testFile1.name)).not.toBeVisible();
+    await expect(downloaderPage.getByText(testFile2.name)).not.toBeVisible();
+
+    // Wrong password challenge rejection
+    const vaultPasswordInput = downloaderPage.locator('input[type="password"]');
+    await vaultPasswordInput.fill('WrongPassphrase!');
+    await downloaderPage.getByRole('button', { name: /Unlock Files/i }).click();
+    await expect(downloaderPage.getByText(/Incorrect password|unauthorized/i)).toBeVisible();
+
+    // Correct password unlocks manifest
+    await vaultPasswordInput.fill('ClassifiedPass123!');
+    await downloaderPage.getByRole('button', { name: /Unlock Files/i }).click();
+
     await expect(downloaderPage.getByText(testFile1.name)).toBeVisible();
     await expect(downloaderPage.getByText(testFile2.name)).toBeVisible();
-    await expect(downloaderPage.getByText('fileGroup.enc')).not.toBeVisible();
 
+    // Download All as ZIP: verifies in-browser decrypted zip reconstruction
     const downloadPromise = downloaderPage.waitForEvent('download');
     await downloaderPage.getByRole('button', { name: /Download All.*ZIP/i }).click();
 
-    const download = await downloadPromise;
+    const downloadErrorBanner = downloaderPage.locator('.bg-rose-500\\/10');
+    const download = await Promise.race([
+      downloadPromise,
+      downloadErrorBanner.waitFor({ state: 'visible', timeout: 30000 }).then(async () => {
+        const errorText = await downloadErrorBanner.textContent();
+        throw new Error(`Download ZIP failed on UI with error message: "${errorText}"`);
+      }),
+    ]);
+
     expect(download.suggestedFilename()).toMatch(/\.zip$/);
 
     const downloadStream = await download.createReadStream();
@@ -206,27 +238,9 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     expect(doc2Content).toBe('Multi-file payload #2 content');
 
     await downloaderContext.close();
-
-    const strippedUrl = shareUrl.split('#')[0];
-    const noKeyContext = await browser.newContext();
-    const noKeyPage = await noKeyContext.newPage();
-
-    try {
-      await noKeyPage.goto(strippedUrl);
-
-      const errorMessage = noKeyPage.getByText(/no decryption key was found/i);
-      await expect(errorMessage).toBeVisible();
-
-      await expect(noKeyPage.getByText(testFile1.name)).not.toBeVisible();
-      await expect(noKeyPage.getByText(testFile2.name)).not.toBeVisible();
-      await expect(noKeyPage.getByRole('button', { name: /Download File/i })).not.toBeVisible();
-      await expect(noKeyPage.getByRole('button', { name: /Download All.*ZIP/i })).not.toBeVisible();
-    } finally {
-      await noKeyContext.close();
-    }
   });
 
-  test('5. Memory Safety Boundary: Rejects Multi-File E2EE Bundles Exceeding 200 MB', async ({ page }) => {
+  test('5. Streaming Architecture: Multi-File E2EE Bundles Exceeding 200 MB Are Permitted With Passkey', async ({ page }) => {
     const tempDir = path.resolve(process.cwd(), 'e2e');
     const bigFile1Path = path.join(tempDir, 'big1.bin');
     const bigFile2Path = path.join(tempDir, 'big2.bin');
@@ -250,21 +264,20 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       await expect(page.getByText('Selected Files (2)')).toBeVisible();
 
       const e2eCheckbox = page.locator('input[type="checkbox"]');
-      await e2eCheckbox.check();
+      await e2eCheckbox.click();
       await expect(e2eCheckbox).toBeChecked();
 
-      // Assert: Warning banner appears immediately
+      // Assert: No 200 MB warning banner appears in the new streaming architecture
       const warningBanner = page.locator('.bg-amber-500\\/10');
-      await expect(warningBanner).toBeVisible();
-      await expect(warningBanner).toContainText(/200 MB/i);
+      await expect(warningBanner).not.toBeVisible();
 
-      // Assert: Submit button is disabled
+      // Submit is disabled until passkey is entered
       const submitBtn = page.getByRole('button', { name: /Generate Shareable Link/i });
       await expect(submitBtn).toBeDisabled();
 
-      // Uncheck and verify it re-enables
-      await e2eCheckbox.uncheck();
-      await expect(warningBanner).not.toBeVisible();
+      // Entering passkey enables the submit button for 220 MB payload
+      const passwordInput = page.locator('input[type="password"]');
+      await passwordInput.fill('VaultPass123!');
       await expect(submitBtn).toBeEnabled();
     } finally {
       // Isolated teardown strictly scoped to this test

@@ -1,49 +1,67 @@
-import { cryptoEngine } from "../../../shared/utils/crypto/cryptoUtils";
-import { zipUtils } from "../../../shared/utils/crypto/zipUtils";
+import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
 import type { FileItemMetadata } from "../../download/types";
 
+export interface EncryptedFileItem {
+    id: string;
+    originalName: string;
+    originalSize: number;
+    originalType: string;
+    encryptedFile: File;
+}
+
 export interface PreparedEncryptedPayload {
-    encryptedFileBlob: File;
+    files: EncryptedFileItem[];
     encryptedManifest: string;
-    keyString: string;
-    targetFileName: string;
-    totalSizeBytes: number;
+    keyEnvelope: string;
+    keySalt: string;
+    kAuth: string;
 }
 
 export async function prepareEncryptedBundle(
-    files: File[]
+    files: File[],
+    password: string
 ): Promise<PreparedEncryptedPayload> {
-    const key = await cryptoEngine.generateKey();
-    const keyString = await cryptoEngine.exportKeyToBase64Url(key);
+    const masterKey = await cryptoEngine.generateKey();
+    const salt = cryptoEngine.generateSalt();
+    const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
+    const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap);
 
-    let rawPayloadBytes: Uint8Array;
-    if (files.length === 1) {
-        rawPayloadBytes = new Uint8Array(await files[0].arrayBuffer());
-    } else {
-        rawPayloadBytes = await zipUtils.createZipFromFiles(files);
+    const encryptedFiles: EncryptedFileItem[] = [];
+    const manifestItems: FileItemMetadata[] = [];
+
+    for (const file of files) {
+        const fileId = crypto.randomUUID();
+        const fileKey = await cryptoEngine.deriveFileKey(masterKey, fileId);
+        const plainBytes = new Uint8Array(await file.arrayBuffer());
+        const encryptedBytes = await cryptoEngine.encryptBytes(fileKey, plainBytes);
+
+        const encryptedFile = new File([encryptedBytes as BlobPart], `${fileId}.enc`, {
+            type: 'application/octet-stream',
+        });
+
+        encryptedFiles.push({
+            id: fileId,
+            originalName: file.name,
+            originalSize: file.size,
+            originalType: file.type || 'application/octet-stream',
+            encryptedFile,
+        });
+
+        manifestItems.push({
+            id: fileId,
+            fileName: file.name,
+            sizeBytes: file.size,
+            contentType: file.type || 'application/octet-stream',
+        });
     }
 
-    const encryptedPayload = await cryptoEngine.encryptBytes(key, rawPayloadBytes);
-
-    const manifestData: FileItemMetadata[] = files.map((f) => ({ 
-        id: crypto.randomUUID(),
-        fileName: f.name,
-        sizeBytes: f.size,
-        contentType: f.type || 'application/octet-stream',
-    }));
-
-    const encryptedManifest = await cryptoEngine.encryptJson(key, manifestData);
-    const targetFileName = files.length === 1 ? `${files[0].name}.enc` : 'fileGroup.zip.enc';
-
-    const encryptedFileBlob = new File([encryptedPayload as BlobPart], targetFileName, {
-        type: 'application/octet-stream',
-    });
+    const encryptedManifest = await cryptoEngine.encryptJson(masterKey, manifestItems);
 
     return {
-        encryptedFileBlob,
+        files: encryptedFiles,
         encryptedManifest,
-        keyString,
-        targetFileName,
-        totalSizeBytes: encryptedPayload.byteLength,
+        keyEnvelope,
+        keySalt: base64Url.encode(salt),
+        kAuth,
     };
 }

@@ -30,6 +30,14 @@ public class FileGroupConfiguration : IEntityTypeConfiguration<FileGroup>
             .HasColumnType("text")
             .IsRequired(false);
 
+        builder.Property(g => g.KeyEnvelope)
+            .HasColumnType("text")
+            .IsRequired(false);
+
+        builder.Property(g => g.KeySalt)
+            .HasMaxLength(64)
+            .IsRequired(false);
+
         builder.HasIndex(g => g.ShareToken)
             .IsUnique()
             .HasFilter("\"IsDeleted\" = FALSE");

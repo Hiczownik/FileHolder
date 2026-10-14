@@ -30,8 +30,10 @@ public record ConfirmUploadRequestDto(
     int? MaxDownloads,
     string? Password,
     bool IsEncrypted = false,
-    string? EncryptedManifest = null
-    );
+    string? EncryptedManifest = null,
+    string? KeyEnvelope = null,
+    string? KeySalt = null
+);
 
 public record DownloadRequestDto(
     string? Password

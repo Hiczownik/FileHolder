@@ -1,56 +1,59 @@
 import { describe, it, expect } from 'vitest';
 import { cryptoEngine } from '../cryptoUtils';
 
-describe('Web Crypto Zero-Knowledge Engine', () => {
-  it('generates, exports to Base64URL, and re-imports an identical AES-GCM key', async () => {
-    const key = await cryptoEngine.generateKey();
-    const exportedKey = await cryptoEngine.exportKeyToBase64Url(key);
+describe('Zero-Knowledge Password Envelope Encryption Engine', () => {
+  it('1. Generates salt, derives dual keys (kAuth, kWrap), and executes key wrapping/unwrapping', async () => {
+    const password = 'SuperSecretVaultPassphrase123!';
+    const salt = cryptoEngine.generateSalt();
 
-    expect(typeof exportedKey).toBe('string');
-    expect(exportedKey).not.toContain('+');
-    expect(exportedKey).not.toContain('/');
-    expect(exportedKey).not.toContain('=');
+    expect(salt).toHaveLength(16);
 
-    const importedKey = await cryptoEngine.importKeyFromBase64Url(exportedKey);
-    expect(importedKey).toBeDefined();
-    expect(importedKey.algorithm.name).toBe('AES-GCM');
+    const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
+    expect(typeof kAuth).toBe('string');
+    expect(kAuth.length).toBeGreaterThan(16);
+    expect(kWrap.algorithm.name).toBe('AES-GCM');
+
+    const masterKey = await cryptoEngine.generateKey();
+    const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap);
+    expect(typeof keyEnvelope).toBe('string');
+
+    const unwrappedMasterKey = await cryptoEngine.unwrapMasterKey(keyEnvelope, kWrap);
+    expect(unwrappedMasterKey).toBeDefined();
+
+    // Verify unwrapped key can encrypt and decrypt data
+    const plain = new TextEncoder().encode('Test Secret');
+    const encrypted = await cryptoEngine.encryptBytes(unwrappedMasterKey, plain);
+    const decrypted = await cryptoEngine.decryptBytes(masterKey, encrypted);
+    expect(new TextDecoder().decode(decrypted)).toBe('Test Secret');
   });
 
-  it('encrypts and decrypts binary payloads cleanly with authentication verification', async () => {
-    const key = await cryptoEngine.generateKey();
-    const originalText = 'Top Secret Confidential Document Payload 2026';
-    const originalBytes = new TextEncoder().encode(originalText);
+  it('2. Rejects master key unwrapping when wrong wrap key is used', async () => {
+    const salt = cryptoEngine.generateSalt();
+    const { kWrap: kWrap1 } = await cryptoEngine.deriveDualKeys('PasswordA', salt);
+    const { kWrap: kWrap2 } = await cryptoEngine.deriveDualKeys('PasswordB', salt);
 
-    const encrypted = await cryptoEngine.encryptBytes(key, originalBytes);
-    expect(encrypted.byteLength).toBe(12 + originalBytes.byteLength + 16); 
+    const masterKey = await cryptoEngine.generateKey();
+    const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap1);
 
-    const decrypted = await cryptoEngine.decryptBytes(key, encrypted);
-    const decryptedText = new TextDecoder().decode(decrypted);
-
-    expect(decryptedText).toBe(originalText);
+    await expect(cryptoEngine.unwrapMasterKey(keyEnvelope, kWrap2)).rejects.toThrow();
   });
 
-  it('rejects tampered ciphertext with an authentication error', async () => {
-    const key = await cryptoEngine.generateKey();
-    const originalBytes = new TextEncoder().encode('Unadulterated Data');
-    const encrypted = await cryptoEngine.encryptBytes(key, originalBytes);
+  it('3. Derives unique per-file keys from master key via HKDF', async () => {
+    const masterKey = await cryptoEngine.generateKey();
+    const fileIdA = 'file-id-aaa';
+    const fileIdB = 'file-id-bbb';
 
-    encrypted[15] ^= 0xff;
+    const fileKeyA = await cryptoEngine.deriveFileKey(masterKey, fileIdA);
+    const fileKeyB = await cryptoEngine.deriveFileKey(masterKey, fileIdB);
 
-    await expect(cryptoEngine.decryptBytes(key, encrypted)).rejects.toThrow();
-  });
+    const payload = new TextEncoder().encode('Confidential Document');
+    const encryptedWithA = await cryptoEngine.encryptBytes(fileKeyA, payload);
 
-  it('encrypts and decrypts structured metadata JSON manifests', async () => {
-    const key = await cryptoEngine.generateKey();
-    const manifest = [
-      { fileName: 'taxes.pdf', sizeBytes: 1048576, contentType: 'application/pdf' },
-      { fileName: 'w2.png', sizeBytes: 512000, contentType: 'image/png' },
-    ];
+    // Cross-decryption with key B must fail
+    await expect(cryptoEngine.decryptBytes(fileKeyB, encryptedWithA)).rejects.toThrow();
 
-    const encryptedBase64 = await cryptoEngine.encryptJson(key, manifest);
-    expect(typeof encryptedBase64).toBe('string');
-
-    const decryptedManifest = await cryptoEngine.decryptJson<typeof manifest>(key, encryptedBase64);
-    expect(decryptedManifest).toEqual(manifest);
+    // Decryption with key A must succeed
+    const decryptedWithA = await cryptoEngine.decryptBytes(fileKeyA, encryptedWithA);
+    expect(new TextDecoder().decode(decryptedWithA)).toBe('Confidential Document');
   });
 });

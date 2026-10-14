@@ -1,6 +1,5 @@
 import { useReducer, useRef } from "react";
 import type { UploadFormValues, UploadState } from "../types";
-import { E2EE_MAX_BUNDLE_BYTES, E2EE_MAX_SINGLE_FILE_BYTES } from "../types";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import {
     executeStandardUploadWorkflow,
@@ -40,22 +39,12 @@ export const useFileUpload = () => {
 
         abortControllerRef.current = new AbortController();
 
-        if (formValues.isEncrypted) {
-            const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
-            if (files.length > 1 && totalBytes > E2EE_MAX_BUNDLE_BYTES) {
-                dispatch({
-                    type: 'UPLOAD_ERROR',
-                    payload: 'Encrypted multi-file bundle exceeds the 200 MB browser safety limit.',
-                });
-                return;
-            }
-            if (files.length === 1 && totalBytes > E2EE_MAX_SINGLE_FILE_BYTES) {
-                dispatch({
-                    type: 'UPLOAD_ERROR',
-                    payload: 'Encrypted single file exceeds the 1 GB browser safety limit.',
-                });
-                return;
-            }
+        if (formValues.isEncrypted && !formValues.password) {
+            dispatch({
+                type: 'UPLOAD_ERROR',
+                payload: 'A passkey is required for Zero-Knowledge End-to-End Encryption.',
+            });
+            return;
         }
 
         dispatch({ type: 'START_UPLOAD' });
@@ -65,7 +54,8 @@ export const useFileUpload = () => {
                 ? await executeEncryptedUploadWorkflow(
                     formValues,
                     files,
-                    (progress) => dispatch({ type: 'SET_PROGRESS', payload: progress })
+                    (progress) => dispatch({ type: 'SET_PROGRESS', payload: progress }),
+                    abortControllerRef.current.signal
                 )
                 : await executeStandardUploadWorkflow(
                     formValues,

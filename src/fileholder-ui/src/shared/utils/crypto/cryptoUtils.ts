@@ -2,7 +2,12 @@ const ALGORITHM = 'AES-GCM';
 const KEY_LENGTH = 256;
 const IV_LENGTH_BYTES = 12;
 
-const base64Url = {
+export interface KeyDerivationResult {
+  kAuth: string;
+  kWrap: CryptoKey;
+}
+
+export const base64Url = {
   encode: (bytes: Uint8Array): string => {
     let binary = '';
     const len = bytes.byteLength;
@@ -28,6 +33,12 @@ const base64Url = {
 };
 
 export const cryptoEngine = {
+  base64Url,
+
+  generateSalt(): Uint8Array {
+    return window.crypto.getRandomValues(new Uint8Array(16));
+  },
+
   generateKey: async (): Promise<CryptoKey> => {
     return window.crypto.subtle.generateKey(
       { name: ALGORITHM, length: KEY_LENGTH },
@@ -52,12 +63,122 @@ export const cryptoEngine = {
     );
   },
 
+  async deriveDualKeys(password: string, salt: Uint8Array): Promise<KeyDerivationResult> {
+    const passwordBytes = new TextEncoder().encode(password);
+    const baseKey = await window.crypto.subtle.importKey(
+      'raw',
+      passwordBytes,
+      'PBKDF2',
+      false,
+      ['deriveBits']
+    );
+
+    const derivedBits = await window.crypto.subtle.deriveBits(
+      {
+        name: 'PBKDF2',
+        salt: salt as BufferSource,
+        iterations: 300_000,
+        hash: 'SHA-256',
+      },
+      baseKey,
+      256
+    );
+
+    const prk = await window.crypto.subtle.importKey(
+      'raw',
+      derivedBits,
+      'HKDF',
+      false,
+      ['deriveKey', 'deriveBits']
+    );
+
+    const kAuthBits = await window.crypto.subtle.deriveBits(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: new Uint8Array(0),
+        info: new TextEncoder().encode('fileholder-auth-v1'),
+      },
+      prk,
+      256
+    );
+    const kAuth = base64Url.encode(new Uint8Array(kAuthBits));
+
+    const kWrap = await window.crypto.subtle.deriveKey(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: new Uint8Array(0),
+        info: new TextEncoder().encode('fileholder-wrap-v1'),
+      },
+      prk,
+      { name: ALGORITHM, length: KEY_LENGTH },
+      false,
+      ['encrypt', 'decrypt']
+    );
+
+    return { kAuth, kWrap };
+  },
+
+  async wrapMasterKey(masterKey: CryptoKey, kWrap: CryptoKey): Promise<string> {
+    const rawMaster = await window.crypto.subtle.exportKey('raw', masterKey);
+    const iv = window.crypto.getRandomValues(new Uint8Array(IV_LENGTH_BYTES));
+    const encrypted = await window.crypto.subtle.encrypt(
+      { name: ALGORITHM, iv: iv as BufferSource },
+      kWrap,
+      rawMaster
+    );
+
+    const envelope = new Uint8Array(IV_LENGTH_BYTES + encrypted.byteLength);
+    envelope.set(iv, 0);
+    envelope.set(new Uint8Array(encrypted), IV_LENGTH_BYTES);
+    return base64Url.encode(envelope);
+  },
+
+  async unwrapMasterKey(envelopeBase64Url: string, kWrap: CryptoKey): Promise<CryptoKey> {
+    const envelope = base64Url.decode(envelopeBase64Url);
+    if (envelope.byteLength < 28) throw new Error('Malformed key envelope.');
+    const iv = envelope.slice(0, IV_LENGTH_BYTES);
+    const ciphertext = envelope.slice(IV_LENGTH_BYTES);
+
+    const rawMaster = await window.crypto.subtle.decrypt(
+      { name: ALGORITHM, iv: iv as BufferSource },
+      kWrap,
+      ciphertext as BufferSource
+    );
+
+    return window.crypto.subtle.importKey(
+      'raw',
+      rawMaster,
+      { name: ALGORITHM, length: KEY_LENGTH },
+      true,
+      ['encrypt', 'decrypt']
+    );
+  },
+
+  async deriveFileKey(masterKey: CryptoKey, fileId: string): Promise<CryptoKey> {
+    const rawMaster = await window.crypto.subtle.exportKey('raw', masterKey);
+    const prk = await window.crypto.subtle.importKey('raw', rawMaster, 'HKDF', false, ['deriveKey']);
+    return window.crypto.subtle.deriveKey(
+      {
+        name: 'HKDF',
+        hash: 'SHA-256',
+        salt: new Uint8Array(0),
+        info: new TextEncoder().encode(`fileholder-file-${fileId}`),
+      },
+      prk,
+      { name: ALGORITHM, length: KEY_LENGTH },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  },
+
   encryptBytes: async (key: CryptoKey, plainBytes: Uint8Array): Promise<Uint8Array> => {
     const iv = window.crypto.getRandomValues(new Uint8Array(IV_LENGTH_BYTES));
     const cipherBuffer = await window.crypto.subtle.encrypt(
       { name: ALGORITHM, iv: iv as BufferSource },
       key,
-      plainBytes as BufferSource 
+      plainBytes as BufferSource
     );
 
     const packed = new Uint8Array(IV_LENGTH_BYTES + cipherBuffer.byteLength);
@@ -76,7 +197,7 @@ export const cryptoEngine = {
     const plainBuffer = await window.crypto.subtle.decrypt(
       { name: ALGORITHM, iv: iv as BufferSource },
       key,
-      ciphertext as BufferSource 
+      ciphertext as BufferSource
     );
     return new Uint8Array(plainBuffer);
   },

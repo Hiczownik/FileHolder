@@ -2,6 +2,8 @@
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace FileHolder.Api.Endpoints;
 
@@ -138,10 +140,10 @@ public static class FileEndpoints
         GenerateDownloadLink(
             string shareToken,
             Guid fileId,
-            DownloadRequestDto dto,
+            [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DownloadRequestDto? dto,
             IFileGroupService fileGroupService)
     {
-        var result = await fileGroupService.CreatePresignedDownloadUrlAsync(shareToken, fileId, dto.Password);
+        var result = await fileGroupService.CreatePresignedDownloadUrlAsync(shareToken, fileId, dto?.Password);
 
         if (result.IsPasswordInvalid)
         {

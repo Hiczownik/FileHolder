@@ -81,6 +81,8 @@ export interface ConfirmUploadRequest {
     password?: string;
     isEncrypted?: boolean;
     encryptedManifest?: string;
+    keyEnvelope?: string;
+    keySalt?: string;
 }
 
 export interface FileItemMetadata {
@@ -99,6 +101,8 @@ export interface FileGroupMetadataResponse {
     isUnlocked: boolean;
     isEncrypted: boolean;
     encryptedManifest?: string;
+    keyEnvelope?: string;
+    keySalt?: string;
     expiresAt?: string;
     remainingDownloads?: number;
     isExpired: boolean;

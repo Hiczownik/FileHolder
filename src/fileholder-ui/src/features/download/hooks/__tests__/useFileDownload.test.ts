@@ -1,5 +1,6 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { AxiosError, AxiosHeaders } from 'axios';
 import { useFileDownload } from '../useFileDownload';
 import { downloadApi } from '../../api/downloadApi';
 import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
@@ -97,32 +98,43 @@ describe('useFileDownload Hook Lifecycle & Cryptographic States', () => {
         expect(result.current.metadata?.files[0].fileName).toBe('payroll.xlsx');
     });
 
-    it('3. E2EE: Decrypts manifest when #key=... is present in location.hash', async () => {
-        const key = await cryptoEngine.generateKey();
-        const base64Key = await cryptoEngine.exportKeyToBase64Url(key);
-        window.location.hash = `#key=${base64Key}`;
+    it('3. Zero-Knowledge E2EE: Starts locked, unlocks and decrypts manifest on handleUnlock() with passkey', async () => {
+        const password = 'VaultPass123!';
+        const salt = cryptoEngine.generateSalt();
+        const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
+        const masterKey = await cryptoEngine.generateKey();
+        const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap);
 
         const plaintextManifest = [
-            { id: 'manifest_1', fileName: 'secret.txt', sizeBytes: 100, contentType: 'text/plain' },
+            { id: 'file_uuid_1', fileName: 'secret.txt', sizeBytes: 100, contentType: 'text/plain' },
         ];
-        const encryptedManifestCiphertext = await cryptoEngine.encryptJson(key, plaintextManifest);
+        const encryptedManifestCiphertext = await cryptoEngine.encryptJson(masterKey, plaintextManifest);
 
-        const encryptedGroup: FileGroupMetadataResponse = {
+        const lockedGroup: FileGroupMetadataResponse = {
             shareToken: 'e2ee_token',
             title: 'Encrypted Drop',
             totalSizeBytes: 0,
             fileCount: 1,
-            requiresPassword: false,
-            isUnlocked: true,
+            requiresPassword: true,
+            isUnlocked: false,
             isEncrypted: true,
-            encryptedManifest: encryptedManifestCiphertext,
+            keySalt: cryptoEngine.base64Url.encode(salt),
             isExpired: false,
+            files: [],
+        };
+
+        const unlockedGroup: FileGroupMetadataResponse = {
+            ...lockedGroup,
+            isUnlocked: true,
+            keyEnvelope,
+            encryptedManifest: encryptedManifestCiphertext,
             files: [
-                { id: 'server_blob_1', fileName: 'fileGroup.enc', sizeBytes: 150, contentType: 'application/octet-stream' },
+                { id: 'server_blob_1', fileName: 'file_uuid_1.enc', sizeBytes: 128, contentType: 'application/octet-stream' },
             ],
         };
 
-        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(encryptedGroup);
+        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(lockedGroup);
+        const unlockSpy = vi.spyOn(downloadApi, 'unlockGroup').mockResolvedValue(unlockedGroup);
 
         const { result } = renderHook(() => useFileDownload('e2ee_token'));
 
@@ -130,64 +142,120 @@ describe('useFileDownload Hook Lifecycle & Cryptographic States', () => {
             expect(result.current.isLoading).toBe(false);
         });
 
-        expect(result.current.error).toBeNull();
+        expect(result.current.metadata?.requiresPassword).toBe(true);
+        expect(result.current.metadata?.isUnlocked).toBe(false);
+        expect(result.current.metadata?.files).toHaveLength(0);
+
+        act(() => {
+            result.current.setPassword(password);
+        });
+
+        const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent;
+        await act(async () => {
+            await result.current.handleUnlock(mockEvent);
+        });
+
+        expect(unlockSpy).toHaveBeenCalledWith('e2ee_token', kAuth);
+        expect(result.current.metadata?.isUnlocked).toBe(true);
         expect(result.current.metadata?.files).toHaveLength(1);
         expect(result.current.metadata?.files[0].fileName).toBe('secret.txt');
         expect(result.current.metadata?.totalSizeBytes).toBe(100);
+        expect(result.current.error).toBeNull();
     });
 
-    it('4. E2EE Negative: Sets error state when #key=... is missing', async () => {
-        window.location.hash = '';
-
-        const encryptedGroup: FileGroupMetadataResponse = {
-            shareToken: 'e2ee_token_nokey',
+    it('4. Zero-Knowledge E2EE: Sets error state when incorrect passkey is provided', async () => {
+        const lockedGroup: FileGroupMetadataResponse = {
+            shareToken: 'e2ee_token_wrong',
             title: 'Encrypted Drop',
             totalSizeBytes: 0,
             fileCount: 1,
-            requiresPassword: false,
-            isUnlocked: true,
+            requiresPassword: true,
+            isUnlocked: false,
             isEncrypted: true,
+            keySalt: cryptoEngine.base64Url.encode(cryptoEngine.generateSalt()),
             isExpired: false,
             files: [],
         };
 
-        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(encryptedGroup);
+        const mock401Error = new AxiosError(
+            'Request failed with status code 401',
+            'ERR_BAD_REQUEST',
+            undefined,
+            undefined,
+            {
+                status: 401,
+                statusText: 'Unauthorized',
+                data: { detail: 'Incorrect password. Please try again.' },
+                headers: {},
+                config: { headers: new AxiosHeaders() },
+            }
+        );
 
-        const { result } = renderHook(() => useFileDownload('e2ee_token_nokey'));
+        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(lockedGroup);
+        vi.spyOn(downloadApi, 'unlockGroup').mockRejectedValue(mock401Error);
+
+        const { result } = renderHook(() => useFileDownload('e2ee_token_wrong'));
 
         await waitFor(() => {
             expect(result.current.isLoading).toBe(false);
         });
 
-        expect(result.current.error).toMatch(/no decryption key was found/i);
-        expect(result.current.metadata).toBeNull();
+        act(() => {
+            result.current.setPassword('WrongPass123!');
+        });
+
+        const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent;
+        await act(async () => {
+            await result.current.handleUnlock(mockEvent);
+        });
+
+        expect(result.current.error).toMatch(/incorrect password/i);
+        expect(result.current.metadata?.isUnlocked).toBe(false);
     });
 
-    it('5. E2EE Negative: Rejects malformed Base64Url key gracefully', async () => {
-        window.location.hash = '#key=INVALID_CHARACTERS!@#$';
+    it('5. Zero-Knowledge E2EE: Fails gracefully when key envelope is malformed or corrupted', async () => {
+        const password = 'VaultPass123!';
+        const salt = cryptoEngine.generateSalt();
 
-        const encryptedGroup: FileGroupMetadataResponse = {
-            shareToken: 'e2ee_token_badkey',
+        const lockedGroup: FileGroupMetadataResponse = {
+            shareToken: 'e2ee_token_corrupt',
             title: 'Encrypted Drop',
             totalSizeBytes: 0,
             fileCount: 1,
-            requiresPassword: false,
-            isUnlocked: true,
+            requiresPassword: true,
+            isUnlocked: false,
             isEncrypted: true,
+            keySalt: cryptoEngine.base64Url.encode(salt),
+            isExpired: false,
+            files: [],
+        };
+
+        const corruptedUnlockedGroup: FileGroupMetadataResponse = {
+            ...lockedGroup,
+            isUnlocked: true,
+            keyEnvelope: 'INVALID_BASE64_OR_CORRUPT_ENVELOPE',
             encryptedManifest: 'dummy_cipher',
-            isExpired: false,
             files: [],
         };
 
-        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(encryptedGroup);
+        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(lockedGroup);
+        vi.spyOn(downloadApi, 'unlockGroup').mockResolvedValue(corruptedUnlockedGroup);
 
-        const { result } = renderHook(() => useFileDownload('e2ee_token_badkey'));
+        const { result } = renderHook(() => useFileDownload('e2ee_token_corrupt'));
 
         await waitFor(() => {
             expect(result.current.isLoading).toBe(false);
         });
 
-        expect(result.current.error).toMatch(/Invalid cryptographic key format|Decryption failed|malformed/i);
-        expect(result.current.metadata).toBeNull();
+        act(() => {
+            result.current.setPassword(password);
+        });
+
+        const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent;
+        await act(async () => {
+            await result.current.handleUnlock(mockEvent);
+        });
+
+        expect(result.current.error).toMatch(/malformed key envelope|decryption failed|corrupted/i);
     });
 });

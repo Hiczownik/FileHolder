@@ -17,14 +17,6 @@ public class CreatePresignedUrlValidator : AbstractValidator<CreatePresignedUrlR
             .Must(files => files == null || files.Sum(f => f.SizeBytes) <= 5_497_558_138_880L) // 5 TB
             .WithMessage("Total aggregate batch file size cannot exceed 5 TB.");
 
-        // 1 GB + 64 KB margin for IV, AES-GCM authentication tag, and container headers
-        const long maxEncryptedPayloadBytes = 1_073_741_824L + 65_536L;
-
-        RuleFor(x => x.Files)
-            .Must(files => files == null || files.Sum(f => f.SizeBytes) <= maxEncryptedPayloadBytes)
-            .When(x => x.IsEncrypted)
-            .WithMessage("Encrypted payloads cannot exceed 1 GB due to client-side memory safety constraints.");
-
         RuleForEach(x => x.Files).ChildRules(file =>
         {
             file.RuleFor(f => f.FileName)

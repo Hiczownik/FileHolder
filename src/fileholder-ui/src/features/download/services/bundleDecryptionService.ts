@@ -1,95 +1,81 @@
-import { cryptoEngine } from "../../../shared/utils/crypto/cryptoUtils";
-import type { FileGroupMetadataResponse, FileItemMetadata } from "../types";
-
-interface ManifestItemInput {
-    id?: string;
-    fileName?: string;
-    sizeBytes: number;
-    contentType?: string;
-}
+import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
+import type { FileItemMetadata } from "../types";
 
 export class BundleDecryptionService {
-    private keyCache = new Map<string, CryptoKey>();
+    private cachedMasterKey: CryptoKey | null = null;
+    private cachedKAuth: string | null = null;
+    private serverFileToManifestIdMap = new Map<string, string>();
 
-    public extractKeyFromHash(): string | null {
-        const hash = window.location.hash;
-        const match = hash.match(/(?:^|[#&])key=([A-Za-z0-9_-]+)/);
-        return match ? match[1] : null;
-    }
-
-    public async importKey(keyString: string): Promise<CryptoKey> {
-        const cached = this.keyCache.get(keyString);
-        if (cached) return cached;
-
+    public setKAuth(shareToken: string, kAuth: string): void {
+        this.cachedKAuth = kAuth;
         try {
-            const key = await cryptoEngine.importKeyFromBase64Url(keyString);
-            this.keyCache.set(keyString, key);
-            return key;
-        } catch (err: unknown) {
-            throw new Error('Invalid cryptographic key format in share link.', { cause: err });
+            sessionStorage.setItem(`kauth_${shareToken}`, kAuth);
+        } catch {
+            // Ignore storage quota or disabled storage in private browsing
         }
     }
 
-    public async hydrateEncryptedMetadata(
-        rawMetadata: FileGroupMetadataResponse,
-        keyString: string | null
-    ): Promise<FileGroupMetadataResponse> {
-        if (!rawMetadata.isEncrypted) {
-            return rawMetadata;
-        }
-
-        if (!keyString) {
-            throw new Error('This transfer is end-to-end encrypted, but no decryption key was found in the link fragment (#key=...).');
-        }
-
-        const key = await this.importKey(keyString);
-
-        if (rawMetadata.requiresPassword && !rawMetadata.isUnlocked) {
-            return rawMetadata;
-        }
-
-        if (rawMetadata.encryptedManifest) {
-            let items: ManifestItemInput[];
+    public getKAuth(shareToken?: string): string | null {
+        if (this.cachedKAuth) return this.cachedKAuth;
+        if (shareToken) {
             try {
-                items = await cryptoEngine.decryptJson<ManifestItemInput[]>(key, rawMetadata.encryptedManifest);
-            } catch (err: unknown) {
-                if (err instanceof SyntaxError) {
-                    throw new Error('Failed to parse decrypted metadata manifest.', { cause: err });
+                const stored = sessionStorage.getItem(`kauth_${shareToken}`);
+                if (stored) {
+                    this.cachedKAuth = stored;
+                    return stored;
                 }
-                throw new Error('Decryption failed. Cryptographic authentication mismatch. The link key may be invalid or the data is corrupted.', { cause: err });
+            } catch {
+                // Ignore
             }
-
-            const decryptedFiles: FileItemMetadata[] = items.map((item) => ({
-                id: item.id || crypto.randomUUID(),
-                fileName: item.fileName || 'unnamed_file',
-                sizeBytes: Number(item.sizeBytes) || 0,
-                contentType: item.contentType || 'application/octet-stream',
-            }));
-
-            return {
-                ...rawMetadata,
-                files: decryptedFiles,
-                fileCount: decryptedFiles.length,
-                totalSizeBytes: decryptedFiles.reduce((acc, f) => acc + f.sizeBytes, 0),
-            };
         }
-
-        return rawMetadata;
+        return null;
     }
 
-    public async decryptPayload(
-        ciphertextBuffer: ArrayBuffer,
-        key: CryptoKey
-    ): Promise<Uint8Array> {
-        if (ciphertextBuffer.byteLength < 28) {
-            throw new Error('Encrypted payload is corrupted or truncated.');
+    public registerFileMapping(serverFileId: string, manifestId: string): void {
+        this.serverFileToManifestIdMap.set(serverFileId, manifestId);
+    }
+
+    public getManifestIdForServerFile(serverFileId: string): string {
+        return this.serverFileToManifestIdMap.get(serverFileId) || serverFileId;
+    }
+
+    public async deriveKAuth(password: string, saltBase64Url: string, shareToken?: string): Promise<{ kAuth: string; kWrap: CryptoKey }> {
+        const salt = base64Url.decode(saltBase64Url);
+        const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
+        if (shareToken) {
+            this.setKAuth(shareToken, kAuth);
+        } else {
+            this.cachedKAuth = kAuth;
+        }
+        return { kAuth, kWrap };
+    }
+
+    public async unwrapMasterKey(envelopeBase64Url: string, kWrap: CryptoKey): Promise<CryptoKey> {
+        const masterKey = await cryptoEngine.unwrapMasterKey(envelopeBase64Url, kWrap);
+        this.cachedMasterKey = masterKey;
+        return masterKey;
+    }
+
+    public async decryptManifest(encryptedManifest: string, masterKey?: CryptoKey): Promise<FileItemMetadata[]> {
+        const key = masterKey || this.cachedMasterKey;
+        if (!key) {
+            throw new Error('Vault is locked. No master key available.');
         }
 
         try {
-            return await cryptoEngine.decryptBytes(key, new Uint8Array(ciphertextBuffer));
+            return await cryptoEngine.decryptJson<FileItemMetadata[]>(key, encryptedManifest);
         } catch (err: unknown) {
-            throw new Error('Decryption failed: Cryptographic authentication mismatch. The link key may be invalid or the data is corrupted.', { cause: err });
+            throw new Error('Decryption failed. Cryptographic authentication mismatch. The passkey may be incorrect or the data is corrupted.', { cause: err });
         }
+    }
+
+    public async decryptFile(ciphertextBuffer: ArrayBuffer, fileId: string): Promise<Uint8Array> {
+        if (!this.cachedMasterKey) {
+            throw new Error('Vault is locked.');
+        }
+
+        const fileKey = await cryptoEngine.deriveFileKey(this.cachedMasterKey, fileId);
+        return cryptoEngine.decryptBytes(fileKey, new Uint8Array(ciphertextBuffer));
     }
 }
 

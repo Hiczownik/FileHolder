@@ -286,10 +286,69 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         downloadResult!.DownloadUrl.Should().Contain("http://localhost:9000");
     }
 
+    [Fact]
+    public async Task ConfirmAndGetMetadata_ZeroKnowledgeEnvelopeFlow_StoresEnvelopeAndReturnsMaskedSalt()
+    {
+        factory.SeedS3Object("uploads/e2ee_file.enc", 1024);
+
+        var confirmRequest = new ConfirmUploadRequestDto(
+            UploadToken: "e2ee_upload_token",
+            Title: "E2EE Envelope Vault",
+            Files: new List<ConfirmedFileItemDto>
+            {
+                new("uploads/e2ee_file.enc", "mock_id.enc", "application/octet-stream", 1024)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 5,
+            Password: "k_auth_derived_token_123",
+            IsEncrypted: true,
+            EncryptedManifest: "encrypted_manifest_base64",
+            KeyEnvelope: "key_envelope_base64",
+            KeySalt: "salt_base64"
+        );
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
+        confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
+        shareToken.Should().NotBeNullOrWhiteSpace();
+
+        // 1. Initial GET when locked: returns KeySalt, but masks KeyEnvelope and EncryptedManifest
+        var getResponse = await _client.GetAsync($"/api/v1/files/{shareToken}");
+        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var metadata = await getResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+
+        metadata.Should().NotBeNull();
+        metadata!.IsEncrypted.Should().BeTrue();
+        metadata.RequiresPassword.Should().BeTrue();
+        metadata.IsUnlocked.Should().BeFalse();
+        metadata.KeySalt.Should().Be("salt_base64");
+        metadata.KeyEnvelope.Should().BeNull();
+        metadata.EncryptedManifest.Should().BeNull();
+        metadata.Files.Should().BeEmpty();
+
+        // 2. Unlock with invalid kAuth returns 401
+        var failedUnlock = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("wrong_k_auth"));
+        failedUnlock.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        // 3. Unlock with valid kAuth returns unmasked metadata with KeyEnvelope and EncryptedManifest
+        var successUnlock = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("k_auth_derived_token_123"));
+        successUnlock.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var unlockedMetadata = await successUnlock.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        unlockedMetadata.Should().NotBeNull();
+        unlockedMetadata!.IsUnlocked.Should().BeTrue();
+        unlockedMetadata.KeyEnvelope.Should().Be("key_envelope_base64");
+        unlockedMetadata.KeySalt.Should().Be("salt_base64");
+        unlockedMetadata.EncryptedManifest.Should().Be("encrypted_manifest_base64");
+        unlockedMetadata.Files.Should().HaveCount(1);
+    }
+    
     #endregion
-
-    #region 4. Real-Time Streaming ZIP Archive Tests
-
+    
     #region 4. Real-Time Streaming ZIP Archive Tests
 
     [Fact]
@@ -435,8 +494,6 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
     #endregion
     
-    #endregion
-
     #region 5. Expiration & Not Found Tests
 
     [Fact]
@@ -568,18 +625,4 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     #endregion
-    
-    private sealed class ThrottledStream(byte[] data) : MemoryStream(data)
-    {
-        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
-        {
-            var read = await base.ReadAsync(buffer, cancellationToken);
-            if (read > 0)
-            {
-                await Task.Delay(2000, cancellationToken);
-            }
-
-            return read;
-        }
-    }
 }
