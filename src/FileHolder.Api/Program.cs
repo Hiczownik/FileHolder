@@ -157,7 +157,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await dbContext.Database.EnsureCreatedAsync(CancellationToken.None);
+    await dbContext.Database.MigrateAsync(CancellationToken.None);
     await dbContext.Database.ExecuteSqlRawAsync(@"
         ALTER TABLE ""FileGroups"" ADD COLUMN IF NOT EXISTS ""KeyEnvelope"" text;
         ALTER TABLE ""FileGroups"" ADD COLUMN IF NOT EXISTS ""KeySalt"" character varying(64);
