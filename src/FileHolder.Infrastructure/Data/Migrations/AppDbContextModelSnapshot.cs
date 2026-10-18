@@ -31,6 +31,9 @@ namespace FileHolder.Infrastructure.Data.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("DownloadCount")
                         .HasColumnType("integer");
 
@@ -67,11 +70,18 @@ namespace FileHolder.Infrastructure.Data.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("character varying(32)");
 
+                    b.Property<DateTime?>("StoragePurgedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Title")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("IX_FileGroups_PendingStoragePurge")
+                        .HasFilter("\"StoragePurgedAt\" IS NULL");
 
                     b.HasIndex("ShareToken")
                         .IsUnique()

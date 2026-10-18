@@ -13,6 +13,8 @@ public class FileGroup
     public DateTime? ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public bool IsDeleted { get; set; }
+    public DateTime? DeletedAt { get; set; }
+    public DateTime? StoragePurgedAt { get; set; }
     public bool IsEncrypted { get; set; }
     public string? EncryptedManifest { get; set; }
     public string? KeyEnvelope { get; set; }
@@ -35,6 +37,17 @@ public class FileGroup
         if (!MaxDownloads.HasValue) return true;
 
         return DownloadCount < MaxDownloads.Value;
+    }
+
+    /// <summary>
+    /// Closes the group to further access. Storage objects are removed separately by the purge worker,
+    /// which tracks completion via <see cref="StoragePurgedAt"/>.
+    /// </summary>
+    public void MarkDeleted(DateTime utcNow)
+    {
+        if (IsDeleted) return;
+        IsDeleted = true;
+        DeletedAt = utcNow;
     }
 
     /// <summary>

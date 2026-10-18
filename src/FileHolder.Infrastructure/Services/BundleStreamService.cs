@@ -87,7 +87,7 @@ public class BundleStreamService(
         bool shouldPurgeImmediately = lockedGroup.MaxDownloads.HasValue && lockedGroup.DownloadCount >= lockedGroup.MaxDownloads.Value;
         if (shouldPurgeImmediately)
         {
-            lockedGroup.IsDeleted = true;
+            lockedGroup.MarkDeleted(now);
         }
 
         await _dbContext.SaveChangesAsync(ct);
@@ -108,9 +108,15 @@ public class BundleStreamService(
 
         await StreamArchiveInternalAsync(fileEntries, destinationStream, ct);
 
+        // Best-effort eager cleanup; anything left behind (including when streaming fails) is retried by the purge worker.
         if (shouldPurgeImmediately && keysToDelete != null && keysToDelete.Count > 0)
         {
-            await _storageProvider.DeleteObjectsAsync(keysToDelete, CancellationToken.None);
+            var failedKeys = await _storageProvider.DeleteObjectsAsync(keysToDelete, CancellationToken.None);
+            if (failedKeys.Count == 0)
+            {
+                lockedGroup.StoragePurgedAt = _dateTimeProvider.UtcNow;
+                await _dbContext.SaveChangesAsync(CancellationToken.None);
+            }
         }
 
         return new StreamZipResult(StreamZipStatus.Success, bundleTitle);
