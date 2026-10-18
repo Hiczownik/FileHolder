@@ -1,6 +1,7 @@
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
+using FileHolder.Core.Exceptions;
 using FileHolder.Core.Interfaces;
 using FileHolder.Core.Security;
 using FileHolder.Infrastructure.Data;
@@ -127,7 +128,7 @@ public class FileGroupService
 
         if (pendingUploads.Count == 0)
         {
-            throw new KeyNotFoundException("Upload session was not found, has expired, or was already confirmed.");
+            throw new ResourceNotFoundException("Upload session was not found, has expired, or was already confirmed.");
         }
 
         var pendingByKey = pendingUploads.ToDictionary(p => p.StorageKey, StringComparer.Ordinal);
@@ -135,12 +136,12 @@ public class FileGroupService
 
         if (submittedKeys.Count != dto.Files.Count || !submittedKeys.SetEquals(pendingByKey.Keys))
         {
-            throw new InvalidOperationException("Confirmed files must be exactly the files presigned for this upload.");
+            throw new InvalidRequestException("Confirmed files must be exactly the files presigned for this upload.");
         }
 
         if (pendingUploads.Any(p => p.IsEncrypted != dto.IsEncrypted))
         {
-            throw new InvalidOperationException("Encryption mode does not match the presigned upload.");
+            throw new InvalidRequestException("Encryption mode does not match the presigned upload.");
         }
 
         foreach (var item in dto.Files)
@@ -151,19 +152,19 @@ public class FileGroupService
                 || item.ContentType != pending.ContentType
                 || item.SizeBytes != pending.SizeBytes)
             {
-                throw new InvalidOperationException($"File details for {item.FileName} do not match the presigned upload.");
+                throw new InvalidRequestException($"File details for {item.FileName} do not match the presigned upload.");
             }
 
             // The presigned URL doesn't limit size, so the stored object is checked against what presign approved.
             var remoteSize = await _storageProvider.GetObjectSizeAsync(pending.StorageKey);
             if (remoteSize is null)
             {
-                throw new KeyNotFoundException($"Uploaded object for {item.FileName} was not found in storage.");
+                throw new ResourceNotFoundException($"Uploaded object for {item.FileName} was not found in storage.");
             }
 
             if (remoteSize.Value != pending.SizeBytes)
             {
-                throw new InvalidOperationException($"File size mismatch for {item.FileName}");
+                throw new InvalidRequestException($"File size mismatch for {item.FileName}");
             }
         }
 
@@ -206,7 +207,7 @@ public class FileGroupService
         if (claimed != pendingUploads.Count)
         {
             await tx.RollbackAsync();
-            throw new InvalidOperationException("This upload was already confirmed.");
+            throw new InvalidRequestException("This upload was already confirmed.");
         }
 
         _dbContext.FileGroups.Add(fileGroup);
