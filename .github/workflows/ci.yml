@@ -56,7 +56,9 @@ jobs:
                cd src/fileholder-ui
                npx playwright install --with-deps chromium
             - name: Start Docker Compose Stack
-              run: docker compose up -d --build
+              run: |
+                # Compose requires a Grafana password; CI never logs in, so a throwaway one is enough.
+                GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose up -d --build
             - name: Wait for API Healthcheck Readiness
               run: |
                 echo "Waiting for .NET 10 API to become healthy..."

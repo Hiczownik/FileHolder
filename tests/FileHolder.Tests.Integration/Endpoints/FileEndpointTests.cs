@@ -990,6 +990,63 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenKeyMaterialIsOversized()
+    {
+        var request = await PresignAndUploadAsync(
+            "Oversized Keys",
+            [new("blob.enc", "application/octet-stream", 1024)],
+            maxDownloads: 5,
+            password: "k_auth_derived_token_123",
+            isEncrypted: true);
+        var valid = request with
+        {
+            EncryptedManifest = new string('m', 1000),
+            KeyEnvelope = new string('e', 80),
+            KeySalt = new string('s', 22)
+        };
+
+        // An oversized salt used to reach the varchar(64) column and fail as a 500.
+        (await ConfirmAsync(valid with { KeySalt = new string('s', 65) }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(valid with { KeyEnvelope = new string('e', 129) }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(valid with { EncryptedManifest = new string('m', 256 * 1024 + 1) }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // Realistic sizes still confirm.
+        (await ConfirmAsync(valid)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenUnencryptedUploadCarriesKeyMaterial()
+    {
+        var request = await PresignAndUploadAsync("Plain With Keys", [new("plain.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        (await ConfirmAsync(request with { EncryptedManifest = "smuggled" }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request with { KeyEnvelope = "smuggled" }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request with { KeySalt = "smuggled" }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Theory]
+    [InlineData("evil.exe ")]
+    [InlineData("evil.e x e")]
+    public async Task GetPresignedUrl_Returns400_WhenNameSanitizesToAForbiddenExtension(string fileName)
+    {
+        var request = CreateValidPresignRequest() with
+        {
+            Files = [new FileItemInputDto(fileName, "application/octet-stream", 1024)]
+        };
+
+        (await _client.PostAsJsonAsync("/api/v1/files/presign", request))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     #endregion
 
     #region 8. Non-ASCII Names & Error Responses
