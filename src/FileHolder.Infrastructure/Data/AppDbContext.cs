@@ -9,6 +9,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SharedFile> SharedFiles => Set<SharedFile>();
     public DbSet<MultipartUploadSession> MultipartUploadSessions => Set<MultipartUploadSession>();
     public DbSet<DownloadSession> DownloadSessions => Set<DownloadSession>();
+    public DbSet<PendingUpload> PendingUploads => Set<PendingUpload>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

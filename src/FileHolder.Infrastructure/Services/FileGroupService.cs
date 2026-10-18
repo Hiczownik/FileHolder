@@ -43,17 +43,31 @@ public class FileGroupService
         return (partSize, totalParts);
     }
 
-public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto)
+    public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto)
     {
         var uploadToken = Guid.NewGuid().ToString("N");
         var items = new List<PresignedItemDto>();
-        bool sessionsAdded = false;
+        var now = _dateTimeProvider.UtcNow;
+        var pendingExpiresAt = now + UploadTimings.PendingUploadLifetime;
 
         foreach (var file in dto.Files)
         {
             var storageKey = dto.IsEncrypted
                 ? $"uploads/{Guid.NewGuid():N}.enc"
                 : FileSecurityUtils.GenerateStorageKey(file.FileName);
+
+            // Confirm only accepts files recorded here, so the bundle's files are the ones this request approved.
+            _dbContext.PendingUploads.Add(new PendingUpload
+            {
+                UploadToken = uploadToken,
+                StorageKey = storageKey,
+                FileName = FileSecurityUtils.SanitizeFileName(file.FileName),
+                ContentType = file.ContentType,
+                SizeBytes = file.SizeBytes,
+                IsEncrypted = dto.IsEncrypted,
+                CreatedAt = now,
+                ExpiresAt = pendingExpiresAt
+            });
 
             if (file.SizeBytes > MultipartThreshold)
             {
@@ -71,12 +85,11 @@ public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreateP
                     PartSizeBytes = partSizeBytes,
                     TotalSizeBytes = file.SizeBytes,
                     TotalParts = totalParts,
-                    ExpiresAt = _dateTimeProvider.UtcNow.AddHours(24),
-                    CreatedAt = _dateTimeProvider.UtcNow,
+                    ExpiresAt = pendingExpiresAt,
+                    CreatedAt = now,
                 };
 
                 _dbContext.MultipartUploadSessions.Add(session);
-                sessionsAdded = true;
 
                 items.Add(new PresignedItemDto(
                     file.FileName,
@@ -92,31 +105,63 @@ public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreateP
             {
                 var presignedUrl = _storageProvider.GeneratePresignedUploadUrl(
                     storageKey,
-                    _dateTimeProvider.UtcNow.AddMinutes(15));
+                    now.AddMinutes(15));
 
                 items.Add(new PresignedItemDto(file.FileName, storageKey, UploadMode.Single, presignedUrl, null, null, null));
             }
         }
 
-        if (sessionsAdded)
-        {
-            await _dbContext.SaveChangesAsync();
-        }
+        await _dbContext.SaveChangesAsync();
 
         return new PresignedUrlResponseDto(uploadToken, items);
     }
 
     public async Task<string> ConfirmAndPersistFileGroupAsync(ConfirmUploadRequestDto dto)
     {
+        var now = _dateTimeProvider.UtcNow;
+
+        var pendingUploads = await _dbContext.PendingUploads
+            .AsNoTracking()
+            .Where(p => p.UploadToken == dto.UploadToken && p.ExpiresAt > now)
+            .ToListAsync();
+
+        if (pendingUploads.Count == 0)
+        {
+            throw new KeyNotFoundException("Upload session was not found, has expired, or was already confirmed.");
+        }
+
+        var pendingByKey = pendingUploads.ToDictionary(p => p.StorageKey, StringComparer.Ordinal);
+        var submittedKeys = dto.Files.Select(f => f.StorageKey).ToHashSet(StringComparer.Ordinal);
+
+        if (submittedKeys.Count != dto.Files.Count || !submittedKeys.SetEquals(pendingByKey.Keys))
+        {
+            throw new InvalidOperationException("Confirmed files must be exactly the files presigned for this upload.");
+        }
+
+        if (pendingUploads.Any(p => p.IsEncrypted != dto.IsEncrypted))
+        {
+            throw new InvalidOperationException("Encryption mode does not match the presigned upload.");
+        }
+
         foreach (var item in dto.Files)
         {
-            var remoteSize = await _storageProvider.GetObjectSizeAsync(item.StorageKey);
+            var pending = pendingByKey[item.StorageKey];
+
+            if (FileSecurityUtils.SanitizeFileName(item.FileName) != pending.FileName
+                || item.ContentType != pending.ContentType
+                || item.SizeBytes != pending.SizeBytes)
+            {
+                throw new InvalidOperationException($"File details for {item.FileName} do not match the presigned upload.");
+            }
+
+            // The presigned URL doesn't limit size, so the stored object is checked against what presign approved.
+            var remoteSize = await _storageProvider.GetObjectSizeAsync(pending.StorageKey);
             if (remoteSize is null)
             {
                 throw new KeyNotFoundException($"Uploaded object for {item.FileName} was not found in storage.");
             }
 
-            if (item.SizeBytes > 0 && remoteSize.Value != item.SizeBytes)
+            if (remoteSize.Value != pending.SizeBytes)
             {
                 throw new InvalidOperationException($"File size mismatch for {item.FileName}");
             }
@@ -131,7 +176,7 @@ public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreateP
             Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title.Trim(),
             PasswordHash = passwordHash,
             MaxDownloads = dto.MaxDownloads,
-            ExpiresAt = dto.ExpireInHours.HasValue ? _dateTimeProvider.UtcNow.AddHours(dto.ExpireInHours.Value) : null,
+            ExpiresAt = dto.ExpireInHours.HasValue ? now.AddHours(dto.ExpireInHours.Value) : null,
             IsEncrypted = dto.IsEncrypted,
             EncryptedManifest = dto.EncryptedManifest,
             KeyEnvelope = dto.KeyEnvelope,
@@ -140,17 +185,33 @@ public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreateP
 
         foreach (var item in dto.Files)
         {
+            var pending = pendingByKey[item.StorageKey];
             fileGroup.Files.Add(new SharedFile
             {
-                OriginalFileName = FileSecurityUtils.SanitizeFileName(item.FileName),
-                StorageKey = item.StorageKey,
-                ContentType = item.ContentType,
-                SizeBytes = item.SizeBytes
+                OriginalFileName = pending.FileName,
+                StorageKey = pending.StorageKey,
+                ContentType = pending.ContentType,
+                SizeBytes = pending.SizeBytes
             });
+        }
+
+        await using var tx = await _dbContext.Database.BeginTransactionAsync();
+
+        // Claiming the rows makes the token single-use: the DELETE locks them, so a concurrent confirm
+        // waits, then deletes nothing and is rejected instead of creating a second bundle.
+        int claimed = await _dbContext.PendingUploads
+            .Where(p => p.UploadToken == dto.UploadToken && p.ExpiresAt > now)
+            .ExecuteDeleteAsync();
+
+        if (claimed != pendingUploads.Count)
+        {
+            await tx.RollbackAsync();
+            throw new InvalidOperationException("This upload was already confirmed.");
         }
 
         _dbContext.FileGroups.Add(fileGroup);
         await _dbContext.SaveChangesAsync();
+        await tx.CommitAsync();
 
         await _cache.SetAsync($"file_group:{shareToken}", fileGroup);
 

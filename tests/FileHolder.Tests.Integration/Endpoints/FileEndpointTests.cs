@@ -32,25 +32,41 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         Password: "ValidPassword123!"
     );
 
-    private async Task<(string ShareToken, List<Guid> FileIds)> CreateBundleAsync(int fileCount, int? maxDownloads, string? password = null)
+    /// <summary>
+    /// Presigns the files, "uploads" them by seeding the S3 mock at their declared size, and returns
+    /// the matching confirm request, so tests go through the same presign-then-confirm flow as the UI.
+    /// </summary>
+    private async Task<ConfirmUploadRequestDto> PresignAndUploadAsync(
+        string title,
+        List<FileItemInputDto> files,
+        int? maxDownloads,
+        string? password = null,
+        bool isEncrypted = false)
     {
-        var prefix = Guid.NewGuid().ToString("N");
-        var files = Enumerable.Range(1, fileCount)
-            .Select(i =>
+        var presignResponse = await _client.PostAsJsonAsync("/api/v1/files/presign",
+            new CreatePresignedUrlRequestDto(title, files, 24, maxDownloads, password, isEncrypted));
+        presignResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var presign = (await presignResponse.Content.ReadFromJsonAsync<PresignedUrlResponseDto>())!;
+
+        var confirmedFiles = presign.Items
+            .Select((item, i) =>
             {
-                var storageKey = $"uploads/{prefix}_{i}.pdf";
-                factory.SeedS3Object(storageKey, 1024);
-                return new ConfirmedFileItemDto(storageKey, $"file_{i}.pdf", "application/pdf", 1024);
+                factory.SeedS3Object(item.StorageKey, files[i].SizeBytes);
+                return new ConfirmedFileItemDto(item.StorageKey, files[i].FileName, files[i].ContentType, files[i].SizeBytes);
             })
             .ToList();
 
-        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", new ConfirmUploadRequestDto(
-            UploadToken: prefix,
-            Title: "Session Bundle",
-            Files: files,
-            ExpireInHours: 24,
-            MaxDownloads: maxDownloads,
-            Password: password));
+        return new ConfirmUploadRequestDto(presign.UploadToken, title, confirmedFiles, 24, maxDownloads, password, isEncrypted);
+    }
+
+    private async Task<(string ShareToken, List<Guid> FileIds)> CreateBundleAsync(int fileCount, int? maxDownloads, string? password = null)
+    {
+        var files = Enumerable.Range(1, fileCount)
+            .Select(i => new FileItemInputDto($"file_{i}.pdf", "application/pdf", 1024))
+            .ToList();
+
+        var confirmRequest = await PresignAndUploadAsync("Session Bundle", files, maxDownloads, password);
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var shareToken = (await confirmResponse.Content.ReadFromJsonAsync<string>())!;
 
@@ -200,21 +216,10 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task ConfirmAndGetMetadataFlow_SuccessfullyStoresAndRetrievesBundle()
     {
-        factory.SeedS3Object("uploads/test_key_1.pdf", 1024);
-        factory.SeedS3Object("uploads/test_key_2.png", 512);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "test_upload_token",
-            Title: "Test Report Bundle",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/test_key_1.pdf", "test_report.pdf", "application/pdf", 1024),
-                new("uploads/test_key_2.png", "test_chart.png", "image/png", 512)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 10,
-            Password: null
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Test Report Bundle",
+            [new("test_report.pdf", "application/pdf", 1024), new("test_chart.png", "image/png", 512)],
+            maxDownloads: 10);
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -242,19 +247,11 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task GetGroupMetadata_MasksFilesAndSizes_WhenBundleIsPasswordProtected()
     {
-        factory.SeedS3Object("uploads/masked_doc.pdf", 1024);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "masked_token",
-            Title: "Classified Deliverables",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/masked_doc.pdf", "secret_financials.pdf", "application/pdf", 1024)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 5,
-            Password: "VaultPassword123!"
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Classified Deliverables",
+            [new("secret_financials.pdf", "application/pdf", 1024)],
+            maxDownloads: 5,
+            password: "VaultPassword123!");
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
@@ -273,19 +270,11 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task UnlockGroup_ReturnsFullMetadata_WhenPasswordIsCorrect()
     {
-        factory.SeedS3Object("uploads/unlock_doc.pdf", 1024);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "unlock_token",
-            Title: "Confidential Project",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/unlock_doc.pdf", "client_contract.pdf", "application/pdf", 1024)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 5,
-            Password: "CorrectVaultPassword!"
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Confidential Project",
+            [new("client_contract.pdf", "application/pdf", 1024)],
+            maxDownloads: 5,
+            password: "CorrectVaultPassword!");
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
@@ -313,19 +302,11 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task OpenDownloadSession_Returns401Unauthorized_WhenPasswordIsIncorrect()
     {
-        factory.SeedS3Object("uploads/protected_key.pdf", 1024);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "protected_token",
-            Title: "Protected Bundle",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/protected_key.pdf", "protected.pdf", "application/pdf", 1024)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 5,
-            Password: "CorrectPassword123!"
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Protected Bundle",
+            [new("protected.pdf", "application/pdf", 1024)],
+            maxDownloads: 5,
+            password: "CorrectPassword123!");
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
@@ -342,19 +323,11 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task DownloadFile_Returns200OKWithPresignedUrl_WhenSessionIsOpenedWithCorrectPassword()
     {
-        factory.SeedS3Object("uploads/protected_key_2.pdf", 1024);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "protected_token_2",
-            Title: "Protected Bundle 2",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/protected_key_2.pdf", "protected_2.pdf", "application/pdf", 1024)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 5,
-            Password: "CorrectPassword123!"
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Protected Bundle 2",
+            [new("protected_2.pdf", "application/pdf", 1024)],
+            maxDownloads: 5,
+            password: "CorrectPassword123!");
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
@@ -382,23 +355,18 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task ConfirmAndGetMetadata_ZeroKnowledgeEnvelopeFlow_StoresEnvelopeAndReturnsMaskedSalt()
     {
-        factory.SeedS3Object("uploads/e2ee_file.enc", 1024);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "e2ee_upload_token",
-            Title: "E2EE Envelope Vault",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/e2ee_file.enc", "mock_id.enc", "application/octet-stream", 1024)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 5,
-            Password: "k_auth_derived_token_123",
-            IsEncrypted: true,
-            EncryptedManifest: "encrypted_manifest_base64",
-            KeyEnvelope: "key_envelope_base64",
-            KeySalt: "salt_base64"
-        );
+        var presigned = await PresignAndUploadAsync(
+            "E2EE Envelope Vault",
+            [new("mock_id.enc", "application/octet-stream", 1024)],
+            maxDownloads: 5,
+            password: "k_auth_derived_token_123",
+            isEncrypted: true);
+        var confirmRequest = presigned with
+        {
+            EncryptedManifest = "encrypted_manifest_base64",
+            KeyEnvelope = "key_envelope_base64",
+            KeySalt = "salt_base64"
+        };
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -447,21 +415,10 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task StreamBundleZip_Returns200AndValidZipArchive_WhenRequestIsValid()
     {
-        factory.SeedS3Object("uploads/zip_file_1.pdf", 1024);
-        factory.SeedS3Object("uploads/zip_file_2.png", 512);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "zip_test_token",
-            Title: "Streaming Zip Bundle",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/zip_file_1.pdf", "report.pdf", "application/pdf", 1024),
-                new("uploads/zip_file_2.png", "chart.png", "image/png", 512),
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 5,
-            Password: null
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Streaming Zip Bundle",
+            [new("report.pdf", "application/pdf", 1024), new("chart.png", "image/png", 512)],
+            maxDownloads: 5);
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -484,19 +441,10 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task StreamBundleZip_EnforcesDownloadCapacity_AndRejectsExcessClientsWithHardRejection()
     {
-        factory.SeedS3Object("uploads/capacity_doc.pdf", 1024);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "capacity_test_token",
-            Title: "Download Capacity Bundle",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/capacity_doc.pdf", "capacity_doc.pdf", "application/pdf", 1024)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 1,
-            Password: null
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Download Capacity Bundle",
+            [new("capacity_doc.pdf", "application/pdf", 1024)],
+            maxDownloads: 1);
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -518,19 +466,10 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task StreamBundleZip_UnderConcurrentContention_EnforcesStrictAtomicDownloadLimit()
     {
-        factory.SeedS3Object("uploads/race_file.txt", 2048);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "race_test_token",
-            Title: "Race Condition Bundle",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/race_file.txt", "race_file.txt", "text/plain", 2048)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 1,
-            Password: null
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Race Condition Bundle",
+            [new("race_file.txt", "text/plain", 2048)],
+            maxDownloads: 1);
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -562,19 +501,11 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task StreamBundleZip_Returns401Unauthorized_WhenPasswordIsIncorrect()
     {
-        factory.SeedS3Object("uploads/zip_protected.pdf", 1024);
-
-        var confirmRequest = new ConfirmUploadRequestDto(
-            UploadToken: "zip_protected_token",
-            Title: "Protected Zip Bundle",
-            Files: new List<ConfirmedFileItemDto>
-            {
-                new("uploads/zip_protected.pdf", "secret.pdf", "application/pdf", 1024)
-            },
-            ExpireInHours: 24,
-            MaxDownloads: 5,
-            Password: "CorrectZipPassword1!"
-        );
+        var confirmRequest = await PresignAndUploadAsync(
+            "Protected Zip Bundle",
+            [new("secret.pdf", "application/pdf", 1024)],
+            maxDownloads: 5,
+            password: "CorrectZipPassword1!");
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
@@ -926,6 +857,137 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             new PresignPartBatchRequestDto(presign.UploadToken, item.StorageKey, item.UploadId!, startPartNumber, count));
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    #endregion
+
+    #region 7. Presign-Bound Confirm Tests
+
+    private Task<HttpResponseMessage> ConfirmAsync(ConfirmUploadRequestDto request) =>
+        _client.PostAsJsonAsync("/api/v1/files/confirm", request);
+
+    [Fact]
+    public async Task ConfirmUpload_Returns404_WhenUploadTokenWasNeverPresigned()
+    {
+        var storageKey = $"uploads/{Guid.NewGuid():N}_unclaimed.pdf";
+        factory.SeedS3Object(storageKey, 1024);
+
+        var response = await ConfirmAsync(new ConfirmUploadRequestDto(
+            UploadToken: Guid.NewGuid().ToString("N"),
+            Title: "Never Presigned",
+            Files: [new(storageKey, "unclaimed.pdf", "application/pdf", 1024)],
+            ExpireInHours: 24,
+            MaxDownloads: 5,
+            Password: null));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_IsSingleUse()
+    {
+        var request = await PresignAndUploadAsync("Single Use", [new("once.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_UnderConcurrentContention_CreatesExactlyOneBundle()
+    {
+        var request = await PresignAndUploadAsync("Raced Confirm", [new("raced.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => ConfirmAsync(request)));
+
+        responses.Count(r => r.StatusCode == HttpStatusCode.OK).Should().Be(1);
+        responses.Where(r => r.StatusCode != HttpStatusCode.OK)
+            .Should().OnlyContain(r => r.StatusCode == HttpStatusCode.NotFound || r.StatusCode == HttpStatusCode.BadRequest);
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await dbContext.SharedFiles.CountAsync(f => f.StorageKey == request.Files[0].StorageKey)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenFileSetDiffersFromPresign()
+    {
+        var request = await PresignAndUploadAsync(
+            "Two Files",
+            [new("a.pdf", "application/pdf", 1024), new("b.pdf", "application/pdf", 1024)],
+            maxDownloads: 5);
+        var otherRequest = await PresignAndUploadAsync("Other Upload", [new("c.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        // a file left out
+        (await ConfirmAsync(request with { Files = [request.Files[0]] }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // another upload's file swapped in
+        (await ConfirmAsync(request with { Files = [request.Files[0], otherRequest.Files[0]] }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // a file listed twice
+        (await ConfirmAsync(request with { Files = [request.Files[0], request.Files[0], request.Files[1]] }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // rejections must not consume the upload
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenFileDetailsDifferFromPresign()
+    {
+        var request = await PresignAndUploadAsync("Details", [new("report.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        var file = request.Files[0];
+
+        (await ConfirmAsync(request with { Files = [file with { FileName = "renamed.pdf" }] }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request with { Files = [file with { ContentType = "text/html" }] }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request with { Files = [file with { SizeBytes = 512 }] }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request with { IsEncrypted = true }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenStoredObjectIsLargerThanPresigned()
+    {
+        var request = await PresignAndUploadAsync("Oversized", [new("small.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        // The presigned PUT doesn't cap size, so the client uploaded far more than it declared.
+        factory.SeedS3Object(request.Files[0].StorageKey, 10L * 1024 * 1024 * 1024);
+
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns404_WhenPendingUploadHasExpired()
+    {
+        var request = await PresignAndUploadAsync("Late Confirm", [new("late.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.PendingUploads
+                .Where(p => p.UploadToken == request.UploadToken)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.ExpiresAt, DateTime.UtcNow.AddMinutes(-1)));
+        }
+
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task PresignAndConfirm_Return400_WhenExpiryIsMissing()
+    {
+        (await _client.PostAsJsonAsync("/api/v1/files/presign", CreateValidPresignRequest() with { ExpireInHours = null }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var request = await PresignAndUploadAsync("No Expiry", [new("forever.pdf", "application/pdf", 1024)], maxDownloads: null);
+        (await ConfirmAsync(request with { ExpireInHours = null }))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // An expiry alone is enough: unlimited downloads stay allowed.
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     #endregion
