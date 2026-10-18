@@ -1,6 +1,9 @@
 import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
 import type { FileItemMetadata } from "../types";
 
+const ENCRYPTED_FILE_SUFFIX = '.enc';
+const MANIFEST_MISMATCH_MESSAGE = 'This encrypted bundle is inconsistent: its stored files do not match the encrypted manifest.';
+
 export class BundleDecryptionService {
     private cachedMasterKey: CryptoKey | null = null;
     private cachedKAuth: string | null = null;
@@ -39,6 +42,44 @@ export class BundleDecryptionService {
         return this.serverFileToManifestIdMap.get(serverFileId) || serverFileId;
     }
 
+    /**
+     * Pairs each decrypted manifest entry with its server file and registers the mapping used to
+     * derive per-file keys. Encrypted files are uploaded as "{manifestId}.enc", so the pairing is by
+     * that name. The server's file order is unrelated to upload order and must never be relied on.
+     * Returns the files in manifest (upload) order, with server IDs and the real names and types.
+     */
+    public mapManifestToServerFiles(manifestItems: FileItemMetadata[], serverFiles: FileItemMetadata[]): FileItemMetadata[] {
+        const expectedServerName = (manifestId: string): string => `${manifestId}${ENCRYPTED_FILE_SUFFIX}`;
+        const serverFilesByName = new Map(serverFiles.map((file) => [file.fileName, file]));
+        const expectedNames = new Set(manifestItems.map((item) => expectedServerName(item.id)));
+
+        if (expectedNames.size !== manifestItems.length) {
+            throw new Error(`${MANIFEST_MISMATCH_MESSAGE} The manifest lists the same file more than once.`);
+        }
+
+        const missing = manifestItems.filter((item) => !serverFilesByName.has(expectedServerName(item.id)));
+        if (missing.length > 0) {
+            throw new Error(`${MANIFEST_MISMATCH_MESSAGE} Missing from storage: ${missing.map((item) => item.fileName).join(', ')}.`);
+        }
+
+        if (serverFilesByName.size !== serverFiles.length || serverFiles.some((file) => !expectedNames.has(file.fileName))) {
+            throw new Error(`${MANIFEST_MISMATCH_MESSAGE} Storage holds files that are not in the manifest.`);
+        }
+
+        const mappedFiles = manifestItems.map((item) => {
+            const serverFile = serverFilesByName.get(expectedServerName(item.id))!;
+            return {
+                id: serverFile.id,
+                fileName: item.fileName,
+                sizeBytes: item.sizeBytes,
+                contentType: item.contentType,
+            };
+        });
+
+        mappedFiles.forEach((file, index) => this.registerFileMapping(file.id, manifestItems[index].id));
+        return mappedFiles;
+    }
+
     public async deriveKAuth(password: string, saltBase64Url: string, shareToken?: string): Promise<{ kAuth: string; kWrap: CryptoKey }> {
         const salt = base64Url.decode(saltBase64Url);
         const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
@@ -75,7 +116,12 @@ export class BundleDecryptionService {
         }
 
         const fileKey = await cryptoEngine.deriveFileKey(this.cachedMasterKey, fileId);
-        return cryptoEngine.decryptBytes(fileKey, new Uint8Array(ciphertextBuffer));
+        try {
+            return await cryptoEngine.decryptBytes(fileKey, new Uint8Array(ciphertextBuffer));
+        } catch (err: unknown) {
+            // WebCrypto reports an authentication failure as an OperationError with an empty message.
+            throw new Error('Decryption failed. The file is corrupted or does not belong to this bundle.', { cause: err });
+        }
     }
 }
 
