@@ -1,4 +1,5 @@
 using FileHolder.Core.Dtos;
+using FileHolder.Core.Exceptions;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -23,13 +24,13 @@ public class MultipartUploadService(
 
         if (session == null)
         {
-            throw new KeyNotFoundException("Active multipart upload session not found.");
+            throw new ResourceNotFoundException("Active multipart upload session not found.");
         }
 
         // The endpoint validator bounds these too; checked here so the loop below is always bounded by TotalParts.
         if (dto.StartPartNumber < 1 || dto.StartPartNumber > session.TotalParts || dto.Count < 1)
         {
-            throw new ArgumentOutOfRangeException(nameof(dto), $"Part range must start between 1 and {session.TotalParts} with a positive count.");
+            throw new InvalidRequestException($"Part range must start between 1 and {session.TotalParts} with a positive count.");
         }
 
         var parts = new List<PartPresignedUrlDto>();
@@ -57,7 +58,7 @@ public class MultipartUploadService(
 
         if (session == null)
         {
-            throw new KeyNotFoundException("Active multipart upload session was not found.");
+            throw new ResourceNotFoundException("Active multipart upload session was not found.");
         }
 
         var parts = dto.Parts.Select(p => (p.PartNumber, p.ETag));

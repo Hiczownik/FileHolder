@@ -2,6 +2,7 @@ using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Interfaces;
+using FileHolder.Core.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -60,7 +61,8 @@ public class S3StorageProvider(
             Protocol = Protocol.HTTP,
             ResponseHeaderOverrides = new ResponseHeaderOverrides
             {
-                ContentDisposition = $"attachment; filename=\"{fileName}\"",
+                // Storage echoes this back as a response header, so it must be ASCII with the real name in filename*.
+                ContentDisposition = ContentDispositionUtils.Attachment(fileName),
                 ContentType = contentType
             }
         };

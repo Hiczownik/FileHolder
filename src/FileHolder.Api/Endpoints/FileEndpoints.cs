@@ -1,6 +1,7 @@
 ﻿using FileHolder.Api.Validation;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
+using FileHolder.Core.Security;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
@@ -208,8 +209,8 @@ public static class FileEndpoints
                     : "bundle";
 
                 context.Response.ContentType = "application/zip";
-                context.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{safeTitle}_{shareToken}.zip\"");
-                context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+                // The title may contain non-ASCII letters, which Kestrel rejects in raw header values.
+                context.Response.Headers.ContentDisposition = ContentDispositionUtils.Attachment($"{safeTitle}_{shareToken}.zip");
             },
             context.RequestAborted);
 

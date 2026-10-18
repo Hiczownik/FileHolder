@@ -991,4 +991,59 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     #endregion
+
+    #region 8. Non-ASCII Names & Error Responses
+
+    [Fact]
+    public async Task StreamBundleZip_WithPolishTitle_ReturnsZip_WithEncodedFileName()
+    {
+        var request = await PresignAndUploadAsync(
+            "Zdjęcia z wakacji",
+            [new("zażółć.txt", "text/plain", 1024)],
+            maxDownloads: 5);
+        var shareToken = await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>();
+
+        var response = await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download-all", new DownloadRequestDto(null));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var disposition = string.Join(",", response.Content.Headers.GetValues("Content-Disposition"));
+        disposition.Should().Contain($"filename=\"Zdjecia_z_wakacji_{shareToken}.zip\"");
+        disposition.Should().Contain($"filename*=UTF-8''Zdj%C4%99cia_z_wakacji_{shareToken}.zip");
+
+        await using var archive = new ZipArchive(new MemoryStream(await response.Content.ReadAsByteArrayAsync()), ZipArchiveMode.Read);
+        archive.Entries.Select(e => e.Name).Should().ContainSingle().Which.Should().Be("zażółć.txt");
+    }
+
+    [Fact]
+    public async Task GenerateDownloadLink_WithPolishFileName_AsksStorageForAnAsciiContentDisposition()
+    {
+        var request = await PresignAndUploadAsync("Polish File", [new("zażółć.txt", "text/plain", 1024)], maxDownloads: 5);
+        var shareToken = (await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>())!;
+        var metadata = await _client.GetFromJsonAsync<FileGroupMetadataResponseDto>($"/api/v1/files/{shareToken}");
+        var sessionId = await OpenSessionIdAsync(shareToken);
+        factory.MockS3Client.ClearReceivedCalls();
+
+        (await RequestFileLinkAsync(shareToken, metadata!.Files[0].Id, sessionId)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var presignRequest = factory.MockS3Client.ReceivedCalls()
+            .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.GetPreSignedURL))
+            .Select(c => (GetPreSignedUrlRequest)c.GetArguments()[0]!)
+            .Single(r => r.Verb == Amazon.S3.HttpVerb.GET);
+
+        presignRequest.ResponseHeaderOverrides.ContentDisposition
+            .Should().Be("attachment; filename=\"zazo_c.txt\"; filename*=UTF-8''za%C5%BC%C3%B3%C5%82%C4%87.txt");
+    }
+
+    [Fact]
+    public async Task Presign_WithMalformedJson_Returns400ProblemDetails_NotA500()
+    {
+        var response = await _client.PostAsync("/api/v1/files/presign",
+            new StringContent("{\"files\": [ not json", System.Text.Encoding.UTF8, "application/json"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+        problem!.Title.Should().Be("Bad Request");
+    }
+
+    #endregion
 }
