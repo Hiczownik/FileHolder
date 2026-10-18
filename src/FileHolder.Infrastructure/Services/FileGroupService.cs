@@ -218,20 +218,25 @@ public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreateP
 
     public async Task<UnlockResult> UnlockGroupAsync(string shareToken, string password)
     {
+        // Same lookup as opening a download session: deleted groups are included so a used-up or
+        // purged bundle reports "expired" rather than "not found", but a live group reusing the token wins.
         var group = await _dbContext.FileGroups
             .AsNoTracking()
             .Include(g => g.Files)
-            .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted);
+            .Where(g => g.ShareToken == shareToken)
+            .OrderBy(g => g.IsDeleted)
+            .ThenByDescending(g => g.CreatedAt)
+            .FirstOrDefaultAsync();
 
         if (group == null)
         {
-            return new UnlockResult(false, false, true, null);
+            return new UnlockResult(false, false, false, null);
         }
 
         var now = _dateTimeProvider.UtcNow;
         if (group.IsExpired(now))
         {
-            return new UnlockResult(false, true, false, null);
+            return new UnlockResult(false, false, true, null);
         }
 
         if (!group.VerifyPassword(password))

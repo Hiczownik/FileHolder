@@ -24,12 +24,15 @@ public static class FileEndpoints
             .RequireRateLimiting("MultipartPipelinePolicy");
 
         multipart.MapPost("/presign-batch", PresignPartBatch)
+            .AddEndpointFilter<ValidationFilter<PresignPartBatchRequestDto>>()
             .WithName("PresignPartBatch");
 
         multipart.MapPost("/complete", CompleteMultipartUpload)
+            .AddEndpointFilter<ValidationFilter<CompleteMultipartUploadRequestDto>>()
             .WithName("CompleteMultipartUpload");
 
         multipart.MapPost("/abort", AbortMultipartUpload)
+            .AddEndpointFilter<ValidationFilter<AbortMultipartUploadRequestDto>>()
             .WithName("AbortMultipartUpload");
 
         group.MapPost("/confirm", ConfirmUpload)

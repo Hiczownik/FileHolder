@@ -171,7 +171,7 @@ namespace FileHolder.Infrastructure.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UploadToken")
+                    b.HasIndex("UploadToken", "UploadId")
                         .IsUnique();
 
                     b.HasIndex("IsCompleted", "IsAborted", "ExpiresAt");
