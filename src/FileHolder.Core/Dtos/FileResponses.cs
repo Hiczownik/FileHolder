@@ -70,9 +70,34 @@ public record DownloadUrlResponseDto(
     [property: JsonPropertyName("downloadUrl")] string DownloadUrl
 );
 
-public record DownloadResult(
-    bool IsPasswordInvalid,
-    bool IsExpired,
+public record DownloadSessionResponseDto(
+    [property: JsonPropertyName("downloadSessionId")] Guid DownloadSessionId,
+    [property: JsonPropertyName("expiresAt")] DateTime ExpiresAt,
+    [property: JsonPropertyName("remainingDownloads")] int? RemainingDownloads
+);
+
+public enum OpenDownloadSessionStatus
+{
+    Success,
+    NotFound,
+    InvalidPassword,
+    Expired
+}
+
+public record OpenDownloadSessionResult(
+    OpenDownloadSessionStatus Status,
+    DownloadSessionResponseDto? Session
+);
+
+public enum DownloadUrlStatus
+{
+    Success,
+    SessionInvalid,
+    FileNotFound
+}
+
+public record DownloadUrlResult(
+    DownloadUrlStatus Status,
     string? DownloadUrl
 );
 
@@ -82,7 +107,7 @@ public enum StreamZipStatus
     NotFound,
     InvalidPassword,
     Expired,
-    CapacityReached,
+    SessionInvalid,
     EmptyBundle
 }
 

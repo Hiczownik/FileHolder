@@ -22,6 +22,30 @@ namespace FileHolder.Infrastructure.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FileHolder.Core.Entities.DownloadSession", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FileGroupId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("FileGroupId");
+
+                    b.ToTable("DownloadSessions", (string)null);
+                });
+
             modelBuilder.Entity("FileHolder.Core.Entities.FileGroup", b =>
                 {
                     b.Property<Guid>("Id")
@@ -190,6 +214,17 @@ namespace FileHolder.Infrastructure.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("SharedFiles", (string)null);
+                });
+
+            modelBuilder.Entity("FileHolder.Core.Entities.DownloadSession", b =>
+                {
+                    b.HasOne("FileHolder.Core.Entities.FileGroup", "FileGroup")
+                        .WithMany()
+                        .HasForeignKey("FileGroupId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("FileGroup");
                 });
 
             modelBuilder.Entity("FileHolder.Core.Entities.SharedFile", b =>

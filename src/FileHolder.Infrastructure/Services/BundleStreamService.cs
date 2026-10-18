@@ -1,19 +1,13 @@
-using System.Data;
 using System.IO.Compression;
 using System.IO.Pipelines;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
-using FileHolder.Infrastructure.Data;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Hybrid;
 
 namespace FileHolder.Infrastructure.Services;
 
 public class BundleStreamService(
-    AppDbContext dbContext,
     IS3StorageProvider storageProvider,
-    HybridCache cache,
-    IDateTimeProvider dateTimeProvider
+    IDownloadSessionService downloadSessionService
     )
     : IBundleStreamService
 {
@@ -23,101 +17,62 @@ public class BundleStreamService(
         ".zip", ".tar", ".gz", ".7z", ".rar", ".pdf", ".mp3", ".wav"
     };
 
-    private readonly AppDbContext _dbContext = dbContext;
     private readonly IS3StorageProvider _storageProvider = storageProvider;
-    private readonly HybridCache _cache = cache;
-    private readonly IDateTimeProvider _dateTimeProvider = dateTimeProvider;
-
-    public Task<StreamZipResult> StreamBundleZipAsync(
-        string shareToken,
-        string? password,
-        Stream destinationStream,
-        CancellationToken ct = default)
-    {
-        return StreamBundleZipAsync(shareToken, password, destinationStream, null, ct);
-    }
+    private readonly IDownloadSessionService _downloadSessionService = downloadSessionService;
 
     public async Task<StreamZipResult> StreamBundleZipAsync(
         string shareToken,
         string? password,
+        Guid? downloadSessionId,
         Stream destinationStream,
         Action<string>? onBeforeStream = null,
         CancellationToken ct = default)
     {
-        await using var tx = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
-
-        var lockedGroup = await _dbContext.FileGroups
-            .FromSqlInterpolated($"SELECT * FROM \"FileGroups\" WHERE \"ShareToken\" = {shareToken} FOR UPDATE")
-            .FirstOrDefaultAsync(ct);
-
-        if (lockedGroup == null)
+        // Reuse the recipient's session when given; otherwise this ZIP counts as one new download.
+        Guid sessionId;
+        if (downloadSessionId.HasValue)
         {
-            await tx.RollbackAsync(ct);
-            return new StreamZipResult(StreamZipStatus.NotFound, null);
+            sessionId = downloadSessionId.Value;
+        }
+        else
+        {
+            var opened = await _downloadSessionService.OpenSessionAsync(shareToken, password, ct);
+            switch (opened.Status)
+            {
+                case OpenDownloadSessionStatus.NotFound:
+                    return new StreamZipResult(StreamZipStatus.NotFound, null);
+                case OpenDownloadSessionStatus.InvalidPassword:
+                    return new StreamZipResult(StreamZipStatus.InvalidPassword, null);
+                case OpenDownloadSessionStatus.Expired:
+                    return new StreamZipResult(StreamZipStatus.Expired, null);
+            }
+
+            sessionId = opened.Session!.DownloadSessionId;
         }
 
-        if (!lockedGroup.VerifyPassword(password))
+        var session = await _downloadSessionService.GetActiveSessionAsync(shareToken, sessionId, ct);
+        if (session == null)
         {
-            await tx.RollbackAsync(ct);
-            return new StreamZipResult(StreamZipStatus.InvalidPassword, null);
+            return new StreamZipResult(StreamZipStatus.SessionInvalid, null);
         }
 
-        var now = _dateTimeProvider.UtcNow;
-        if (lockedGroup.IsExpired(now))
+        var group = session.FileGroup;
+        if (group.Files.Count == 0)
         {
-            await tx.RollbackAsync(ct);
-            return new StreamZipResult(StreamZipStatus.Expired, null);
-        }
-
-        await _dbContext.Entry(lockedGroup).Collection(g => g.Files).LoadAsync(ct);
-
-        if (lockedGroup.Files.Count == 0)
-        {
-            await tx.RollbackAsync(ct);
             return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
         }
 
-        if (lockedGroup.MaxDownloads.HasValue && lockedGroup.DownloadCount >= lockedGroup.MaxDownloads.Value)
-        {
-            await tx.RollbackAsync(ct);
-            return new StreamZipResult(StreamZipStatus.CapacityReached, null);
-        }
-
-        lockedGroup.DownloadCount++;
-        bool shouldPurgeImmediately = lockedGroup.MaxDownloads.HasValue && lockedGroup.DownloadCount >= lockedGroup.MaxDownloads.Value;
-        if (shouldPurgeImmediately)
-        {
-            lockedGroup.MarkDeleted(now);
-        }
-
-        await _dbContext.SaveChangesAsync(ct);
-        await tx.CommitAsync(ct);
-        await _cache.RemoveAsync($"file_group:{shareToken}", CancellationToken.None);
-
-        var fileEntries = lockedGroup.Files
+        var fileEntries = group.Files
             .Select(f => new BundleFileEntry(f.OriginalFileName, f.StorageKey))
             .ToList();
 
-        var keysToDelete = shouldPurgeImmediately
-            ? lockedGroup.Files.Select(f => f.StorageKey).ToList()
-            : null;
-
-        var bundleTitle = lockedGroup.Title ?? lockedGroup.ShareToken;
+        var bundleTitle = group.Title ?? group.ShareToken;
 
         onBeforeStream?.Invoke(bundleTitle);
 
+        // Storage is never deleted here: other recipients' sessions may still be using it.
+        // The purge worker removes it once every session and presigned URL has expired.
         await StreamArchiveInternalAsync(fileEntries, destinationStream, ct);
-
-        // Best-effort eager cleanup; anything left behind (including when streaming fails) is retried by the purge worker.
-        if (shouldPurgeImmediately && keysToDelete != null && keysToDelete.Count > 0)
-        {
-            var failedKeys = await _storageProvider.DeleteObjectsAsync(keysToDelete, CancellationToken.None);
-            if (failedKeys.Count == 0)
-            {
-                lockedGroup.StoragePurgedAt = _dateTimeProvider.UtcNow;
-                await _dbContext.SaveChangesAsync(CancellationToken.None);
-            }
-        }
 
         return new StreamZipResult(StreamZipStatus.Success, bundleTitle);
     }

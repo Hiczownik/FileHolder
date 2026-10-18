@@ -36,7 +36,8 @@ public record ConfirmUploadRequestDto(
 );
 
 public record DownloadRequestDto(
-    string? Password
+    string? Password,
+    Guid? DownloadSessionId = null
 );
 
 public record PresignPartBatchRequestDto(
