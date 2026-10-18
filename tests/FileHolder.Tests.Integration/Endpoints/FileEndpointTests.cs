@@ -896,6 +896,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     public async Task ConfirmUpload_UnderConcurrentContention_CreatesExactlyOneBundle()
     {
         var request = await PresignAndUploadAsync("Raced Confirm", [new("raced.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        factory.MockS3Client.ClearReceivedCalls();
 
         var responses = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => ConfirmAsync(request)));
 
@@ -905,7 +906,14 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         using var scope = factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        (await dbContext.SharedFiles.CountAsync(f => f.StorageKey == request.Files[0].StorageKey)).Should().Be(1);
+        var servedKeys = await dbContext.SharedFiles
+            .Where(f => f.FileGroup.Title == "Raced Confirm")
+            .Select(f => f.StorageKey)
+            .ToListAsync();
+        servedKeys.Should().ContainSingle();
+
+        // Losing confirms remove only their own copies, never the one the winning bundle serves.
+        DeletedKeys().Should().NotContain(servedKeys[0]);
     }
 
     [Fact]
@@ -1100,6 +1108,203 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var problem = await response.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
         problem!.Title.Should().Be("Bad Request");
+    }
+
+    #endregion
+
+    #region 9. Per-Bundle Password Lockout Tests
+
+    private const string LockoutPassword = "CorrectHorse1";
+
+    private Task<HttpResponseMessage> UnlockAsync(string shareToken, string password) =>
+        _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/unlock", new DownloadRequestDto(password));
+
+    private async Task<(int FailedAttempts, DateTime? LockedUntil)> GetLockStateAsync(string shareToken)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var group = await dbContext.FileGroups.AsNoTracking().FirstAsync(g => g.ShareToken == shareToken);
+        return (group.FailedPasswordAttempts, group.PasswordLockedUntil);
+    }
+
+    [Fact]
+    public async Task PasswordLockout_AfterFreeAttempts_RefusesEvenTheCorrectPassword()
+    {
+        var (shareToken, _) = await CreateBundleAsync(1, maxDownloads: 5, password: LockoutPassword);
+
+        // Five free wrong attempts, then the sixth sets the first lock; each still answers 401.
+        for (int i = 0; i < 6; i++)
+        {
+            (await UnlockAsync(shareToken, "wrong-guess")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        var locked = await UnlockAsync(shareToken, LockoutPassword);
+
+        locked.StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        var retryAfter = locked.Headers.RetryAfter!.Delta!.Value;
+        retryAfter.Should().BeGreaterThan(TimeSpan.Zero).And.BeLessThanOrEqualTo(TimeSpan.FromMinutes(1));
+        var problem = await locked.Content.ReadFromJsonAsync<Microsoft.AspNetCore.Mvc.ProblemDetails>();
+        problem!.Title.Should().Be("Too Many Attempts");
+
+        (await GetLockStateAsync(shareToken)).FailedAttempts.Should().Be(6, "a refused attempt is never verified, so it is not counted");
+    }
+
+    [Fact]
+    public async Task PasswordLockout_IsSharedByUnlock_DownloadSession_AndZipEndpoints()
+    {
+        var (shareToken, _) = await CreateBundleAsync(1, maxDownloads: 5, password: LockoutPassword);
+
+        for (int i = 0; i < 2; i++)
+        {
+            (await UnlockAsync(shareToken, "wrong-guess")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await OpenSessionAsync(shareToken, "wrong-guess")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+            (await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download-all", new DownloadRequestDto("wrong-guess")))
+                .StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        }
+
+        (await OpenSessionAsync(shareToken, LockoutPassword)).StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+        (await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download-all", new DownloadRequestDto(LockoutPassword)))
+            .StatusCode.Should().Be(HttpStatusCode.TooManyRequests);
+
+        (await GetDownloadCountAsync(shareToken)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PasswordLockout_OnceExpired_AcceptsTheCorrectPassword_AndResetsTheCounter()
+    {
+        var (shareToken, _) = await CreateBundleAsync(1, maxDownloads: 5, password: LockoutPassword);
+
+        for (int i = 0; i < 6; i++)
+        {
+            await UnlockAsync(shareToken, "wrong-guess");
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.FileGroups
+                .Where(g => g.ShareToken == shareToken)
+                .ExecuteUpdateAsync(s => s.SetProperty(g => g.PasswordLockedUntil, DateTime.UtcNow.AddSeconds(-1)));
+        }
+
+        (await UnlockAsync(shareToken, LockoutPassword)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var (failedAttempts, lockedUntil) = await GetLockStateAsync(shareToken);
+        failedAttempts.Should().Be(0);
+        lockedUntil.Should().BeNull();
+    }
+
+    #endregion
+
+    #region 10. Confirm Serves a Copy of Single-PUT Files
+
+    private async Task<SharedFile> GetOnlySharedFileAsync(string shareToken)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.SharedFiles.AsNoTracking().SingleAsync(f => f.FileGroup.ShareToken == shareToken);
+    }
+
+    private IEnumerable<string> DeletedKeys() => factory.MockS3Client.ReceivedCalls()
+        .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.DeleteObjectsAsync))
+        .Select(c => (DeleteObjectsRequest)c.GetArguments()[0]!)
+        .SelectMany(r => r.Objects.Select(o => o.Key));
+
+    [Fact]
+    public async Task ConfirmUpload_ServesSingleFilesFromACopy_AndLeavesTheOriginalToThePurge()
+    {
+        var request = await PresignAndUploadAsync("Copied", [new("copied.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        var uploadedKey = request.Files[0].StorageKey;
+
+        var shareToken = (await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>())!;
+
+        var sharedFile = await GetOnlySharedFileAsync(shareToken);
+        sharedFile.StorageKey.Should().StartWith("files/").And.NotBe(uploadedKey);
+        factory.S3ObjectRegistry.Should().ContainKey(sharedFile.StorageKey);
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var purgeRow = await dbContext.PendingUploads.AsNoTracking().SingleAsync(p => p.StorageKey == uploadedKey);
+        purgeRow.UploadToken.Should().NotBe(request.UploadToken, "no confirm may ever claim the purge row");
+        purgeRow.ExpiresAt.Should().BeOnOrBefore(DateTime.UtcNow);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_ThenOverwritingTheUpload_DoesNotChangeWhatIsServed()
+    {
+        var request = await PresignAndUploadAsync("Swap Attempt", [new("swap.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        var shareToken = (await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>())!;
+        var servedKey = (await GetOnlySharedFileAsync(shareToken)).StorageKey;
+
+        // The uploader reuses the still-valid PUT URL.
+        factory.SeedS3Object(request.Files[0].StorageKey, 999_999_999);
+
+        var metadata = await _client.GetFromJsonAsync<FileGroupMetadataResponseDto>($"/api/v1/files/{shareToken}");
+        var sessionId = await OpenSessionIdAsync(shareToken);
+        factory.MockS3Client.ClearReceivedCalls();
+
+        (await RequestFileLinkAsync(shareToken, metadata!.Files[0].Id, sessionId)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var presignRequest = factory.MockS3Client.ReceivedCalls()
+            .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.GetPreSignedURL))
+            .Select(c => (GetPreSignedUrlRequest)c.GetArguments()[0]!)
+            .Single(r => r.Verb == Amazon.S3.HttpVerb.GET);
+        presignRequest.Key.Should().Be(servedKey);
+        factory.S3ObjectRegistry[servedKey].Should().Be(1024);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_AndRemovesTheCopy_WhenTheCopyHasTheWrongSize()
+    {
+        var request = await PresignAndUploadAsync("Grows", [new("grows_during_copy.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        factory.MockS3Client.ClearReceivedCalls();
+
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var copiedKey = factory.MockS3Client.ReceivedCalls()
+            .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.CopyObjectAsync))
+            .Select(c => ((CopyObjectRequest)c.GetArguments()[0]!).DestinationKey)
+            .Single();
+        DeletedKeys().Should().Contain(copiedKey);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_DoesNotCopyMultipartFiles()
+    {
+        const long size120Mb = 120L * 1024 * 1024;
+        var request = await PresignAndUploadAsync("Big", [new("big.tar", "application/x-tar", size120Mb)], maxDownloads: 5);
+        factory.MockS3Client.ClearReceivedCalls();
+
+        var shareToken = (await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>())!;
+
+        (await GetOnlySharedFileAsync(shareToken)).StorageKey.Should().Be(request.Files[0].StorageKey);
+        factory.MockS3Client.ReceivedCalls()
+            .Should().NotContain(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.CopyObjectAsync));
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await dbContext.PendingUploads.AnyAsync(p => p.StorageKey == request.Files[0].StorageKey))
+            .Should().BeFalse("the purge must never delete a multipart file a bundle serves");
+    }
+
+    [Fact]
+    public async Task Purge_DeletesTheConfirmedOriginal_OnceItsGraceHasPassed()
+    {
+        var request = await PresignAndUploadAsync("Purged Original", [new("original.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        var uploadedKey = request.Files[0].StorageKey;
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.PendingUploads
+            .Where(p => p.StorageKey == uploadedKey)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.ExpiresAt, DateTime.UtcNow.AddHours(-2)));
+        factory.MockS3Client.ClearReceivedCalls();
+
+        await scope.ServiceProvider.GetRequiredService<IStoragePurgeService>().PurgeExpiredFilesAsync();
+
+        DeletedKeys().Should().Contain(uploadedKey);
+        (await dbContext.PendingUploads.AnyAsync(p => p.StorageKey == uploadedKey)).Should().BeFalse();
     }
 
     #endregion

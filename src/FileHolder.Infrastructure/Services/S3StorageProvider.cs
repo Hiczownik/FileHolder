@@ -131,6 +131,17 @@ public class S3StorageProvider(
         }
     }
 
+    public async Task CopyObjectAsync(string sourceKey, string destinationKey, CancellationToken ct = default)
+    {
+        await _internalClient.CopyObjectAsync(new CopyObjectRequest
+        {
+            SourceBucket = _options.BucketName,
+            SourceKey = sourceKey,
+            DestinationBucket = _options.BucketName,
+            DestinationKey = destinationKey
+        }, ct);
+    }
+
     public async Task<Stream> OpenReadStreamAsync(string storageKey, CancellationToken ct = default)
     {
         var request = new GetObjectRequest

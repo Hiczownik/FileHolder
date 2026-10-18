@@ -11,12 +11,14 @@ namespace FileHolder.Infrastructure.Services;
 public class DownloadSessionService(
     AppDbContext dbContext,
     HybridCache cache,
-    IDateTimeProvider dateTimeProvider)
+    IDateTimeProvider dateTimeProvider,
+    IPasswordAttemptGuard passwordGuard)
     : IDownloadSessionService
 {
     private readonly AppDbContext _dbContext = dbContext;
     private readonly HybridCache _cache = cache;
     private readonly IDateTimeProvider _dateTimeProvider = dateTimeProvider;
+    private readonly IPasswordAttemptGuard _passwordGuard = passwordGuard;
 
     public async Task<OpenDownloadSessionResult> OpenSessionAsync(string shareToken, string? password, CancellationToken ct = default)
     {
@@ -33,7 +35,13 @@ public class DownloadSessionService(
             return new OpenDownloadSessionResult(OpenDownloadSessionStatus.NotFound, null);
         }
 
-        if (!group.VerifyPassword(password))
+        var passwordCheck = await _passwordGuard.CheckAsync(group, password, ct);
+        if (passwordCheck.Outcome == PasswordCheckOutcome.LockedOut)
+        {
+            return new OpenDownloadSessionResult(OpenDownloadSessionStatus.LockedOut, null, passwordCheck.LockedUntil);
+        }
+
+        if (passwordCheck.Outcome == PasswordCheckOutcome.Incorrect)
         {
             return new OpenDownloadSessionResult(OpenDownloadSessionStatus.InvalidPassword, null);
         }

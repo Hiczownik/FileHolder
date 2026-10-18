@@ -74,6 +74,7 @@ builder.Services.AddKeyedSingleton<IAmazonS3>("PresignS3", (sp, _) =>
 });
 
 builder.Services.AddSingleton<IS3StorageProvider, S3StorageProvider>();
+builder.Services.AddScoped<IPasswordAttemptGuard, PasswordAttemptGuard>();
 builder.Services.AddScoped<IDownloadSessionService, DownloadSessionService>();
 builder.Services.AddScoped<IFileGroupService, FileGroupService>();
 builder.Services.AddScoped<IMultipartUploadService, MultipartUploadService>();
@@ -108,8 +109,30 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 // UseForwardedHeaders has already replaced RemoteIpAddress when the request came through a trusted proxy.
 // Never read X-Forwarded-For here: clients can set it to anything and get a fresh rate-limit partition.
-static string ResolveClientIp(HttpContext context) =>
-    context.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+static string ResolveClientIp(HttpContext context)
+{
+    var address = context.Connection.RemoteIpAddress;
+    if (address == null)
+    {
+        return "anonymous";
+    }
+
+    if (address.IsIPv4MappedToIPv6)
+    {
+        return address.MapToIPv4().ToString();
+    }
+
+    // One IPv6 host usually owns a whole /64, so partitioning per address would let it rotate through
+    // addresses for unlimited attempts. Partition on the /64 prefix instead.
+    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+    {
+        var bytes = address.GetAddressBytes();
+        Array.Clear(bytes, 8, 8);
+        return $"{new IPAddress(bytes)}/64";
+    }
+
+    return address.ToString();
+}
 
 builder.Services.AddRateLimiter(options =>
 {

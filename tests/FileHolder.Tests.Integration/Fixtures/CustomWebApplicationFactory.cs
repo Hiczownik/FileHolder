@@ -92,6 +92,19 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 return new GetObjectMetadataResponse { ContentLength = 38219032 };
             });
 
+        MockS3Client.CopyObjectAsync(Arg.Any<CopyObjectRequest>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var req = callInfo.ArgAt<CopyObjectRequest>(0);
+                if (S3ObjectRegistry.TryGetValue(req.SourceKey, out long sourceSize))
+                {
+                    // Simulates the uploader overwriting the object between confirm's checks and the copy.
+                    S3ObjectRegistry[req.DestinationKey] = req.SourceKey.Contains("grows_during_copy") ? sourceSize + 1 : sourceSize;
+                }
+
+                return new CopyObjectResponse();
+            });
+
         MockS3Client.GetObjectAsync(Arg.Any<GetObjectRequest>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {
