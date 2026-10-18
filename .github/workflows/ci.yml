@@ -61,6 +61,17 @@ jobs:
               run: |
                 echo "Waiting for .NET 10 API to become healthy..."
                 timeout 60s bash -c 'until curl -s http://localhost:8080/healthz; do sleep 2; done'
+            - name: Verify Storage Bucket Rejects Anonymous Access
+              run: |
+                # Unsigned requests must be denied. A missing key answers 403 (not 404) when the caller
+                # has no read permission, so the probe object does not need to exist.
+                list_status=$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost:9000/fileholder-bucket/?list-type=2')
+                get_status=$(curl -s -o /dev/null -w '%{http_code}' 'http://localhost:9000/fileholder-bucket/uploads/anonymous-access-probe')
+                echo "Anonymous list: HTTP $list_status, anonymous get: HTTP $get_status"
+                if [ "$list_status" != "403" ] || [ "$get_status" != "403" ]; then
+                  echo "::error::Storage bucket allows anonymous access"
+                  exit 1
+                fi
             - name: Run Playwright E2E Tests
               run: |
                 cd src/fileholder-ui

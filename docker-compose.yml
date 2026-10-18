@@ -24,9 +24,10 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
       MINIO_API_CORS_ALLOW_ORIGINS: "*"
+    # Bound to loopback only: browsers reach presigned URLs via localhost, nothing else needs the network.
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -41,12 +42,13 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    # The bucket must stay private: all access goes through presigned URLs. Setting the policy to
+    # "none" explicitly also revokes public access on existing minio_data volumes.
     entrypoint: >
       /bin/sh -c "
-      mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      mc mb myminio/fileholder-bucket --ignore-existing;
-      mc anonymous set download myminio/fileholder-bucket;
-      exit 0;
+      mc alias set myminio http://minio:9000 minioadmin minioadmin &&
+      mc mb myminio/fileholder-bucket --ignore-existing &&
+      mc anonymous set none myminio/fileholder-bucket
       "
 
   api:
@@ -69,6 +71,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
   ui:
     build:
