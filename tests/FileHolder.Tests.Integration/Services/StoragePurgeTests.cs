@@ -184,6 +184,62 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
     }
 
     [Fact]
+    public async Task PurgeExpiredFilesAsync_DeletesAbandonedUploadsPastGrace_AndKeepsPendingOnes()
+    {
+        var now = DateTime.UtcNow;
+        var id = Guid.NewGuid().ToString("N");
+        var pastGrace = now - UploadTimings.PendingUploadPurgeGrace - TimeSpan.FromMinutes(5);
+
+        var abandoned = NewPendingUpload($"uploads/abandoned_{id}.pdf", pastGrace);
+        var failing = NewPendingUpload($"uploads/delete_fail_abandoned_{id}.pdf", pastGrace);
+        var withinGrace = NewPendingUpload($"uploads/within_grace_{id}.pdf", now - TimeSpan.FromMinutes(5));
+        var active = NewPendingUpload($"uploads/active_{id}.pdf", now + TimeSpan.FromHours(1));
+
+        using (var seedScope = factory.Services.CreateScope())
+        {
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.PendingUploads.AddRange(abandoned, failing, withinGrace, active);
+            await dbContext.SaveChangesAsync();
+        }
+
+        factory.MockS3Client.ClearReceivedCalls();
+        await RunPurgeAsync();
+
+        await factory.MockS3Client.Received(1).DeleteObjectsAsync(
+            Arg.Is<DeleteObjectsRequest>(req =>
+                req != null &&
+                req.Objects.Any(o => o.Key == abandoned.StorageKey) &&
+                req.Objects.Any(o => o.Key == failing.StorageKey) &&
+                req.Objects.All(o => o.Key != withinGrace.StorageKey && o.Key != active.StorageKey)),
+            Arg.Any<CancellationToken>());
+
+        using (var verifyScope = factory.Services.CreateScope())
+        {
+            var dbContext = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var remaining = await dbContext.PendingUploads
+                .Where(p => p.StorageKey.Contains(id))
+                .Select(p => p.StorageKey)
+                .ToListAsync();
+
+            // The failed delete stays behind to be retried; the recent ones are untouched.
+            remaining.Should().BeEquivalentTo(failing.StorageKey, withinGrace.StorageKey, active.StorageKey);
+
+            await dbContext.PendingUploads.Where(p => p.StorageKey.Contains(id)).ExecuteDeleteAsync();
+        }
+    }
+
+    private static PendingUpload NewPendingUpload(string storageKey, DateTime expiresAt) => new()
+    {
+        UploadToken = Guid.NewGuid().ToString("N"),
+        StorageKey = storageKey,
+        FileName = Path.GetFileName(storageKey),
+        ContentType = "application/pdf",
+        SizeBytes = 1024,
+        CreatedAt = expiresAt - UploadTimings.PendingUploadLifetime,
+        ExpiresAt = expiresAt
+    };
+
+    [Fact]
     public async Task PurgeExpiredFilesAsync_RemovesDownloadSessionsPastRetention_AndKeepsRecentOnes()
     {
         var group = await SeedGroupAsync("sess_", "uploads/sess_" + Guid.NewGuid().ToString("N") + ".pdf", maxDownloads: 10);

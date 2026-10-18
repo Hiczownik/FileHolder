@@ -46,6 +46,8 @@ public class StoragePurgeService(
             .Where(s => s.ExpiresAt <= now - DownloadTimings.ExpiredSessionRetention)
             .ExecuteDeleteAsync(ct);
 
+        await PurgeAbandonedUploadsAsync(now, ct);
+
         // Groups closed within the grace period may still have an active download session or presigned URL.
         var graceCutoff = now - DeletionGracePeriod;
 
@@ -103,5 +105,46 @@ public class StoragePurgeService(
         _logger.LogInformation("Purged {GroupCount} expired groups and deleted {KeyCount} storage objects.",
             purgedCount, allKeysToDelete.Count - failedKeys.Count);
         return purgedCount;
+    }
+
+    /// <summary>
+    /// Deletes objects that were presigned but never confirmed into a bundle. Confirm removes a file's
+    /// pending row, so any row left past its expiry (plus a grace period) belongs to nobody.
+    /// </summary>
+    private async Task PurgeAbandonedUploadsAsync(DateTime now, CancellationToken ct)
+    {
+        var cutoff = now - UploadTimings.PendingUploadPurgeGrace;
+
+        var abandoned = await _dbContext.PendingUploads
+            .AsNoTracking()
+            .Where(p => p.ExpiresAt <= cutoff)
+            .OrderBy(p => p.ExpiresAt)
+            .Take(500)
+            .ToListAsync(ct);
+
+        if (abandoned.Count == 0)
+        {
+            return;
+        }
+
+        var failedKeys = await _storageProvider.DeleteObjectsAsync(abandoned.Select(p => p.StorageKey), ct);
+
+        // Rows whose object could not be deleted stay behind and are retried on the next run.
+        var removedIds = abandoned
+            .Where(p => !failedKeys.Contains(p.StorageKey))
+            .Select(p => p.Id)
+            .ToList();
+
+        await _dbContext.PendingUploads
+            .Where(p => removedIds.Contains(p.Id))
+            .ExecuteDeleteAsync(ct);
+
+        if (failedKeys.Count > 0)
+        {
+            _logger.LogWarning("Failed to delete {FailedCount} abandoned upload objects; they will be retried on the next run.",
+                failedKeys.Count);
+        }
+
+        _logger.LogInformation("Deleted {Count} abandoned uploads that were never confirmed.", removedIds.Count);
     }
 }

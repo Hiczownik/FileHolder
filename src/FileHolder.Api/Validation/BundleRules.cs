@@ -28,8 +28,11 @@ public static class BundleRules
     public static IRuleBuilderOptions<T, string?> MustBeValidTitle<T>(this IRuleBuilder<T, string?> rule) =>
         rule.MaximumLength(255).WithMessage("Title cannot exceed 255 characters.");
 
+    // Required: the purge only removes a bundle's storage once it expires or runs out of downloads,
+    // so a bundle with neither limit would keep its files forever.
     public static IRuleBuilderOptions<T, int?> MustBeValidExpiry<T>(this IRuleBuilder<T, int?> rule) =>
-        rule.InclusiveBetween(1, 168)
+        rule.NotNull().WithMessage("Expiration time is required.")
+            .InclusiveBetween(1, 168)
             .WithMessage("Expiration time must be between 1 hour and 168 hours (7 days).");
 
     public static IRuleBuilderOptions<T, int?> MustBeValidMaxDownloads<T>(this IRuleBuilder<T, int?> rule) =>
