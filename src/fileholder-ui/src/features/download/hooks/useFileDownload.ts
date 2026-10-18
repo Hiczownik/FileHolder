@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import type { FileGroupMetadataResponse, FileItemMetadata } from "../types";
+import type { FileGroupMetadataResponse } from "../types";
 import { downloadApi } from "../api/downloadApi";
 import { bundleDecryptionService } from "../services/bundleDecryptionService";
 import { saveBlobAsFile, triggerDirectDownload } from "../../../shared/utils/downloadUtils";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import JSZip from "jszip";
+
+const ZIP_COMPRESSION_LEVEL = 6;
 
 export const useFileDownload = (shareToken?: string) => {
     const [metadata, setMetadata] = useState<FileGroupMetadataResponse | null>(null);
@@ -71,18 +73,7 @@ export const useFileDownload = (shareToken?: string) => {
                 const masterKey = await bundleDecryptionService.unwrapMasterKey(unlockedRaw.keyEnvelope, kWrap);
                 const manifestItems = await bundleDecryptionService.decryptManifest(unlockedRaw.encryptedManifest, masterKey);
 
-                const mappedFiles: FileItemMetadata[] = manifestItems.map((item, idx) => {
-                    const serverFile = unlockedRaw.files[idx] || unlockedRaw.files.find((f) => f.fileName.includes(item.id));
-                    const serverId = serverFile ? serverFile.id : item.id;
-                    bundleDecryptionService.registerFileMapping(serverId, item.id);
-
-                    return {
-                        id: serverId,
-                        fileName: item.fileName,
-                        sizeBytes: item.sizeBytes,
-                        contentType: item.contentType,
-                    };
-                });
+                const mappedFiles = bundleDecryptionService.mapManifestToServerFiles(manifestItems, unlockedRaw.files);
 
                 setMetadata({
                     ...unlockedRaw,
@@ -142,21 +133,26 @@ export const useFileDownload = (shareToken?: string) => {
                 const zip = new JSZip();
                 const authCredential = bundleDecryptionService.getKAuth(shareToken) || cachedKAuthRef.current || password;
 
-                for (const file of metadata.files) {
+                // Sequential on purpose: one file is fetched and decrypted at a time.
+                await metadata.files.reduce(async (previous, file) => {
+                    await previous;
                     const manifestId = bundleDecryptionService.getManifestIdForServerFile(file.id);
                     const downloadUrl = await downloadApi.getDownloadUrl(shareToken, file.id, authCredential || undefined);
                     const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
                     const decryptedBytes = await bundleDecryptionService.decryptFile(ciphertextBuffer, manifestId);
 
                     zip.file(file.fileName, decryptedBytes);
-                }
+                }, Promise.resolve());
 
                 const zipBlob = await zip.generateAsync({
                     type: 'blob',
                     compression: 'DEFLATE',
-                    compressionOptions: { level: 6 },
+                    compressionOptions: { level: ZIP_COMPRESSION_LEVEL },
                 });
 
+                // Replaces every character that is not a word character, dot or hyphen with "_":
+                // "Q3 Report/v2" becomes "Q3_Report_v2", while "notes-v1.2" is left unchanged.
+                // https://regex101.com/?regex=%5B%5E%5Cw.-%5D&flags=g&testString=Q3%20Report%2Fv2%0Anotes-v1.2
                 const safeTitle = metadata.title ? metadata.title.replace(/[^\w.-]/g, '_') : 'bundle';
                 saveBlobAsFile(zipBlob, `${safeTitle}_${shareToken}.zip`);
                 return;
