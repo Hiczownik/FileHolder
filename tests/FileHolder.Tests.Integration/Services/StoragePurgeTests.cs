@@ -2,6 +2,7 @@ using Amazon.S3.Model;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
+using FileHolder.Infrastructure.Services;
 using FileHolder.Tests.Integration.Fixtures;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
@@ -137,6 +138,121 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
             var metadataA = await fileGroupService.GetGroupMetadataByTokenAsync(groupARecord.ShareToken);
             (metadataA == null || metadataA.IsExpired).Should().BeTrue();
         }
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_WhenQuotaExhaustedViaSingleFileDownload_WaitsForGracePeriodBeforeDeleting()
+    {
+        var storageKey = "uploads/grace_" + Guid.NewGuid().ToString("N") + ".pdf";
+        var group = await SeedGroupAsync("grace_", storageKey, maxDownloads: 1);
+
+        // Exhaust the quota through the real single-file download path
+        using (var scope = factory.Services.CreateScope())
+        {
+            var fileGroupService = scope.ServiceProvider.GetRequiredService<IFileGroupService>();
+            var result = await fileGroupService.CreatePresignedDownloadUrlAsync(group.ShareToken, group.Files.First().Id, null);
+            result.DownloadUrl.Should().NotBeNull();
+        }
+
+        factory.MockS3Client.ClearReceivedCalls();
+        await RunPurgeAsync();
+
+        var record = await LoadGroupAsync(group.Id);
+        record.IsDeleted.Should().BeTrue();
+        record.DeletedAt.Should().NotBeNull();
+        record.StoragePurgedAt.Should().BeNull("the presigned URL just issued must remain usable");
+
+        await factory.MockS3Client.DidNotReceive().DeleteObjectsAsync(
+            Arg.Is<DeleteObjectsRequest>(req => req != null && req.Objects.Any(o => o.Key == storageKey)),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_WhenDeletedGroupIsPastGracePeriod_DeletesObjectsAndRecordsPurge()
+    {
+        var storageKey = "uploads/orphan_" + Guid.NewGuid().ToString("N") + ".pdf";
+        var group = await SeedGroupAsync("orphan_", storageKey, maxDownloads: 1, downloadCount: 1,
+            deletedAt: DateTime.UtcNow - StoragePurgeService.DeletionGracePeriod - TimeSpan.FromMinutes(1));
+
+        factory.MockS3Client.ClearReceivedCalls();
+        await RunPurgeAsync();
+
+        var record = await LoadGroupAsync(group.Id);
+        record.StoragePurgedAt.Should().NotBeNull();
+
+        await factory.MockS3Client.Received(1).DeleteObjectsAsync(
+            Arg.Is<DeleteObjectsRequest>(req => req != null && req.Objects.Any(o => o.Key == storageKey)),
+            Arg.Any<CancellationToken>());
+
+        // Already purged groups are not picked up again
+        factory.MockS3Client.ClearReceivedCalls();
+        await RunPurgeAsync();
+
+        await factory.MockS3Client.DidNotReceive().DeleteObjectsAsync(
+            Arg.Is<DeleteObjectsRequest>(req => req != null && req.Objects.Any(o => o.Key == storageKey)),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_WhenStorageDeleteFails_LeavesGroupPendingForRetry()
+    {
+        var storageKey = "uploads/delete_fail_" + Guid.NewGuid().ToString("N") + ".pdf";
+        var group = await SeedGroupAsync("fail_", storageKey, maxDownloads: 1, downloadCount: 1,
+            deletedAt: DateTime.UtcNow - StoragePurgeService.DeletionGracePeriod - TimeSpan.FromMinutes(1));
+
+        await RunPurgeAsync();
+
+        var record = await LoadGroupAsync(group.Id);
+        record.IsDeleted.Should().BeTrue();
+        record.StoragePurgedAt.Should().BeNull();
+    }
+
+    private async Task<FileGroup> SeedGroupAsync(
+        string tokenPrefix,
+        string storageKey,
+        int maxDownloads,
+        int downloadCount = 0,
+        DateTime? deletedAt = null)
+    {
+        var group = new FileGroup
+        {
+            ShareToken = tokenPrefix + Guid.NewGuid().ToString("N")[..8],
+            ExpiresAt = DateTime.UtcNow.AddHours(24),
+            MaxDownloads = maxDownloads,
+            DownloadCount = downloadCount,
+            IsDeleted = deletedAt.HasValue,
+            DeletedAt = deletedAt,
+            Files = new List<SharedFile>
+            {
+                new()
+                {
+                    OriginalFileName = "file.pdf",
+                    StorageKey = storageKey,
+                    ContentType = "application/pdf",
+                    SizeBytes = 1024
+                }
+            }
+        };
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        dbContext.FileGroups.Add(group);
+        await dbContext.SaveChangesAsync();
+        return group;
+    }
+
+    private async Task RunPurgeAsync()
+    {
+        using var scope = factory.Services.CreateScope();
+        var purgeService = scope.ServiceProvider.GetRequiredService<IStoragePurgeService>();
+        await purgeService.PurgeExpiredFilesAsync(CancellationToken.None);
+    }
+
+    private async Task<FileGroup> LoadGroupAsync(Guid groupId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.FileGroups.AsNoTracking().FirstAsync(g => g.Id == groupId);
     }
 
     [Fact]

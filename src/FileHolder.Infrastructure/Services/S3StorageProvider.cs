@@ -13,6 +13,8 @@ public class S3StorageProvider(
     IOptions<StorageOptions> options)
     : IS3StorageProvider
 {
+    private const int MaxKeysPerDeleteRequest = 1000;
+
     private readonly IAmazonS3 _internalClient = internalClient;
     private readonly IAmazonS3 _presignClient = presignClient;
     private readonly StorageOptions _options = options.Value;
@@ -139,28 +141,39 @@ public class S3StorageProvider(
         return response.ResponseStream;
     }
 
-    public async Task DeleteObjectsAsync(IEnumerable<string> storageKeys, CancellationToken ct = default)
+    public async Task<IReadOnlySet<string>> DeleteObjectsAsync(IEnumerable<string> storageKeys, CancellationToken ct = default)
     {
+        var failedKeys = new HashSet<string>(StringComparer.Ordinal);
+
         var keysList = storageKeys
             .Where(k => !string.IsNullOrWhiteSpace(k))
-            .Select(k => new KeyVersion { Key = k })
+            .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (keysList.Count == 0) return;
+        // S3 DeleteObjects accepts at most 1000 keys per request. Missing keys are reported as
+        // deleted by S3, so anything in DeleteErrors is a genuine failure.
+        foreach (var chunk in keysList.Chunk(MaxKeysPerDeleteRequest))
+        {
+            var deleteRequest = new DeleteObjectsRequest
+            {
+                BucketName = _options.BucketName,
+                Objects = chunk.Select(k => new KeyVersion { Key = k }).ToList()
+            };
 
-        var deleteRequest = new DeleteObjectsRequest
-        {
-            BucketName = _options.BucketName,
-            Objects = keysList
-        };
+            try
+            {
+                var response = await _internalClient.DeleteObjectsAsync(deleteRequest, ct);
+                foreach (var error in response.DeleteErrors ?? [])
+                {
+                    failedKeys.Add(error.Key);
+                }
+            }
+            catch (AmazonS3Exception)
+            {
+                failedKeys.UnionWith(chunk);
+            }
+        }
 
-        try
-        {
-            await _internalClient.DeleteObjectsAsync(deleteRequest, ct);
-        }
-        catch (AmazonS3Exception)
-        {
-            // Ignored: S3 objects may already be deleted or non-existent
-        }
+        return failedKeys;
     }
 }

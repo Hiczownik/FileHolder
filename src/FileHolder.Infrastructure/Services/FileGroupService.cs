@@ -282,9 +282,10 @@ public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreateP
 
         group.DownloadCount++;
 
+        // Storage objects are left for the purge worker: the presigned URL issued below must stay usable.
         if (group.MaxDownloads.HasValue && group.DownloadCount >= group.MaxDownloads.Value)
         {
-            group.IsDeleted = true;
+            group.MarkDeleted(now);
         }
 
         await _dbContext.SaveChangesAsync();

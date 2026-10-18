@@ -59,6 +59,19 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
         MockS3Client.AbortMultipartUploadAsync(Arg.Any<AbortMultipartUploadRequest>(), Arg.Any<CancellationToken>())
             .Returns(new AbortMultipartUploadResponse());
 
+        MockS3Client.DeleteObjectsAsync(Arg.Any<DeleteObjectsRequest>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var req = callInfo.ArgAt<DeleteObjectsRequest>(0);
+                return new DeleteObjectsResponse
+                {
+                    DeleteErrors = req.Objects
+                        .Where(o => o.Key.Contains("delete_fail"))
+                        .Select(o => new DeleteError { Key = o.Key, Code = "AccessDenied" })
+                        .ToList()
+                };
+            });
+
         MockS3Client.GetObjectMetadataAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {

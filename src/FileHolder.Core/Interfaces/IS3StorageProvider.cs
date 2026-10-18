@@ -12,5 +12,8 @@ public interface IS3StorageProvider
 
     Task<long?> GetObjectSizeAsync(string storageKey, CancellationToken ct = default);
     Task<Stream> OpenReadStreamAsync(string storageKey, CancellationToken ct = default);
-    Task DeleteObjectsAsync(IEnumerable<string> storageKeys, CancellationToken ct = default);
+    /// <summary>
+    /// Deletes the given objects and returns the keys that could not be deleted.
+    /// </summary>
+    Task<IReadOnlySet<string>> DeleteObjectsAsync(IEnumerable<string> storageKeys, CancellationToken ct = default);
 }

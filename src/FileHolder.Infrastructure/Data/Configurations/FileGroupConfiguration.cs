@@ -45,6 +45,10 @@ public class FileGroupConfiguration : IEntityTypeConfiguration<FileGroup>
         builder.HasIndex(g => new { g.ExpiresAt, g.DownloadCount, g.MaxDownloads })
             .HasFilter("\"IsDeleted\" = FALSE");
 
+        builder.HasIndex(g => g.CreatedAt)
+            .HasDatabaseName("IX_FileGroups_PendingStoragePurge")
+            .HasFilter("\"StoragePurgedAt\" IS NULL");
+
         builder.HasMany(g => g.Files)
             .WithOne(f => f.FileGroup)
             .HasForeignKey(f => f.FileGroupId)
