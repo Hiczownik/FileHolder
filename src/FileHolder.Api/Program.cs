@@ -1,3 +1,4 @@
+using System.Net;
 using System.Threading.RateLimiting;
 using Amazon.S3;
 using FileHolder.Api.Endpoints;
@@ -96,17 +97,19 @@ builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+
+    // X-Forwarded-For is only honoured from these proxies (loopback by default). Behind a reverse proxy,
+    // list its address under ForwardedHeaders:KnownProxies, or every client shares the proxy's rate limit.
+    foreach (var proxy in builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+    {
+        options.KnownProxies.Add(IPAddress.Parse(proxy));
+    }
 });
 
-static string ResolveClientIp(HttpContext context)
-{
-    if (context.Request.Headers.TryGetValue("X-Forwarded-For", out var forwarded) &&
-        !string.IsNullOrWhiteSpace(forwarded))
-    {
-        return forwarded.ToString().Split(',')[0].Trim();
-    }
-    return context.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
-}
+// UseForwardedHeaders has already replaced RemoteIpAddress when the request came through a trusted proxy.
+// Never read X-Forwarded-For here: clients can set it to anything and get a fresh rate-limit partition.
+static string ResolveClientIp(HttpContext context) =>
+    context.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
 
 builder.Services.AddRateLimiter(options =>
 {

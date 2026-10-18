@@ -26,8 +26,14 @@ public class MultipartUploadService(
             throw new KeyNotFoundException("Active multipart upload session not found.");
         }
 
+        // The endpoint validator bounds these too; checked here so the loop below is always bounded by TotalParts.
+        if (dto.StartPartNumber < 1 || dto.StartPartNumber > session.TotalParts || dto.Count < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(dto), $"Part range must start between 1 and {session.TotalParts} with a positive count.");
+        }
+
         var parts = new List<PartPresignedUrlDto>();
-        int endPart = Math.Min(dto.StartPartNumber + dto.Count - 1, session.TotalParts);
+        int endPart = (int)Math.Min((long)dto.StartPartNumber + dto.Count - 1, session.TotalParts);
 
         for (int partNumber = dto.StartPartNumber; partNumber <= endPart; partNumber++)
         {

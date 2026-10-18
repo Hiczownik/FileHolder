@@ -137,6 +137,47 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    [Theory]
+    // forbidden extension renamed in after presign
+    [InlineData("payload.exe", "uploads/{0}.pdf", 0, 24, 10, null)]
+    // storage key outside the uploads prefix
+    [InlineData("document.pdf", "secrets/{0}.pdf", 0, 24, 10, null)]
+    [InlineData("document.pdf", "uploads/../{0}.pdf", 0, 24, 10, null)]
+    // title longer than the column
+    [InlineData("document.pdf", "uploads/{0}.pdf", 256, 24, 10, null)]
+    // expiration limit
+    [InlineData("document.pdf", "uploads/{0}.pdf", 0, 0, 10, null)]
+    [InlineData("document.pdf", "uploads/{0}.pdf", 0, 100000, 10, null)]
+    // download limit
+    [InlineData("document.pdf", "uploads/{0}.pdf", 0, 24, 0, null)]
+    [InlineData("document.pdf", "uploads/{0}.pdf", 0, 24, -5, null)]
+    [InlineData("document.pdf", "uploads/{0}.pdf", 0, 24, 2000, null)]
+    // password
+    [InlineData("document.pdf", "uploads/{0}.pdf", 0, 24, 10, "123")]
+    public async Task ConfirmUpload_Returns400BadRequest_WhenBundleSettingsBypassPresignValidation(
+        string fileName,
+        string storageKeyFormat,
+        int titleLength,
+        int expireInHours,
+        int maxDownloads,
+        string? password)
+    {
+        var storageKey = string.Format(System.Globalization.CultureInfo.InvariantCulture, storageKeyFormat, Guid.NewGuid().ToString("N"));
+        factory.SeedS3Object(storageKey, 1024);
+
+        var request = new ConfirmUploadRequestDto(
+            UploadToken: Guid.NewGuid().ToString("N"),
+            Title: titleLength > 0 ? new string('t', titleLength) : "Bypass Attempt",
+            Files: new List<ConfirmedFileItemDto> { new(storageKey, fileName, "application/pdf", 1024) },
+            ExpireInHours: expireInHours,
+            MaxDownloads: maxDownloads,
+            Password: password);
+
+        var response = await _client.PostAsJsonAsync("/api/v1/files/confirm", request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     #endregion
 
     #region 2. Happy Path Upload & Metadata Tests
@@ -663,6 +704,51 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    [Fact]
+    public async Task UnlockGroup_Returns404NotFound_WhenTokenDoesNotExist()
+    {
+        var response = await _client.PostAsJsonAsync(
+            "/api/v1/files/non_existent_token_999/unlock",
+            new DownloadRequestDto("AnyPassword123!"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Theory]
+    [InlineData("UnlockPass123!")]
+    [InlineData("WrongPass123!")]
+    public async Task UnlockGroup_Returns410Gone_WhenBundleIsUsedUp(string attemptedPassword)
+    {
+        var (shareToken, _) = await CreateBundleAsync(fileCount: 1, maxDownloads: 1, password: "UnlockPass123!");
+        await OpenSessionIdAsync(shareToken, "UnlockPass123!");
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto(attemptedPassword));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Gone);
+    }
+
+    [Fact]
+    public async Task UnlockGroup_Returns410Gone_WhenBundleHasPassedItsExpiry()
+    {
+        var (shareToken, _) = await CreateBundleAsync(fileCount: 1, maxDownloads: 5, password: "ExpiredPass123!");
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.FileGroups
+                .Where(g => g.ShareToken == shareToken)
+                .ExecuteUpdateAsync(s => s.SetProperty(g => g.ExpiresAt, DateTime.UtcNow.AddMinutes(-1)));
+        }
+
+        var response = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("ExpiredPass123!"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Gone, "an expired bundle must not be reported as a wrong password");
+    }
+
     #endregion
 
     #region 6. Direct-to-S3 Presigned Multipart Tests
@@ -781,6 +867,65 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task GetPresignedUrl_WithSeveralFilesOver50MB_StartsOneMultipartUploadPerFile()
+    {
+        long fileSize120Mb = 120L * 1024 * 1024;
+
+        var request = new CreatePresignedUrlRequestDto(
+            Title: "Two Large Videos",
+            Files: new List<FileItemInputDto>
+            {
+                new("take_1.mp4", "video/mp4", fileSize120Mb),
+                new("take_2.mp4", "video/mp4", fileSize120Mb)
+            },
+            ExpireInHours: 24,
+            MaxDownloads: 10,
+            Password: null);
+
+        var response = await _client.PostAsJsonAsync("/api/v1/files/presign", request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var result = await response.Content.ReadFromJsonAsync<PresignedUrlResponseDto>();
+        result!.Items.Should().HaveCount(2);
+        result.Items.Should().OnlyContain(i => i.UploadMode == UploadMode.Multipart);
+        result.Items.Select(i => i.UploadId).Should().OnlyHaveUniqueItems();
+
+        // Each file's session must be addressable on its own under the shared upload token.
+        foreach (var item in result.Items)
+        {
+            var batchResponse = await _client.PostAsJsonAsync("/api/v1/files/multipart/presign-batch",
+                new PresignPartBatchRequestDto(result.UploadToken, item.StorageKey, item.UploadId!, 1, 2));
+            batchResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+    }
+
+    [Theory]
+    [InlineData(-2_000_000_000, 50)]
+    [InlineData(0, 50)]
+    [InlineData(1, 0)]
+    [InlineData(1, -1)]
+    [InlineData(1, int.MaxValue)]
+    [InlineData(int.MaxValue, 50)]
+    // past the end of this 8-part upload
+    [InlineData(9, 1)]
+    public async Task PresignPartBatch_Returns400BadRequest_WhenPartRangeIsInvalid(int startPartNumber, int count)
+    {
+        var presignResponse = await _client.PostAsJsonAsync("/api/v1/files/presign", new CreatePresignedUrlRequestDto(
+            Title: "Range Check",
+            Files: new List<FileItemInputDto> { new("clip.mp4", "video/mp4", 120L * 1024 * 1024) },
+            ExpireInHours: 24,
+            MaxDownloads: 10,
+            Password: null));
+        var presign = await presignResponse.Content.ReadFromJsonAsync<PresignedUrlResponseDto>();
+        var item = presign!.Items[0];
+
+        var response = await _client.PostAsJsonAsync("/api/v1/files/multipart/presign-batch",
+            new PresignPartBatchRequestDto(presign.UploadToken, item.StorageKey, item.UploadId!, startPartNumber, count));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     #endregion
