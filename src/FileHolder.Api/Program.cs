@@ -73,6 +73,7 @@ builder.Services.AddKeyedSingleton<IAmazonS3>("PresignS3", (sp, _) =>
 });
 
 builder.Services.AddSingleton<IS3StorageProvider, S3StorageProvider>();
+builder.Services.AddScoped<IDownloadSessionService, DownloadSessionService>();
 builder.Services.AddScoped<IFileGroupService, FileGroupService>();
 builder.Services.AddScoped<IMultipartUploadService, MultipartUploadService>();
 builder.Services.AddScoped<IBundleStreamService, BundleStreamService>();

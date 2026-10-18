@@ -43,6 +43,10 @@ public static class FileEndpoints
             .RequireRateLimiting("DownloadPolicy")
             .WithName("UnlockGroup");
 
+        group.MapPost("/{shareToken}/downloads", OpenDownloadSession)
+            .RequireRateLimiting("DownloadPolicy")
+            .WithName("OpenDownloadSession");
+
         group.MapPost("/{shareToken}/download/{fileId:guid}", GenerateDownloadLink)
             .RequireRateLimiting("DownloadPolicy")
             .WithName("GenerateDownloadLink");
@@ -136,29 +140,44 @@ public static class FileEndpoints
         return TypedResults.Ok(result.Metadata);
     }
 
-    public static async Task<Results<Ok<DownloadUrlResponseDto>, UnauthorizedHttpResult, ProblemHttpResult>>
+    public static async Task<Results<Ok<DownloadSessionResponseDto>, NotFound, ProblemHttpResult>> OpenDownloadSession(
+        string shareToken,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DownloadRequestDto? dto,
+        IDownloadSessionService downloadSessionService,
+        CancellationToken ct)
+    {
+        var result = await downloadSessionService.OpenSessionAsync(shareToken, dto?.Password, ct);
+
+        return result.Status switch
+        {
+            OpenDownloadSessionStatus.Success => TypedResults.Ok(result.Session!),
+            OpenDownloadSessionStatus.InvalidPassword => TypedResults.Problem(
+                detail: "Incorrect password. Please try again.",
+                statusCode: StatusCodes.Status401Unauthorized,
+                title: "Unauthorized"),
+            OpenDownloadSessionStatus.Expired => TypedResults.Problem(
+                detail: "This shared file bundle has expired or reached its download limit.",
+                statusCode: StatusCodes.Status410Gone,
+                title: "Link Expired"),
+            _ => TypedResults.NotFound()
+        };
+    }
+
+    public static async Task<Results<Ok<DownloadUrlResponseDto>, NotFound, ProblemHttpResult>>
         GenerateDownloadLink(
             string shareToken,
             Guid fileId,
             [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DownloadRequestDto? dto,
             IFileGroupService fileGroupService)
     {
-        var result = await fileGroupService.CreatePresignedDownloadUrlAsync(shareToken, fileId, dto?.Password);
+        var result = await fileGroupService.CreatePresignedDownloadUrlAsync(shareToken, fileId, dto?.DownloadSessionId);
 
-        if (result.IsPasswordInvalid)
+        return result.Status switch
         {
-            return TypedResults.Unauthorized();
-        }
-
-        if (result.IsExpired)
-        {
-            return TypedResults.Problem(
-                detail: "Link has expired or reached maximum download limit.",
-                statusCode: StatusCodes.Status410Gone,
-                title: "Link Expired");
-        }
-
-        return TypedResults.Ok(new DownloadUrlResponseDto(result.DownloadUrl!));
+            DownloadUrlStatus.Success => TypedResults.Ok(new DownloadUrlResponseDto(result.DownloadUrl!)),
+            DownloadUrlStatus.SessionInvalid => SessionInvalidProblem(),
+            _ => TypedResults.NotFound()
+        };
     }
 
     public static async
@@ -172,6 +191,7 @@ public static class FileEndpoints
         var result = await bundleStreamService.StreamBundleZipAsync(
             shareToken,
             dto.Password,
+            dto.DownloadSessionId,
             context.Response.Body,
             bundleTitle =>
             {
@@ -198,15 +218,17 @@ public static class FileEndpoints
                 detail: "Bundle has expired or reached maximum download limit.",
                 statusCode: StatusCodes.Status410Gone,
                 title: "Link Expired"),
-            StreamZipStatus.CapacityReached => TypedResults.Problem(
-                detail: "All download slots are currently in use or exhausted.",
-                statusCode: StatusCodes.Status410Gone,
-                title: "Download Limit Reached"),
+            StreamZipStatus.SessionInvalid => SessionInvalidProblem(),
             StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
             StreamZipStatus.Success => TypedResults.Empty,
             _ => TypedResults.Empty
         };
     }
+
+    private static ProblemHttpResult SessionInvalidProblem() => TypedResults.Problem(
+        detail: "The download session is missing or has expired. Start a new download.",
+        statusCode: StatusCodes.Status401Unauthorized,
+        title: "Download Session Invalid");
 
     public static async Task<Ok<string>> ConfirmUpload(
         ConfirmUploadRequestDto dto,

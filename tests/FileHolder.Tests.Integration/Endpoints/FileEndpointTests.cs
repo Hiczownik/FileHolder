@@ -32,6 +32,62 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         Password: "ValidPassword123!"
     );
 
+    private async Task<(string ShareToken, List<Guid> FileIds)> CreateBundleAsync(int fileCount, int? maxDownloads, string? password = null)
+    {
+        var prefix = Guid.NewGuid().ToString("N");
+        var files = Enumerable.Range(1, fileCount)
+            .Select(i =>
+            {
+                var storageKey = $"uploads/{prefix}_{i}.pdf";
+                factory.SeedS3Object(storageKey, 1024);
+                return new ConfirmedFileItemDto(storageKey, $"file_{i}.pdf", "application/pdf", 1024);
+            })
+            .ToList();
+
+        var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", new ConfirmUploadRequestDto(
+            UploadToken: prefix,
+            Title: "Session Bundle",
+            Files: files,
+            ExpireInHours: 24,
+            MaxDownloads: maxDownloads,
+            Password: password));
+        confirmResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var shareToken = (await confirmResponse.Content.ReadFromJsonAsync<string>())!;
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var fileIds = await dbContext.SharedFiles
+            .Where(f => f.FileGroup.ShareToken == shareToken)
+            .Select(f => f.Id)
+            .ToListAsync();
+
+        return (shareToken, fileIds);
+    }
+
+    private Task<HttpResponseMessage> OpenSessionAsync(string shareToken, string? password = null) =>
+        _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/downloads", new DownloadRequestDto(password));
+
+    private async Task<Guid> OpenSessionIdAsync(string shareToken, string? password = null)
+    {
+        var response = await OpenSessionAsync(shareToken, password);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var session = await response.Content.ReadFromJsonAsync<DownloadSessionResponseDto>();
+        return session!.DownloadSessionId;
+    }
+
+    private Task<HttpResponseMessage> RequestFileLinkAsync(string shareToken, Guid fileId, Guid? sessionId) =>
+        _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download/{fileId}", new DownloadRequestDto(null, sessionId));
+
+    private async Task<int> GetDownloadCountAsync(string shareToken)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.FileGroups
+            .Where(g => g.ShareToken == shareToken)
+            .Select(g => g.DownloadCount)
+            .FirstAsync();
+    }
+
     #endregion
 
     #region 1. Validation Boundary Tests ([Theory] Data-Driven)
@@ -214,7 +270,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     [Fact]
-    public async Task DownloadFile_Returns401Unauthorized_WhenPasswordIsIncorrect()
+    public async Task OpenDownloadSession_Returns401Unauthorized_WhenPasswordIsIncorrect()
     {
         factory.SeedS3Object("uploads/protected_key.pdf", 1024);
 
@@ -233,23 +289,17 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
         var shareToken = await confirmResponse.Content.ReadFromJsonAsync<string>();
 
-        var unlockResponse = await _client.PostAsJsonAsync(
-            $"/api/v1/files/{shareToken}/unlock",
-            new DownloadRequestDto("CorrectPassword123!")
-        );
-        var metadata = await unlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
-        var fileId = metadata!.Files[0].Id;
-
-        var downloadResponse = await _client.PostAsJsonAsync(
-            $"/api/v1/files/{shareToken}/download/{fileId}",
+        var sessionResponse = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/downloads",
             new DownloadRequestDto("WrongPassword!")
         );
 
-        downloadResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        sessionResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await GetDownloadCountAsync(shareToken!)).Should().Be(0, "a rejected password must not consume a download");
     }
 
     [Fact]
-    public async Task DownloadFile_Returns200OKWithPresignedUrl_WhenPasswordIsCorrect()
+    public async Task DownloadFile_Returns200OKWithPresignedUrl_WhenSessionIsOpenedWithCorrectPassword()
     {
         factory.SeedS3Object("uploads/protected_key_2.pdf", 1024);
 
@@ -275,9 +325,11 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         var metadata = await unlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         var fileId = metadata!.Files[0].Id;
 
+        var sessionId = await OpenSessionIdAsync(shareToken!, "CorrectPassword123!");
+
         var downloadResponse = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/download/{fileId}",
-            new DownloadRequestDto("CorrectPassword123!")
+            new DownloadRequestDto(null, sessionId)
         );
 
         downloadResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -494,6 +546,113 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
     #endregion
     
+    #region 4b. Per-Bundle Download Session Tests
+
+    [Fact]
+    public async Task DownloadSession_FetchesEveryFileOfBundle_AndCountsAsOneDownload()
+    {
+        var (shareToken, fileIds) = await CreateBundleAsync(fileCount: 3, maxDownloads: 1);
+
+        var sessionResponse = await OpenSessionAsync(shareToken);
+        sessionResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var session = await sessionResponse.Content.ReadFromJsonAsync<DownloadSessionResponseDto>();
+        session!.RemainingDownloads.Should().Be(0);
+
+        foreach (var fileId in fileIds)
+        {
+            var linkResponse = await RequestFileLinkAsync(shareToken, fileId, session.DownloadSessionId);
+            linkResponse.StatusCode.Should().Be(HttpStatusCode.OK, "every file belongs to the same counted download");
+        }
+
+        (await GetDownloadCountAsync(shareToken)).Should().Be(1);
+
+        // The bundle is used up for everyone else
+        (await OpenSessionAsync(shareToken)).StatusCode.Should().Be(HttpStatusCode.Gone);
+        (await _client.GetAsync($"/api/v1/files/{shareToken}")).StatusCode.Should().Be(HttpStatusCode.Gone);
+    }
+
+    [Fact]
+    public async Task OpenDownloadSession_UnderConcurrentContention_AllowsExactlyMaxDownloads()
+    {
+        var (shareToken, _) = await CreateBundleAsync(fileCount: 2, maxDownloads: 2);
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => OpenSessionAsync(shareToken)));
+
+        responses.Count(r => r.StatusCode == HttpStatusCode.OK).Should().Be(2);
+        responses.Count(r => r.StatusCode == HttpStatusCode.Gone).Should().Be(10);
+        (await GetDownloadCountAsync(shareToken)).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task GenerateDownloadLink_Returns401_WhenSessionIsMissingUnknownOrFromAnotherBundle()
+    {
+        var (shareToken, fileIds) = await CreateBundleAsync(fileCount: 1, maxDownloads: 5);
+        var (otherShareToken, _) = await CreateBundleAsync(fileCount: 1, maxDownloads: 5);
+        var otherSessionId = await OpenSessionIdAsync(otherShareToken);
+
+        (await RequestFileLinkAsync(shareToken, fileIds[0], null)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await RequestFileLinkAsync(shareToken, fileIds[0], Guid.NewGuid())).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await RequestFileLinkAsync(shareToken, fileIds[0], otherSessionId)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        (await GetDownloadCountAsync(shareToken)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task GenerateDownloadLink_Returns401_WhenSessionHasExpired()
+    {
+        var (shareToken, fileIds) = await CreateBundleAsync(fileCount: 1, maxDownloads: 5);
+        var sessionId = await OpenSessionIdAsync(shareToken);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.DownloadSessions
+                .Where(s => s.Id == sessionId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.ExpiresAt, DateTime.UtcNow.AddMinutes(-1)));
+        }
+
+        (await RequestFileLinkAsync(shareToken, fileIds[0], sessionId)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task StreamBundleZip_WithExistingSession_DoesNotConsumeAnotherDownload()
+    {
+        var (shareToken, fileIds) = await CreateBundleAsync(fileCount: 2, maxDownloads: 1);
+        var sessionId = await OpenSessionIdAsync(shareToken);
+
+        (await RequestFileLinkAsync(shareToken, fileIds[0], sessionId)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var zipResponse = await _client.PostAsJsonAsync(
+            $"/api/v1/files/{shareToken}/download-all",
+            new DownloadRequestDto(null, sessionId));
+
+        zipResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var zipBytes = await zipResponse.Content.ReadAsByteArrayAsync();
+        using var ms = new MemoryStream(zipBytes);
+        await using var archive = new ZipArchive(ms, ZipArchiveMode.Read);
+        archive.Entries.Should().HaveCount(2);
+
+        (await GetDownloadCountAsync(shareToken)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task OpenDownloadSession_WithCorrectPassword_ConsumesExactlyOneDownload()
+    {
+        var (shareToken, _) = await CreateBundleAsync(fileCount: 1, maxDownloads: 3, password: "SessionPass123!");
+
+        (await OpenSessionAsync(shareToken, "WrongPass123!")).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await OpenSessionAsync(shareToken)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var response = await OpenSessionAsync(shareToken, "SessionPass123!");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var session = await response.Content.ReadFromJsonAsync<DownloadSessionResponseDto>();
+        session!.RemainingDownloads.Should().Be(2);
+
+        (await GetDownloadCountAsync(shareToken)).Should().Be(1);
+    }
+
+    #endregion
+
     #region 5. Expiration & Not Found Tests
 
     [Fact]

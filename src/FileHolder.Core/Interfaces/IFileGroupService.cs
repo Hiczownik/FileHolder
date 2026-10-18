@@ -8,5 +8,5 @@ public interface IFileGroupService
     Task<string> ConfirmAndPersistFileGroupAsync(ConfirmUploadRequestDto dto);
     Task<FileGroupMetadataResponseDto?> GetGroupMetadataByTokenAsync(string shareToken);
     Task<UnlockResult> UnlockGroupAsync(string shareToken, string password);
-    Task<DownloadResult> CreatePresignedDownloadUrlAsync(string shareToken, Guid fileId, string? password);
+    Task<DownloadUrlResult> CreatePresignedDownloadUrlAsync(string shareToken, Guid fileId, Guid? downloadSessionId);
 }
