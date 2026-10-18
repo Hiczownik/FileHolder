@@ -112,3 +112,9 @@ export interface FileGroupMetadataResponse {
 export interface DownloadUrlResponse {
     downloadUrl: string;
 }
+
+export interface DownloadSessionResponse {
+    downloadSessionId: string;
+    expiresAt: string;
+    remainingDownloads: number | null;
+}

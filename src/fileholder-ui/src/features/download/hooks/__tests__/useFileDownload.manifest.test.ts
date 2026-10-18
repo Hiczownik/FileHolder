@@ -2,6 +2,7 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useFileDownload } from '../useFileDownload';
 import { downloadApi } from '../../api/downloadApi';
+import { downloadSessionStore } from '../../services/downloadSessionStore';
 import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
 import { saveBlobAsFile } from '../../../../shared/utils/downloadUtils';
 import type { FileGroupMetadataResponse } from '../../types';
@@ -13,6 +14,8 @@ vi.mock('../../../../shared/utils/downloadUtils', () => ({
 
 const PASSWORD = 'VaultPass123!';
 const SHARE_TOKEN = 'e2ee_order_token';
+const SESSION_ID = 'e2ee_order_session';
+const SESSION_TTL_MS = 900_000;
 
 interface PlainFile {
     readonly manifestId: string;
@@ -59,6 +62,7 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         vi.mocked(saveBlobAsFile).mockClear();
+        downloadSessionStore.clear(SHARE_TOKEN);
     });
 
     it('decrypts each file with its own key when the server lists files in a different order than the manifest', async () => {
@@ -93,7 +97,12 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
 
         vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(locked);
         vi.spyOn(downloadApi, 'unlockGroup').mockResolvedValue(unlocked);
-        vi.spyOn(downloadApi, 'getDownloadUrl').mockImplementation(async (_token, fileId) => `storage://${fileId}`);
+        const openSessionSpy = vi.spyOn(downloadApi, 'openDownloadSession').mockResolvedValue({
+            downloadSessionId: SESSION_ID,
+            expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+            remainingDownloads: null,
+        });
+        const urlSpy = vi.spyOn(downloadApi, 'getDownloadUrl').mockImplementation(async (_token, fileId) => `storage://${fileId}`);
         vi.spyOn(downloadApi, 'downloadCiphertextBlob').mockImplementation(
             async (url) => bundle.ciphertexts.get(url.replace('storage://', ''))!
         );
@@ -120,9 +129,22 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
             await result.current.handleDownloadFile(FILE_B.serverId);
         });
 
+        await act(async () => {
+            await result.current.handleDownloadFile(FILE_A.serverId);
+        });
+
         expect(result.current.error).toBeNull();
-        const [savedBlob, savedName] = vi.mocked(saveBlobAsFile).mock.calls[0];
-        expect(savedName).toBe(FILE_B.fileName);
-        expect(await savedBlob.text()).toBe(FILE_B.content);
+        const saved = await Promise.all(
+            vi.mocked(saveBlobAsFile).mock.calls.map(async ([blob, name]) => [name, await blob.text()])
+        );
+        expect(saved).toEqual([
+            [FILE_B.fileName, FILE_B.content],
+            [FILE_A.fileName, FILE_A.content],
+        ]);
+
+        // Both files are fetched through the single download session opened by the first click
+        expect(openSessionSpy).toHaveBeenCalledTimes(1);
+        expect(urlSpy).toHaveBeenCalledWith(SHARE_TOKEN, FILE_B.serverId, SESSION_ID);
+        expect(urlSpy).toHaveBeenCalledWith(SHARE_TOKEN, FILE_A.serverId, SESSION_ID);
     });
 });

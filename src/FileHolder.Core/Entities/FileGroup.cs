@@ -28,18 +28,6 @@ public class FileGroup
     public long TotalSizeBytes => Files.Sum(f => f.SizeBytes);
 
     /// <summary>
-    /// Determines if there is remaining capacity based strictly on DownloadCount.
-    /// </summary>
-    public bool HasDownloadCapacity(DateTime utcNow)
-    {
-        if (IsDeleted) return false;
-        if (ExpiresAt.HasValue && ExpiresAt.Value <= utcNow) return false;
-        if (!MaxDownloads.HasValue) return true;
-
-        return DownloadCount < MaxDownloads.Value;
-    }
-
-    /// <summary>
     /// Closes the group to further access. Storage objects are removed separately by the purge worker,
     /// which tracks completion via <see cref="StoragePurgedAt"/>.
     /// </summary>

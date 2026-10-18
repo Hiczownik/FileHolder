@@ -1,3 +1,4 @@
+using FileHolder.Core.Configuration;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -15,9 +16,9 @@ public class StoragePurgeService(
     : IStoragePurgeService
 {
     /// <summary>
-    /// Must exceed the lifetime of presigned download URLs (5 minutes) so an in-flight download is never cut off.
+    /// Must outlast a download session plus the last presigned URL it issued, so an in-flight download is never cut off.
     /// </summary>
-    public static readonly TimeSpan DeletionGracePeriod = TimeSpan.FromMinutes(10);
+    public static readonly TimeSpan DeletionGracePeriod = DownloadTimings.StorageDeletionGracePeriod;
 
     private readonly AppDbContext _dbContext = dbContext;
     private readonly IS3StorageProvider _storageProvider = storageProvider;
@@ -41,7 +42,11 @@ public class StoragePurgeService(
             session.IsAborted = true;
         }
 
-        // Groups closed within the grace period may still have a live presigned download URL outstanding.
+        await _dbContext.DownloadSessions
+            .Where(s => s.ExpiresAt <= now - DownloadTimings.ExpiredSessionRetention)
+            .ExecuteDeleteAsync(ct);
+
+        // Groups closed within the grace period may still have an active download session or presigned URL.
         var graceCutoff = now - DeletionGracePeriod;
 
         var expiredGroups = await _dbContext.FileGroups

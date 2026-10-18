@@ -1,3 +1,4 @@
+using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
@@ -18,13 +19,20 @@ public class FileGroupService
     private readonly IS3StorageProvider _storageProvider;
     private readonly HybridCache _cache;
     private readonly IDateTimeProvider _dateTimeProvider;
+    private readonly IDownloadSessionService _downloadSessionService;
 
-    public FileGroupService(AppDbContext dbContext, IS3StorageProvider storageProvider, HybridCache cache, IDateTimeProvider dateTimeProvider)
+    public FileGroupService(
+        AppDbContext dbContext,
+        IS3StorageProvider storageProvider,
+        HybridCache cache,
+        IDateTimeProvider dateTimeProvider,
+        IDownloadSessionService downloadSessionService)
     {
         _dbContext = dbContext;
         _storageProvider = storageProvider;
         _cache = cache;
         _dateTimeProvider = dateTimeProvider;
+        _downloadSessionService = downloadSessionService;
     }
 
     private static (long PartSizeBytes, int TotalParts) CalculatePartSizing(long totalSizeBytes)
@@ -258,46 +266,32 @@ public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreateP
         return new UnlockResult(true, false, false, unlockedMetadata);
     }
 
-    public async Task<DownloadResult> CreatePresignedDownloadUrlAsync(string shareToken, Guid fileId, string? password)
+    public async Task<DownloadUrlResult> CreatePresignedDownloadUrlAsync(string shareToken, Guid fileId, Guid? downloadSessionId)
     {
-        var group = await _dbContext.FileGroups
-            .Include(g => g.Files)
-            .FirstOrDefaultAsync(g => g.ShareToken == shareToken && !g.IsDeleted);
-
-        if (group == null) return new DownloadResult(false, true, null);
-
-        if (!group.VerifyPassword(password))
+        // The download was already counted (and the password checked) when the session was opened.
+        if (!downloadSessionId.HasValue)
         {
-            return new DownloadResult(true, false, null);
+            return new DownloadUrlResult(DownloadUrlStatus.SessionInvalid, null);
         }
 
-        var now = _dateTimeProvider.UtcNow;
-        if (group.IsExpired(now) || !group.HasDownloadCapacity(now))
+        var session = await _downloadSessionService.GetActiveSessionAsync(shareToken, downloadSessionId.Value);
+        if (session == null)
         {
-            return new DownloadResult(false, true, null);
+            return new DownloadUrlResult(DownloadUrlStatus.SessionInvalid, null);
         }
 
-        var childFile = group.Files.FirstOrDefault(f => f.Id == fileId);
-        if (childFile == null) return new DownloadResult(false, false, null);
-
-        group.DownloadCount++;
-
-        // Storage objects are left for the purge worker: the presigned URL issued below must stay usable.
-        if (group.MaxDownloads.HasValue && group.DownloadCount >= group.MaxDownloads.Value)
+        var childFile = session.FileGroup.Files.FirstOrDefault(f => f.Id == fileId);
+        if (childFile == null)
         {
-            group.MarkDeleted(now);
+            return new DownloadUrlResult(DownloadUrlStatus.FileNotFound, null);
         }
-
-        await _dbContext.SaveChangesAsync();
-
-        await _cache.RemoveAsync($"file_group:{shareToken}");
 
         var downloadUrl = _storageProvider.GeneratePresignedDownloadUrl(
             childFile.StorageKey,
             childFile.OriginalFileName,
             childFile.ContentType,
-            _dateTimeProvider.UtcNow.AddMinutes(5));
+            _dateTimeProvider.UtcNow + DownloadTimings.PresignedUrlLifetime);
 
-        return new DownloadResult(false, false, downloadUrl);
+        return new DownloadUrlResult(DownloadUrlStatus.Success, downloadUrl);
     }
 }

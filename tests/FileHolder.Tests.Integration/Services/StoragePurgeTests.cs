@@ -1,4 +1,6 @@
 using Amazon.S3.Model;
+using FileHolder.Core.Configuration;
+using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
@@ -141,17 +143,23 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
     }
 
     [Fact]
-    public async Task PurgeExpiredFilesAsync_WhenQuotaExhaustedViaSingleFileDownload_WaitsForGracePeriodBeforeDeleting()
+    public async Task PurgeExpiredFilesAsync_WhenQuotaExhaustedByDownloadSession_WaitsForGracePeriodBeforeDeleting()
     {
         var storageKey = "uploads/grace_" + Guid.NewGuid().ToString("N") + ".pdf";
         var group = await SeedGroupAsync("grace_", storageKey, maxDownloads: 1);
 
-        // Exhaust the quota through the real single-file download path
+        // Consume the last download through the real session + single-file download path
+        Guid sessionId;
         using (var scope = factory.Services.CreateScope())
         {
+            var sessionService = scope.ServiceProvider.GetRequiredService<IDownloadSessionService>();
+            var opened = await sessionService.OpenSessionAsync(group.ShareToken, null);
+            opened.Status.Should().Be(OpenDownloadSessionStatus.Success);
+            sessionId = opened.Session!.DownloadSessionId;
+
             var fileGroupService = scope.ServiceProvider.GetRequiredService<IFileGroupService>();
-            var result = await fileGroupService.CreatePresignedDownloadUrlAsync(group.ShareToken, group.Files.First().Id, null);
-            result.DownloadUrl.Should().NotBeNull();
+            var result = await fileGroupService.CreatePresignedDownloadUrlAsync(group.ShareToken, group.Files.First().Id, sessionId);
+            result.Status.Should().Be(DownloadUrlStatus.Success);
         }
 
         factory.MockS3Client.ClearReceivedCalls();
@@ -160,11 +168,59 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
         var record = await LoadGroupAsync(group.Id);
         record.IsDeleted.Should().BeTrue();
         record.DeletedAt.Should().NotBeNull();
-        record.StoragePurgedAt.Should().BeNull("the presigned URL just issued must remain usable");
+        record.StoragePurgedAt.Should().BeNull("the active session and the presigned URL it issued must remain usable");
 
         await factory.MockS3Client.DidNotReceive().DeleteObjectsAsync(
             Arg.Is<DeleteObjectsRequest>(req => req != null && req.Objects.Any(o => o.Key == storageKey)),
             Arg.Any<CancellationToken>());
+
+        // The last download's session keeps working even though the group is now closed to new downloads
+        using (var scope = factory.Services.CreateScope())
+        {
+            var fileGroupService = scope.ServiceProvider.GetRequiredService<IFileGroupService>();
+            var result = await fileGroupService.CreatePresignedDownloadUrlAsync(group.ShareToken, group.Files.First().Id, sessionId);
+            result.Status.Should().Be(DownloadUrlStatus.Success);
+        }
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_RemovesDownloadSessionsPastRetention_AndKeepsRecentOnes()
+    {
+        var group = await SeedGroupAsync("sess_", "uploads/sess_" + Guid.NewGuid().ToString("N") + ".pdf", maxDownloads: 10);
+        var now = DateTime.UtcNow;
+
+        var staleSession = new DownloadSession
+        {
+            FileGroupId = group.Id,
+            CreatedAt = now - DownloadTimings.ExpiredSessionRetention - TimeSpan.FromHours(1),
+            ExpiresAt = now - DownloadTimings.ExpiredSessionRetention - TimeSpan.FromMinutes(1)
+        };
+        var recentSession = new DownloadSession
+        {
+            FileGroupId = group.Id,
+            CreatedAt = now - TimeSpan.FromHours(1),
+            ExpiresAt = now - TimeSpan.FromMinutes(30)
+        };
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.DownloadSessions.AddRange(staleSession, recentSession);
+            await dbContext.SaveChangesAsync();
+        }
+
+        await RunPurgeAsync();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var remainingIds = await dbContext.DownloadSessions
+                .Where(s => s.FileGroupId == group.Id)
+                .Select(s => s.Id)
+                .ToListAsync();
+
+            remainingIds.Should().BeEquivalentTo([recentSession.Id]);
+        }
     }
 
     [Fact]
