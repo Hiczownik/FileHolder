@@ -116,9 +116,16 @@ public static class FileEndpoints
     public static async Task<Results<Ok<FileGroupMetadataResponseDto>, NotFound, ProblemHttpResult>> UnlockGroup(
         string shareToken,
         DownloadRequestDto dto,
-        IFileGroupService fileGroupService)
+        HttpContext context,
+        IFileGroupService fileGroupService,
+        IDateTimeProvider dateTimeProvider)
     {
         var result = await fileGroupService.UnlockGroupAsync(shareToken, dto.Password ?? string.Empty);
+
+        if (result.IsLockedOut)
+        {
+            return LockedOutProblem(context, result.LockedUntil, dateTimeProvider);
+        }
 
         if (result.IsPasswordInvalid)
         {
@@ -147,7 +154,9 @@ public static class FileEndpoints
     public static async Task<Results<Ok<DownloadSessionResponseDto>, NotFound, ProblemHttpResult>> OpenDownloadSession(
         string shareToken,
         [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DownloadRequestDto? dto,
+        HttpContext context,
         IDownloadSessionService downloadSessionService,
+        IDateTimeProvider dateTimeProvider,
         CancellationToken ct)
     {
         var result = await downloadSessionService.OpenSessionAsync(shareToken, dto?.Password, ct);
@@ -163,6 +172,7 @@ public static class FileEndpoints
                 detail: "This shared file bundle has expired or reached its download limit.",
                 statusCode: StatusCodes.Status410Gone,
                 title: "Link Expired"),
+            OpenDownloadSessionStatus.LockedOut => LockedOutProblem(context, result.LockedUntil, dateTimeProvider),
             _ => TypedResults.NotFound()
         };
     }
@@ -190,7 +200,8 @@ public static class FileEndpoints
             string shareToken,
             DownloadRequestDto dto,
             HttpContext context,
-            IBundleStreamService bundleStreamService)
+            IBundleStreamService bundleStreamService,
+            IDateTimeProvider dateTimeProvider)
     {
         var result = await bundleStreamService.StreamBundleZipAsync(
             shareToken,
@@ -224,9 +235,24 @@ public static class FileEndpoints
                 title: "Link Expired"),
             StreamZipStatus.SessionInvalid => SessionInvalidProblem(),
             StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
+            StreamZipStatus.LockedOut => LockedOutProblem(context, result.LockedUntil, dateTimeProvider),
             StreamZipStatus.Success => TypedResults.Empty,
             _ => TypedResults.Empty
         };
+    }
+
+    private static ProblemHttpResult LockedOutProblem(HttpContext context, DateTime? lockedUntil, IDateTimeProvider dateTimeProvider)
+    {
+        var remaining = (lockedUntil ?? dateTimeProvider.UtcNow) - dateTimeProvider.UtcNow;
+        var retryAfterSeconds = Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds));
+        var minutes = (int)Math.Ceiling(retryAfterSeconds / 60.0);
+
+        context.Response.Headers.RetryAfter = retryAfterSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        return TypedResults.Problem(
+            detail: $"Too many incorrect passwords. Try again in {minutes} minute{(minutes == 1 ? "" : "s")}.",
+            statusCode: StatusCodes.Status429TooManyRequests,
+            title: "Too Many Attempts");
     }
 
     private static ProblemHttpResult SessionInvalidProblem() => TypedResults.Problem(

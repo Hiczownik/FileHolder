@@ -21,20 +21,25 @@ public class FileGroupService
     private readonly HybridCache _cache;
     private readonly IDateTimeProvider _dateTimeProvider;
     private readonly IDownloadSessionService _downloadSessionService;
+    private readonly IPasswordAttemptGuard _passwordGuard;
 
     public FileGroupService(
         AppDbContext dbContext,
         IS3StorageProvider storageProvider,
         HybridCache cache,
         IDateTimeProvider dateTimeProvider,
-        IDownloadSessionService downloadSessionService)
+        IDownloadSessionService downloadSessionService,
+        IPasswordAttemptGuard passwordGuard)
     {
         _dbContext = dbContext;
         _storageProvider = storageProvider;
         _cache = cache;
         _dateTimeProvider = dateTimeProvider;
         _downloadSessionService = downloadSessionService;
+        _passwordGuard = passwordGuard;
     }
+
+    private static bool IsMultipart(long sizeBytes) => sizeBytes > MultipartThreshold;
 
     private static (long PartSizeBytes, int TotalParts) CalculatePartSizing(long totalSizeBytes)
     {
@@ -70,7 +75,7 @@ public class FileGroupService
                 ExpiresAt = pendingExpiresAt
             });
 
-            if (file.SizeBytes > MultipartThreshold)
+            if (IsMultipart(file.SizeBytes))
             {
                 var (partSizeBytes, totalParts) = CalculatePartSizing(file.SizeBytes);
 
@@ -106,7 +111,7 @@ public class FileGroupService
             {
                 var presignedUrl = _storageProvider.GeneratePresignedUploadUrl(
                     storageKey,
-                    now.AddMinutes(15));
+                    now + UploadTimings.SinglePutUrlLifetime);
 
                 items.Add(new PresignedItemDto(file.FileName, storageKey, UploadMode.Single, presignedUrl, null, null, null));
             }
@@ -184,35 +189,89 @@ public class FileGroupService
             KeySalt = dto.KeySalt
         };
 
-        foreach (var item in dto.Files)
+        // A single-file PUT URL stays valid after confirm, so the uploader could overwrite the checked object.
+        // Those files are served from a copy under a key no URL was issued for, and its size is checked on
+        // the copy. Multipart files need no copy: completing the upload consumed its upload ID, so its part
+        // URLs can no longer write. Each confirm copies to fresh keys, so a racing confirm that loses and
+        // cleans up its copies never touches the winner's.
+        var copiedKeys = new List<string>();
+
+        try
         {
-            var pending = pendingByKey[item.StorageKey];
-            fileGroup.Files.Add(new SharedFile
+            foreach (var item in dto.Files)
             {
-                OriginalFileName = pending.FileName,
-                StorageKey = pending.StorageKey,
-                ContentType = pending.ContentType,
-                SizeBytes = pending.SizeBytes
-            });
+                var pending = pendingByKey[item.StorageKey];
+                var servedKey = pending.StorageKey;
+
+                if (!IsMultipart(pending.SizeBytes))
+                {
+                    servedKey = $"files/{Guid.NewGuid():N}";
+                    await _storageProvider.CopyObjectAsync(pending.StorageKey, servedKey);
+                    copiedKeys.Add(servedKey);
+
+                    var copiedSize = await _storageProvider.GetObjectSizeAsync(servedKey);
+                    if (copiedSize != pending.SizeBytes)
+                    {
+                        throw new InvalidRequestException($"File size mismatch for {item.FileName}");
+                    }
+                }
+
+                fileGroup.Files.Add(new SharedFile
+                {
+                    OriginalFileName = pending.FileName,
+                    StorageKey = servedKey,
+                    ContentType = pending.ContentType,
+                    SizeBytes = pending.SizeBytes
+                });
+            }
+
+            await using var tx = await _dbContext.Database.BeginTransactionAsync();
+
+            // Claiming the rows makes the token single-use: the DELETE locks them, so a concurrent confirm
+            // waits, then deletes nothing and is rejected instead of creating a second bundle.
+            int claimed = await _dbContext.PendingUploads
+                .Where(p => p.UploadToken == dto.UploadToken && p.ExpiresAt > now)
+                .ExecuteDeleteAsync();
+
+            if (claimed != pendingUploads.Count)
+            {
+                await tx.RollbackAsync();
+                throw new InvalidRequestException("This upload was already confirmed.");
+            }
+
+            // The copied originals are left to the abandoned-upload purge, which deletes them once their PUT
+            // URL has expired (see UploadTimings.SinglePutUrlLifetime). Deleting them now would let the uploader
+            // put a fresh object there that nothing tracks. The new token was never handed out, so no confirm
+            // can claim these rows.
+            var purgeToken = Guid.NewGuid().ToString("N");
+            foreach (var pending in pendingUploads.Where(p => !IsMultipart(p.SizeBytes)))
+            {
+                _dbContext.PendingUploads.Add(new PendingUpload
+                {
+                    UploadToken = purgeToken,
+                    StorageKey = pending.StorageKey,
+                    FileName = pending.FileName,
+                    ContentType = pending.ContentType,
+                    SizeBytes = pending.SizeBytes,
+                    IsEncrypted = pending.IsEncrypted,
+                    CreatedAt = now,
+                    ExpiresAt = now
+                });
+            }
+
+            _dbContext.FileGroups.Add(fileGroup);
+            await _dbContext.SaveChangesAsync();
+            await tx.CommitAsync();
         }
-
-        await using var tx = await _dbContext.Database.BeginTransactionAsync();
-
-        // Claiming the rows makes the token single-use: the DELETE locks them, so a concurrent confirm
-        // waits, then deletes nothing and is rejected instead of creating a second bundle.
-        int claimed = await _dbContext.PendingUploads
-            .Where(p => p.UploadToken == dto.UploadToken && p.ExpiresAt > now)
-            .ExecuteDeleteAsync();
-
-        if (claimed != pendingUploads.Count)
+        catch
         {
-            await tx.RollbackAsync();
-            throw new InvalidRequestException("This upload was already confirmed.");
-        }
+            if (copiedKeys.Count > 0)
+            {
+                await _storageProvider.DeleteObjectsAsync(copiedKeys, CancellationToken.None);
+            }
 
-        _dbContext.FileGroups.Add(fileGroup);
-        await _dbContext.SaveChangesAsync();
-        await tx.CommitAsync();
+            throw;
+        }
 
         await _cache.SetAsync($"file_group:{shareToken}", fileGroup);
 
@@ -301,7 +360,13 @@ public class FileGroupService
             return new UnlockResult(false, false, true, null);
         }
 
-        if (!group.VerifyPassword(password))
+        var passwordCheck = await _passwordGuard.CheckAsync(group, password);
+        if (passwordCheck.Outcome == PasswordCheckOutcome.LockedOut)
+        {
+            return new UnlockResult(false, false, false, null, IsLockedOut: true, LockedUntil: passwordCheck.LockedUntil);
+        }
+
+        if (passwordCheck.Outcome == PasswordCheckOutcome.Incorrect)
         {
             return new UnlockResult(false, true, false, null);
         }

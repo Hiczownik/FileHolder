@@ -38,6 +38,14 @@ public class FileGroupConfiguration : IEntityTypeConfiguration<FileGroup>
             .HasMaxLength(64)
             .IsRequired(false);
 
+        builder.Property(g => g.FailedPasswordAttempts)
+            .IsRequired()
+            .HasDefaultValue(0);
+
+        builder.Property(g => g.PasswordLockedUntil)
+            .HasColumnType("timestamp with time zone")
+            .IsRequired(false);
+
         builder.HasIndex(g => g.ShareToken)
             .IsUnique()
             .HasFilter("\"IsDeleted\" = FALSE");

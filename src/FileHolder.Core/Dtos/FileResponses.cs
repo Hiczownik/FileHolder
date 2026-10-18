@@ -63,7 +63,9 @@ public record UnlockResult(
     bool IsSuccess,
     bool IsPasswordInvalid,
     bool IsExpired,
-    FileGroupMetadataResponseDto? Metadata
+    FileGroupMetadataResponseDto? Metadata,
+    bool IsLockedOut = false,
+    DateTime? LockedUntil = null
 );
 
 public record DownloadUrlResponseDto(
@@ -81,12 +83,14 @@ public enum OpenDownloadSessionStatus
     Success,
     NotFound,
     InvalidPassword,
-    Expired
+    Expired,
+    LockedOut
 }
 
 public record OpenDownloadSessionResult(
     OpenDownloadSessionStatus Status,
-    DownloadSessionResponseDto? Session
+    DownloadSessionResponseDto? Session,
+    DateTime? LockedUntil = null
 );
 
 public enum DownloadUrlStatus
@@ -108,10 +112,12 @@ public enum StreamZipStatus
     InvalidPassword,
     Expired,
     SessionInvalid,
-    EmptyBundle
+    EmptyBundle,
+    LockedOut
 }
 
 public record StreamZipResult(
     StreamZipStatus Status,
-    string? BundleTitle
+    string? BundleTitle,
+    DateTime? LockedUntil = null
 );

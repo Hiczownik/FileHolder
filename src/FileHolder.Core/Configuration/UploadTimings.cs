@@ -16,4 +16,12 @@ public static class UploadTimings
     /// their objects, so a confirm that passed the expiry check can never race the purge.
     /// </summary>
     public static readonly TimeSpan PendingUploadPurgeGrace = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Validity of a single-file presigned PUT URL. Confirm serves a copy of such a file and leaves the
+    /// uploaded original to the purge, which deletes it <see cref="PendingUploadPurgeGrace"/> after confirm.
+    /// This must stay shorter than that grace, or the uploader could re-upload the original after the
+    /// purge and leave an object nothing tracks.
+    /// </summary>
+    public static readonly TimeSpan SinglePutUrlLifetime = TimeSpan.FromMinutes(15);
 }

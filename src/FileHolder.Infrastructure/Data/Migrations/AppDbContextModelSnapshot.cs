@@ -67,6 +67,11 @@ namespace FileHolder.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int>("FailedPasswordAttempts")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
@@ -88,6 +93,9 @@ namespace FileHolder.Infrastructure.Data.Migrations
                     b.Property<string>("PasswordHash")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime?>("PasswordLockedUntil")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ShareToken")
                         .IsRequired()

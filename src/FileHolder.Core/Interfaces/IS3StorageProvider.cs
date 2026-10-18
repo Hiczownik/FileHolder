@@ -11,6 +11,10 @@ public interface IS3StorageProvider
     Task AbortMultipartUploadAsync(string storageKey, string uploadId, CancellationToken ct = default);
 
     Task<long?> GetObjectSizeAsync(string storageKey, CancellationToken ct = default);
+    /// <summary>
+    /// Copies an object within the bucket, server side.
+    /// </summary>
+    Task CopyObjectAsync(string sourceKey, string destinationKey, CancellationToken ct = default);
     Task<Stream> OpenReadStreamAsync(string storageKey, CancellationToken ct = default);
     /// <summary>
     /// Deletes the given objects and returns the keys that could not be deleted.

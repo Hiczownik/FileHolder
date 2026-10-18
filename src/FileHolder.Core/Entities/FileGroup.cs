@@ -20,6 +20,13 @@ public class FileGroup
     public string? KeyEnvelope { get; set; }
     public string? KeySalt { get; set; }
 
+    /// <summary>
+    /// Wrong passwords since the last correct one. Past a few free attempts, each further one
+    /// sets <see cref="PasswordLockedUntil"/>, during which every password is refused.
+    /// </summary>
+    public int FailedPasswordAttempts { get; set; }
+    public DateTime? PasswordLockedUntil { get; set; }
+
     public ICollection<SharedFile> Files { get; set; } = new List<SharedFile>();
 
     /// <summary>
