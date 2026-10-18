@@ -34,15 +34,18 @@
 
 ## ⚡ Quick Start (Single-Command Docker Launch)
 
-Ensure [Docker Desktop](https://www.docker.com/products/docker-desktop/) is running, then run:
+Ensure [Docker Desktop](https://www.docker.com/products/docker-desktop/) is running, then set a Grafana admin password
+(compose refuses to start without one) in a `.env` file next to `docker-compose.yml`, which git ignores:
 
 ```bash
+echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 16)" > .env
 docker compose up --build
 ```
 
 ### Application Endpoints:
 * **React Web App**: [http://localhost:3000](http://localhost:3000)
-* **Scalar API Docs**: [http://localhost:8080/scalar/v1](http://localhost:8080/scalar/v1)
+* **Scalar API Docs**: only when the API runs in Development (e.g. from Rider / `dotnet run`), at [http://localhost:8080/scalar/v1](http://localhost:8080/scalar/v1). The compose stack runs the API in Production.
+* **Grafana**: [http://localhost:3001](http://localhost:3001) *(Login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*
 * **MinIO Object Console**: [http://localhost:9001](http://localhost:9001) *(Login: `minioadmin` / `minioadmin`)*
 * **API Health Check**: [http://localhost:8080/healthz](http://localhost:8080/healthz)
 

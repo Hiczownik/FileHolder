@@ -6,12 +6,15 @@ public static partial class FileSecurityUtils
 {
     private static readonly HashSet<string> ForbiddenExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".exe", ".bat", ".sh", ".cmd", ".dll", ".ps1", ".vbs", ".js", ".scr", ".pif", ".application", ".msi", ".com"
+        ".exe", ".bat", ".sh", ".cmd", ".dll", ".ps1", ".vbs", ".js", ".scr", ".pif", ".application", ".msi", ".com",
+        ".hta", ".jar", ".lnk", ".msc", ".vbe", ".wsf", ".cpl", ".reg", ".iso"
     };
 
     public static bool IsExtensionForbidden(string fileName)
     {
-        var ext = Path.GetExtension(fileName);
+        // Check the name as it will be stored: sanitizing drops characters from the extension,
+        // so "evil.exe " or "evil.e x e" would otherwise pass here and still be saved as "evil.exe".
+        var ext = Path.GetExtension(SanitizeFileName(fileName));
         return !string.IsNullOrWhiteSpace(ext) && ForbiddenExtensions.Contains(ext);
     }
 
