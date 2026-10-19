@@ -1,11 +1,13 @@
 ﻿using FileHolder.Core.Dtos;
+using FileHolder.Core.Configuration;
 using FluentValidation;
+using Microsoft.Extensions.Options;
 
 namespace FileHolder.Api.Validation;
 
 public class CreatePresignedUrlValidator : AbstractValidator<CreatePresignedUrlRequestDto>
 {
-    public CreatePresignedUrlValidator()
+    public CreatePresignedUrlValidator(IOptions<UploadLimitsOptions> uploadLimits)
     {
         RuleFor(x => x.Title).MustBeValidTitle();
 
@@ -14,9 +16,12 @@ public class CreatePresignedUrlValidator : AbstractValidator<CreatePresignedUrlR
             .Must(files => files is { Count: >= 1 and <= BundleRules.MaxFilesPerBundle })
             .WithMessage("You can upload between 1 and 50 files per share bundle");
 
-        RuleFor(x => x.Files)
-            .Must(files => files == null || files.Sum(f => f.SizeBytes) <= BundleRules.MaxBundleSizeBytes)
-            .WithMessage("Total aggregate batch file size cannot exceed 5 TB.");
+        var limits = uploadLimits.Value;
+
+        RuleFor(x => x.Files).MustFitBundleSizeLimit(f => f.SizeBytes, limits);
+
+        When(x => x.IsEncrypted, () =>
+            RuleForEach(x => x.Files).ChildRules(file => file.RuleFor(f => f.SizeBytes).MustFitEncryptedFileLimit(limits)));
 
         RuleForEach(x => x.Files).ChildRules(file =>
         {

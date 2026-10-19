@@ -100,3 +100,15 @@ describe('BundleDecryptionService.mapManifestToServerFiles', () => {
         expect(service.getManifestIdForServerFile('srv-a')).toBe('srv-a');
     });
 });
+
+describe('BundleDecryptionService kAuth', () => {
+    it('keeps the kAuth of each bundle to itself', () => {
+        const service = new BundleDecryptionService();
+        sessionStorage.removeItem('kauth_bundle_b');
+
+        service.setKAuth('bundle_a', 'kauth-for-a');
+
+        expect(service.getKAuth('bundle_a')).toBe('kauth-for-a');
+        expect(service.getKAuth('bundle_b')).toBeNull();
+    });
+});

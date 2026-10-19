@@ -147,4 +147,36 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
         expect(urlSpy).toHaveBeenCalledWith(SHARE_TOKEN, FILE_B.serverId, SESSION_ID);
         expect(urlSpy).toHaveBeenCalledWith(SHARE_TOKEN, FILE_A.serverId, SESSION_ID);
     });
+
+    it('never sends the passkey itself when the bundle has no derived kAuth', async () => {
+        // A different bundle than the other tests, never unlocked in this tab, so it has no kAuth anywhere.
+        const neverUnlockedToken = 'e2ee_never_unlocked_token';
+        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue({
+            shareToken: neverUnlockedToken,
+            title: 'Encrypted Drop',
+            totalSizeBytes: 0,
+            fileCount: 1,
+            requiresPassword: true,
+            isUnlocked: true,
+            isEncrypted: true,
+            isExpired: false,
+            files: [{ id: FILE_A.serverId, fileName: FILE_A.fileName, sizeBytes: 1, contentType: 'text/plain' }],
+        });
+        const openSessionSpy = vi.spyOn(downloadApi, 'openDownloadSession');
+
+        const { result } = renderHook(() => useFileDownload(neverUnlockedToken));
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false);
+        });
+        act(() => {
+            result.current.setPassword(PASSWORD);
+        });
+
+        await act(async () => {
+            await result.current.handleDownloadFile(FILE_A.serverId);
+        });
+
+        expect(openSessionSpy).not.toHaveBeenCalled();
+        expect(result.current.error).toContain('unlocked again');
+    });
 });

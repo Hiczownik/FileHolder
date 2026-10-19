@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FileGroupMetadataResponse } from "../types";
 import { downloadApi } from "../api/downloadApi";
 import { bundleDecryptionService } from "../services/bundleDecryptionService";
@@ -10,6 +10,10 @@ import JSZip from "jszip";
 
 const HTTP_UNAUTHORIZED = 401;
 const ZIP_COMPRESSION_LEVEL = 6;
+// The server-side ZIP is a page navigation, which can't be retried on a 401 like an API call. A stored
+// session is only reused for it with at least this long left; otherwise a fresh one is opened.
+const ZIP_SESSION_MIN_REMAINING_MS = 60_000;
+const UNLOCK_AGAIN_MESSAGE = 'This encrypted bundle needs to be unlocked again before downloading. Please reload the page and enter the passkey.';
 
 export const useFileDownload = (shareToken?: string) => {
     const [metadata, setMetadata] = useState<FileGroupMetadataResponse | null>(null);
@@ -19,8 +23,6 @@ export const useFileDownload = (shareToken?: string) => {
     const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
     const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
-
-    const cachedKAuthRef = useRef<string | null>(null);
 
     useEffect(() => {
         if (!shareToken) return;
@@ -65,7 +67,6 @@ export const useFileDownload = (shareToken?: string) => {
                 }
 
                 const { kAuth, kWrap } = await bundleDecryptionService.deriveKAuth(password, metadata.keySalt, shareToken);
-                cachedKAuthRef.current = kAuth;
 
                 const unlockedRaw = await downloadApi.unlockGroup(shareToken, kAuth);
 
@@ -96,11 +97,27 @@ export const useFileDownload = (shareToken?: string) => {
         }
     };
 
+    /**
+     * For an encrypted bundle the server only ever gets kAuth, derived for this bundle at unlock. Never the
+     * passkey itself: that would hand the server what it needs to decrypt the files.
+     */
     const getAuthCredential = (token: string, isEncrypted: boolean): string | undefined => {
-        const credential = isEncrypted
-            ? bundleDecryptionService.getKAuth(token) || cachedKAuthRef.current || password
-            : password;
-        return credential || undefined;
+        if (!isEncrypted) {
+            return password || undefined;
+        }
+
+        const kAuth = bundleDecryptionService.getKAuth(token);
+        if (!kAuth) {
+            throw new Error(UNLOCK_AGAIN_MESSAGE);
+        }
+        return kAuth;
+    };
+
+    const openSession = async (token: string, isEncrypted: boolean): Promise<string> => {
+        const session = await downloadApi.openDownloadSession(token, getAuthCredential(token, isEncrypted));
+        downloadSessionStore.save(token, session);
+        setMetadata((prev) => prev ? { ...prev, remainingDownloads: session.remainingDownloads ?? undefined } : prev);
+        return session.downloadSessionId;
     };
 
     /**
@@ -114,16 +131,9 @@ export const useFileDownload = (shareToken?: string) => {
         isEncrypted: boolean,
         action: (downloadSessionId: string) => Promise<T>
     ): Promise<T> => {
-        const openSession = async (): Promise<string> => {
-            const session = await downloadApi.openDownloadSession(token, getAuthCredential(token, isEncrypted));
-            downloadSessionStore.save(token, session);
-            setMetadata((prev) => prev ? { ...prev, remainingDownloads: session.remainingDownloads ?? undefined } : prev);
-            return session.downloadSessionId;
-        };
-
         const stored = downloadSessionStore.get(token);
         if (!stored) {
-            return action(await openSession());
+            return action(await openSession(token, isEncrypted));
         }
 
         try {
@@ -133,7 +143,7 @@ export const useFileDownload = (shareToken?: string) => {
                 throw err;
             }
             downloadSessionStore.clear(token);
-            return action(await openSession());
+            return action(await openSession(token, isEncrypted));
         }
     };
 
@@ -204,8 +214,9 @@ export const useFileDownload = (shareToken?: string) => {
                 return;
             }
 
-            await withDownloadSession(shareToken, false,
-                (sessionId) => downloadApi.downloadAllZip(shareToken, sessionId, metadata.title));
+            const stored = downloadSessionStore.get(shareToken, new Date(Date.now() + ZIP_SESSION_MIN_REMAINING_MS));
+            const sessionId = stored?.id ?? await openSession(shareToken, false);
+            downloadApi.downloadAllZip(shareToken, sessionId);
         } catch (err: unknown) {
             setError(parseApiError(err));
         } finally {

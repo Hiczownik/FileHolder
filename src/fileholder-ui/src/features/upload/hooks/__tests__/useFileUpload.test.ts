@@ -2,6 +2,7 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useFileUpload } from '../useFileUpload';
 import { uploadApi } from '../../api/uploadApi';
+import { E2EE_MAX_SINGLE_FILE_BYTES, STANDARD_MAX_TOTAL_BYTES } from '../../types';
 
 describe('useFileUpload Hook (Vertical Slice)', () => {
   beforeEach(() => {
@@ -161,6 +162,33 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     expect(result.current.uploadState.status).toBe('error');
     if (result.current.uploadState.status === 'error') {
       expect(result.current.uploadState.message).toContain('setup.exe');
+    }
+  });
+
+  // Only the reported size matters to the limit checks, so no real content is allocated.
+  const createSizedFile = (name: string, size: number): File => {
+    const file = new File(['x'], name);
+    Object.defineProperty(file, 'size', { value: size });
+    return file;
+  };
+
+  it.each([
+    { label: 'a plain bundle over the 5 GB total', isEncrypted: false, sizes: [STANDARD_MAX_TOTAL_BYTES, 1], expected: 'cannot be larger than 5 GB in total' },
+    { label: 'an encrypted file over 1 GB', isEncrypted: true, sizes: [E2EE_MAX_SINGLE_FILE_BYTES + 1], expected: 'Encrypted files cannot be larger than 1 GB' },
+  ])('refuses $label before calling the server', async ({ isEncrypted, sizes, expected }) => {
+    const presignSpy = vi.spyOn(uploadApi, 'getPresignedUrl');
+    const formValues = { title: 'Too Big', expireInHours: 24, maxDownloads: 5, isEncrypted, password: 'VaultPassword123!' } as const;
+
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.upload(formValues, sizes.map((size, i) => createSizedFile(`file${i}.bin`, size)));
+    });
+
+    expect(presignSpy).not.toHaveBeenCalled();
+    expect(result.current.uploadState.status).toBe('error');
+    if (result.current.uploadState.status === 'error') {
+      expect(result.current.uploadState.message).toContain(expected);
     }
   });
 

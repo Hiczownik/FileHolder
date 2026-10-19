@@ -8,11 +8,12 @@ const BLOCKED_FILES_MESSAGE = 'This encrypted bundle contains executable files o
 
 export class BundleDecryptionService {
     private cachedMasterKey: CryptoKey | null = null;
-    private cachedKAuth: string | null = null;
+    // Per share token: a kAuth sent to the wrong bundle is just a wrong guess that counts toward its lockout.
+    private readonly kAuthByShareToken = new Map<string, string>();
     private serverFileToManifestIdMap = new Map<string, string>();
 
     public setKAuth(shareToken: string, kAuth: string): void {
-        this.cachedKAuth = kAuth;
+        this.kAuthByShareToken.set(shareToken, kAuth);
         try {
             sessionStorage.setItem(`kauth_${shareToken}`, kAuth);
         } catch {
@@ -20,18 +21,18 @@ export class BundleDecryptionService {
         }
     }
 
-    public getKAuth(shareToken?: string): string | null {
-        if (this.cachedKAuth) return this.cachedKAuth;
-        if (shareToken) {
-            try {
-                const stored = sessionStorage.getItem(`kauth_${shareToken}`);
-                if (stored) {
-                    this.cachedKAuth = stored;
-                    return stored;
-                }
-            } catch {
-                // Ignore
+    public getKAuth(shareToken: string): string | null {
+        const cached = this.kAuthByShareToken.get(shareToken);
+        if (cached) return cached;
+
+        try {
+            const stored = sessionStorage.getItem(`kauth_${shareToken}`);
+            if (stored) {
+                this.kAuthByShareToken.set(shareToken, stored);
+                return stored;
             }
+        } catch {
+            // Ignore
         }
         return null;
     }
@@ -91,14 +92,10 @@ export class BundleDecryptionService {
         return mappedFiles;
     }
 
-    public async deriveKAuth(password: string, saltBase64Url: string, shareToken?: string): Promise<{ kAuth: string; kWrap: CryptoKey }> {
+    public async deriveKAuth(password: string, saltBase64Url: string, shareToken: string): Promise<{ kAuth: string; kWrap: CryptoKey }> {
         const salt = base64Url.decode(saltBase64Url);
         const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
-        if (shareToken) {
-            this.setKAuth(shareToken, kAuth);
-        } else {
-            this.cachedKAuth = kAuth;
-        }
+        this.setKAuth(shareToken, kAuth);
         return { kAuth, kWrap };
     }
 

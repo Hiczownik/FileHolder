@@ -111,6 +111,7 @@ public class FileGroupService
             {
                 var presignedUrl = _storageProvider.GeneratePresignedUploadUrl(
                     storageKey,
+                    file.SizeBytes,
                     now + UploadTimings.SinglePutUrlLifetime);
 
                 items.Add(new PresignedItemDto(file.FileName, storageKey, UploadMode.Single, presignedUrl, null, null, null));

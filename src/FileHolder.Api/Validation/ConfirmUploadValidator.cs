@@ -1,5 +1,7 @@
 ﻿using FileHolder.Core.Dtos;
+using FileHolder.Core.Configuration;
 using FluentValidation;
+using Microsoft.Extensions.Options;
 
 namespace FileHolder.Api.Validation;
 
@@ -13,7 +15,7 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
     public const int MaxKeyEnvelopeLength = 128;
     public const int MaxEncryptedManifestLength = 256 * 1024;
 
-    public ConfirmUploadValidator()
+    public ConfirmUploadValidator(IOptions<UploadLimitsOptions> uploadLimits)
     {
         RuleFor(x => x.UploadToken)
             .NotEmpty().WithMessage("Upload token is required.");
@@ -25,9 +27,12 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
             .Must(files => files is { Count: >= 1 and <= BundleRules.MaxFilesPerBundle })
             .WithMessage("You can upload between 1 and 50 files per share bundle");
 
-        RuleFor(x => x.Files)
-            .Must(files => files == null || files.Sum(f => f.SizeBytes) <= BundleRules.MaxBundleSizeBytes)
-            .WithMessage("Total aggregate batch file size cannot exceed 5 TB.");
+        var limits = uploadLimits.Value;
+
+        RuleFor(x => x.Files).MustFitBundleSizeLimit(f => f.SizeBytes, limits);
+
+        When(x => x.IsEncrypted, () =>
+            RuleForEach(x => x.Files).ChildRules(file => file.RuleFor(f => f.SizeBytes).MustFitEncryptedFileLimit(limits)));
 
         RuleForEach(x => x.Files).ChildRules(file =>
         {

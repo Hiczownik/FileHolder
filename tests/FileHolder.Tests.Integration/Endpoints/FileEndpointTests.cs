@@ -25,7 +25,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         Title: "Valid Group",
         Files: new List<FileItemInputDto>
         {
-            new("architecture_diagram.pdf", "application.pdf", 1024)
+            new("architecture_diagram.pdf", "application/pdf", 1024)
         },
         ExpireInHours: 24,
         MaxDownloads: 10,
@@ -112,8 +112,15 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     // forbidden extensions
     [InlineData("script.sh", "application/x-sh", 1024, 24, 10, null)]
     [InlineData("library.dll", "application/octet-stream", 1024, 24, 10, null)]
-    // file size
+    // file size: none, and past the 5 GB bundle limit
     [InlineData("document.pdf", "application/pdf", 0, 24, 10, null)]
+    [InlineData("document.pdf", "application/pdf", 5L * 1024 * 1024 * 1024 + 1, 24, 10, null)]
+    [InlineData("document.pdf", "application/pdf", long.MaxValue, 24, 10, null)]
+    // content type: not a media type, or carrying header-breaking characters
+    [InlineData("document.pdf", "application.pdf", 1024, 24, 10, null)]
+    [InlineData("document.pdf", "text/html\r\nX-Evil: 1", 1024, 24, 10, null)]
+    [InlineData("document.pdf", "text/ plain", 1024, 24, 10, null)]
+    [InlineData("document.pdf", "/pdf", 1024, 24, 10, null)]
     // expiration limit
     [InlineData("document.pdf", "application/pdf", 1024, 0, 10, null)]
     [InlineData("document.pdf", "application/pdf", 1024, 200, 10, null)]
@@ -1387,6 +1394,132 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         DeletedKeys().Should().Contain(uploadedKey);
         (await dbContext.PendingUploads.AnyAsync(p => p.StorageKey == uploadedKey)).Should().BeFalse();
+    }
+
+    #endregion
+
+    #region 11. Upload Limits, Signed Sizes & Bundle ZIP Names
+
+    private const long OneGb = 1024L * 1024 * 1024;
+
+    private Task<HttpResponseMessage> PresignAsync(List<FileItemInputDto> files, bool isEncrypted = false) =>
+        _client.PostAsJsonAsync("/api/v1/files/presign",
+            new CreatePresignedUrlRequestDto("Limits", files, 24, 5, isEncrypted ? "EncryptedPass1" : null, isEncrypted));
+
+    private List<GetPreSignedUrlRequest> UploadPresignRequests() => factory.MockS3Client.ReceivedCalls()
+        .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.GetPreSignedURL))
+        .Select(c => (GetPreSignedUrlRequest)c.GetArguments()[0]!)
+        .Where(r => r.Verb == Amazon.S3.HttpVerb.PUT)
+        .ToList();
+
+    [Fact]
+    public async Task Presign_SignsSingleUploadUrlsForTheDeclaredSize()
+    {
+        factory.MockS3Client.ClearReceivedCalls();
+
+        (await PresignAsync([new("small.pdf", "application/pdf", 12_345)])).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        UploadPresignRequests().Single().Headers.ContentLength.Should().Be(12_345);
+    }
+
+    [Fact]
+    public async Task PresignPartBatch_SignsEachPartForItsSize_AndTheLastForTheRemainder()
+    {
+        const long partSize = 16L * 1024 * 1024;
+        const long totalSize = 120L * 1024 * 1024; // 7 full parts and an 8 MB remainder
+        var presign = (await (await PresignAsync([new("clip.mp4", "video/mp4", totalSize)]))
+            .Content.ReadFromJsonAsync<PresignedUrlResponseDto>())!;
+        var item = presign.Items[0];
+        factory.MockS3Client.ClearReceivedCalls();
+
+        (await _client.PostAsJsonAsync("/api/v1/files/multipart/presign-batch",
+            new PresignPartBatchRequestDto(presign.UploadToken, item.StorageKey, item.UploadId!, 1, 8)))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var lengths = UploadPresignRequests().OrderBy(r => r.PartNumber).Select(r => r.Headers.ContentLength).ToList();
+        lengths.Should().Equal(Enumerable.Repeat(partSize, 7).Append(totalSize - 7 * partSize));
+    }
+
+    [Fact]
+    public async Task Presign_AcceptsABundleOfExactlyTheSizeLimit_SpreadOverFiles()
+    {
+        var files = Enumerable.Range(1, 5).Select(i => new FileItemInputDto($"part{i}.bin", "application/octet-stream", OneGb)).ToList();
+
+        (await PresignAsync(files)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await PresignAsync([.. files, new("one-more.txt", "text/plain", 1)])).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Presign_RejectsDeclaredSizesThatWouldOverflowTheirSum_With400()
+    {
+        var files = new List<FileItemInputDto> { new("a.bin", "application/octet-stream", long.MaxValue), new("b.bin", "application/octet-stream", long.MaxValue) };
+
+        (await PresignAsync(files)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Presign_CapsEncryptedFilesAt1Gb_PlusEncryptionOverhead()
+    {
+        const long overhead = 28;
+
+        (await PresignAsync([new("a.enc", "application/octet-stream", OneGb + overhead)], isEncrypted: true))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+        (await PresignAsync([new("a.enc", "application/octet-stream", OneGb + overhead + 1)], isEncrypted: true))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await PresignAsync([new("a.bin", "application/octet-stream", 2 * OneGb)]))
+            .StatusCode.Should().Be(HttpStatusCode.OK, "the per-file cap only applies to encrypted bundles");
+    }
+
+    [Theory]
+    [InlineData("text/plain; charset=utf-8")]
+    [InlineData("application/vnd.openxmlformats-officedocument.wordprocessingml.document")]
+    [InlineData("image/svg+xml")]
+    public async Task Presign_AcceptsRealMediaTypes(string contentType)
+    {
+        (await PresignAsync([new("file.dat", contentType, 1024)])).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task StreamBundleZip_GivesFilesWithTheSameNameDistinctEntries()
+    {
+        var request = await PresignAndUploadAsync("Same Names",
+            [new("report.pdf", "application/pdf", 1024), new("Report.pdf", "application/pdf", 1024), new("report.pdf", "application/pdf", 1024)],
+            maxDownloads: 5);
+        var shareToken = (await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>())!;
+
+        var response = await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/download-all", new DownloadRequestDto(null));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        await using var archive = new ZipArchive(new MemoryStream(await response.Content.ReadAsByteArrayAsync()), ZipArchiveMode.Read);
+        archive.Entries.Select(e => e.FullName.ToLowerInvariant()).Should().OnlyHaveUniqueItems();
+        archive.Entries.Should().HaveCount(3);
+    }
+
+    [Fact]
+    public async Task StreamBundleZipForSession_StreamsTheZip_WithoutCountingAnotherDownload()
+    {
+        var (shareToken, _) = await CreateBundleAsync(2, maxDownloads: 5);
+        var sessionId = await OpenSessionIdAsync(shareToken);
+
+        var response = await _client.GetAsync($"/api/v1/files/{shareToken}/download-all?downloadSessionId={sessionId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("application/zip");
+        response.Content.Headers.ContentDisposition!.DispositionType.Should().Be("attachment");
+        await using var archive = new ZipArchive(new MemoryStream(await response.Content.ReadAsByteArrayAsync()), ZipArchiveMode.Read);
+        archive.Entries.Should().HaveCount(2);
+        (await GetDownloadCountAsync(shareToken)).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task StreamBundleZipForSession_RequiresAValidSession()
+    {
+        var (shareToken, _) = await CreateBundleAsync(1, maxDownloads: 5);
+
+        (await _client.GetAsync($"/api/v1/files/{shareToken}/download-all")).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await _client.GetAsync($"/api/v1/files/{shareToken}/download-all?downloadSessionId={Guid.NewGuid()}"))
+            .StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await GetDownloadCountAsync(shareToken)).Should().Be(0, "the GET never opens a session itself");
     }
 
     #endregion

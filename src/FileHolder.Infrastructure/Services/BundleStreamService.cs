@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.IO.Pipelines;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
+using FileHolder.Core.Security;
 
 namespace FileHolder.Infrastructure.Services;
 
@@ -64,8 +65,11 @@ public class BundleStreamService(
             return new StreamZipResult(StreamZipStatus.EmptyBundle, null);
         }
 
-        var fileEntries = group.Files
-            .Select(f => new BundleFileEntry(f.OriginalFileName, f.StorageKey))
+        // Two files may share a name; as ZIP entries one would silently overwrite the other on extraction.
+        var files = group.Files.ToList();
+        var entryNames = FileSecurityUtils.MakeFileNamesUnique(files.Select(f => f.OriginalFileName).ToList());
+        var fileEntries = files
+            .Select((f, i) => new BundleFileEntry(entryNames[i], f.StorageKey))
             .ToList();
 
         var bundleTitle = group.Title ?? group.ShareToken;

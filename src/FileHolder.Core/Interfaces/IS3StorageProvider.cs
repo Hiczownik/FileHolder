@@ -2,8 +2,14 @@ namespace FileHolder.Core.Interfaces;
 
 public interface IS3StorageProvider
 {
-    string GeneratePresignedUploadUrl(string storageKey, DateTime expiresAt);
-    string GeneratePresignedPartUploadUrl(string storageKey, string uploadId, int partNumber, DateTime expiresAt);
+    /// <summary>
+    /// The URL is signed for exactly <paramref name="contentLength"/> bytes: storage refuses any other body size.
+    /// </summary>
+    string GeneratePresignedUploadUrl(string storageKey, long contentLength, DateTime expiresAt);
+    /// <summary>
+    /// The URL is signed for exactly <paramref name="contentLength"/> bytes: storage refuses any other body size.
+    /// </summary>
+    string GeneratePresignedPartUploadUrl(string storageKey, string uploadId, int partNumber, long contentLength, DateTime expiresAt);
     string GeneratePresignedDownloadUrl(string storageKey, string fileName, string contentType, DateTime expiresAt);
 
     Task<string> InitiateMultipartUploadAsync(string storageKey, string contentType, CancellationToken ct = default);
