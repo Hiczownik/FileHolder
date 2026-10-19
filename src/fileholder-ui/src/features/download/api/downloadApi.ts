@@ -35,6 +35,15 @@ export const downloadApi = {
         return response.data.downloadUrl;
     },
 
+    /** The ciphertext as it arrives, for decrypting on the fly instead of after the whole file has downloaded. */
+    openCiphertextStream: async (url: string): Promise<ReadableStream<Uint8Array>> => {
+        const response = await fetch(url);
+        if (!response.ok || !response.body) {
+            throw new Error(`Downloading the encrypted file failed (HTTP ${response.status}).`);
+        }
+        return response.body;
+    },
+
     downloadCiphertextBlob: async (url: string): Promise<ArrayBuffer> => {
         const response = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer' });
         return response.data;

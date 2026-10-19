@@ -4,6 +4,7 @@ import { downloadApi } from "../api/downloadApi";
 import { bundleDecryptionService } from "../services/bundleDecryptionService";
 import { downloadSessionStore } from "../services/downloadSessionStore";
 import { saveBlobAsFile, triggerDirectDownload } from "../../../shared/utils/downloadUtils";
+import { DownloadCancelledError, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import { isAxiosError } from "axios";
 import JSZip from "jszip";
@@ -156,14 +157,26 @@ export const useFileDownload = (shareToken?: string) => {
         try {
             if (metadata.isEncrypted) {
                 const manifestId = bundleDecryptionService.getManifestIdForServerFile(fileId);
+                const fileMeta = metadata.files.find((f) => f.id === fileId) || metadata.files[0];
+                const fileName = fileMeta?.fileName || 'downloaded_file';
+                const decryption = await bundleDecryptionService.createDecryptionTransform(manifestId);
                 const downloadUrl = await withDownloadSession(shareToken, true,
                     (sessionId) => downloadApi.getDownloadUrl(shareToken, fileId, sessionId));
+
+                if (decryption) {
+                    // Decrypted as it downloads and written to disk as it decrypts: memory stays at about one chunk.
+                    const ciphertext = await downloadApi.openCiphertextStream(downloadUrl);
+                    const method = await saveStreamToDisk(ciphertext.pipeThrough(decryption), { fileName, sizeBytes: fileMeta?.sizeBytes });
+                    // Says which saving method this browser used; handy when checking a new browser or device.
+                    console.info(`[FileHolder] Saved "${fileName}" via ${method}.`);
+                    return;
+                }
+
+                // Bundles in the older one-shot format can only be decrypted whole, in memory.
                 const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
                 const decryptedBytes = await bundleDecryptionService.decryptFile(ciphertextBuffer, manifestId);
-
-                const fileMeta = metadata.files.find((f) => f.id === fileId) || metadata.files[0];
                 const blob = new Blob([decryptedBytes as BlobPart], { type: fileMeta?.contentType || 'application/octet-stream' });
-                saveBlobAsFile(blob, fileMeta?.fileName || 'downloaded_file');
+                saveBlobAsFile(blob, fileName);
                 return;
             }
 
@@ -171,7 +184,10 @@ export const useFileDownload = (shareToken?: string) => {
                 (sessionId) => downloadApi.getDownloadUrl(shareToken, fileId, sessionId));
             triggerDirectDownload(downloadUrl);
         } catch (err: unknown) {
-            setError(parseApiError(err));
+            // Cancelling in the browser's download bar or the save dialog is the user's choice, not an error.
+            if (!(err instanceof DownloadCancelledError)) {
+                setError(parseApiError(err));
+            }
         } finally {
             setDownloadingFileId(null);
         }

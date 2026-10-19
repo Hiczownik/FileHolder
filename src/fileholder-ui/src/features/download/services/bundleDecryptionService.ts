@@ -1,6 +1,6 @@
 import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
 import type { FileItemMetadata } from "../types";
-import { decryptAll, parseStreamParams, type StreamParams } from "../../../shared/utils/crypto/streamCipher";
+import { createDecryptionStream, decryptAll, parseStreamParams, type StreamParams } from "../../../shared/utils/crypto/streamCipher";
 import { isExtensionForbidden, makeFileNamesUnique, sanitizeFileName } from "../../../shared/utils/fileNameSafety";
 
 const ENCRYPTED_FILE_SUFFIX = '.enc';
@@ -134,6 +134,22 @@ export class BundleDecryptionService {
         } catch (err: unknown) {
             throw new Error('Decryption failed. Cryptographic authentication mismatch. The passkey may be incorrect or the data is corrupted.', { cause: err });
         }
+    }
+
+    /**
+     * For a chunk-encrypted file: a transform that decrypts the downloaded ciphertext as it arrives, so the
+     * file never has to fit in memory. Null for the older one-shot format, which can only be decrypted whole.
+     */
+    public async createDecryptionTransform(manifestId: string): Promise<TransformStream<Uint8Array, Uint8Array> | null> {
+        if (!this.cachedMasterKey) {
+            throw new Error('Vault is locked.');
+        }
+
+        const streamParams = this.streamParamsByManifestId.get(manifestId);
+        if (!streamParams) {
+            return null;
+        }
+        return createDecryptionStream(await cryptoEngine.deriveFileKey(this.cachedMasterKey, manifestId), streamParams);
     }
 
     /** `fileId` is the manifest ID. Handles both the chunked format and the older one-shot format. */

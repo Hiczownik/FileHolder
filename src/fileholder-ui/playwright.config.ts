@@ -21,5 +21,17 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    // Saving decrypted downloads works differently per browser engine (see streamSaving.ts), so the tests
+    // tagged @cross-browser also run in Firefox and WebKit (Safari's engine).
+    {
+      name: 'firefox',
+      grep: /@cross-browser/,
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      grep: /@cross-browser/,
+      use: { ...devices['Desktop Safari'] },
+    },
   ],
 });
