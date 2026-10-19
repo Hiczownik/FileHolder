@@ -49,6 +49,13 @@ docker compose up --build
 * **MinIO Object Console**: [http://localhost:9001](http://localhost:9001) *(Login: `minioadmin` / `minioadmin`)*
 * **API Health Check**: [http://localhost:8080/healthz](http://localhost:8080/healthz)
 
+### Networking & Rate Limits
+* **The browser talks to the API through the UI's nginx** (`http://localhost:3000/api/...`). nginx sets `X-Forwarded-For`, and the API trusts it only from the UI container's fixed address (`172.30.250.10`, `ForwardedHeaders__KnownProxies__0`), so rate limits apply per client. Port 8080 is bound to loopback for local tooling only.
+* **The compose network is pinned to `172.30.250.0/24`.** If that clashes with a network on your machine, change the subnet, the UI's `ipv4_address` and `ForwardedHeaders__KnownProxies__0` together.
+* **Behind your own reverse proxy or load balancer**, list its address under `ForwardedHeaders:KnownProxies`, or its range under `ForwardedHeaders:KnownNetworks` (CIDR, e.g. `10.0.1.0/24`). Otherwise every client shares the proxy's rate limit. Make sure the proxy overwrites `X-Forwarded-For` rather than appending to a client-supplied one.
+* **Docker Desktop (Windows/macOS) hides client addresses**: its port forwarding makes every connection appear to come from one gateway address, so locally all clients still share one rate-limit partition. Linux hosts and real proxies don't have this problem.
+* **Metrics** are served only on port 9464 (`Metrics:Port`), which compose never publishes; Prometheus scrapes `api:9464` over the internal network.
+
 ---
 
 ## 🧪 Running the Test Suites

@@ -18,8 +18,9 @@ RUN dotnet publish "FileHolder.Api.csproj" -c Release -o /app/publish /p:UseAppH
 # Stage 2: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
 WORKDIR /app
-EXPOSE 8080
-ENV ASPNETCORE_URLS=http://+:8080
+EXPOSE 8080 9464
+# 8080 serves the API; 9464 serves only /metrics and is never published outside the compose network.
+ENV ASPNETCORE_URLS="http://+:8080;http://+:9464"
 
 # Hardened security: Run container as non-root user
 USER $APP_UID

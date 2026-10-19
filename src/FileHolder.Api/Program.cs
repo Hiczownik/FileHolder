@@ -105,6 +105,13 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     {
         options.KnownProxies.Add(IPAddress.Parse(proxy));
     }
+
+    // For proxies without a fixed address (e.g. a load balancer pool), trust a CIDR range instead, like "10.0.1.0/24".
+    // Only list ranges nothing but your proxies can send from: anyone inside one can claim any client address.
+    foreach (var network in builder.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
+    {
+        options.KnownIPNetworks.Add(System.Net.IPNetwork.Parse(network));
+    }
 });
 
 // UseForwardedHeaders has already replaced RemoteIpAddress when the request came through a trusted proxy.
@@ -208,7 +215,12 @@ app.UseSecurityHeaders();
 app.UseCors("AllowReactApp");
 app.UseRateLimiter();
 
-app.MapPrometheusScrapingEndpoint();
+// Metrics are only served on their own port, which compose never publishes, so only Prometheus on the
+// internal network can scrape them. Matched on the port the connection actually arrived on, not the Host
+// header, which clients can set to anything.
+var metricsPort = app.Configuration.GetValue("Metrics:Port", 9464);
+app.UseOpenTelemetryPrometheusScrapingEndpoint(context =>
+    context.Connection.LocalPort == metricsPort && context.Request.Path == "/metrics");
 
 if (app.Environment.IsDevelopment())
 {

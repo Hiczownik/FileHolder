@@ -7,7 +7,8 @@ RUN npm ci
 
 COPY . .
 
-ARG VITE_API_BASE_URL
+# Same-origin by default: nginx forwards /api/ to the API container (see nginx.conf).
+ARG VITE_API_BASE_URL=/api/v1/files
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 
 RUN npm run build
