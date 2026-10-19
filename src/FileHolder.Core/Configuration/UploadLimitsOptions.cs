@@ -10,11 +10,6 @@ public class UploadLimitsOptions
 {
     public const string SectionName = "UploadLimits";
 
-    /// <summary>
-    /// AES-GCM adds a 12-byte IV and a 16-byte tag to each encrypted file.
-    /// </summary>
-    public const long EncryptionOverheadBytes = 12 + 16;
-
     [Range(1, long.MaxValue)]
     public long MaxBundleSizeBytes { get; set; } = 5L * 1024 * 1024 * 1024; // 5 GB
 

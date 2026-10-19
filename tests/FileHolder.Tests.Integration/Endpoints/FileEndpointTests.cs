@@ -1441,6 +1441,22 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     [Fact]
+    public async Task Presign_SizesEncryptedPartsAsWholeEncryptedChunks()
+    {
+        const long encryptedChunk = 4L * 1024 * 1024 + 16;
+        const long size120Mb = 120L * 1024 * 1024;
+
+        var plain = (await (await PresignAsync([new("clip.mp4", "video/mp4", size120Mb)]))
+            .Content.ReadFromJsonAsync<PresignedUrlResponseDto>())!.Items[0];
+        var encrypted = (await (await PresignAsync([new("clip.enc", "application/octet-stream", size120Mb)], isEncrypted: true))
+            .Content.ReadFromJsonAsync<PresignedUrlResponseDto>())!.Items[0];
+
+        plain.PartSizeBytes.Should().Be(16L * 1024 * 1024, "plain uploads keep the 16 MiB minimum part");
+        encrypted.PartSizeBytes.Should().Be(4 * encryptedChunk, "the smallest whole number of encrypted chunks at or above 16 MiB");
+        encrypted.TotalParts.Should().Be((int)Math.Ceiling((double)size120Mb / encrypted.PartSizeBytes!.Value));
+    }
+
+    [Fact]
     public async Task Presign_AcceptsABundleOfExactlyTheSizeLimit_SpreadOverFiles()
     {
         var files = Enumerable.Range(1, 5).Select(i => new FileItemInputDto($"part{i}.bin", "application/octet-stream", OneGb)).ToList();
@@ -1458,9 +1474,10 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     [Fact]
-    public async Task Presign_CapsEncryptedFilesAt1Gb_PlusEncryptionOverhead()
+    public async Task Presign_CapsEncryptedFilesAt1Gb_PlusATagPerChunk()
     {
-        const long overhead = 28;
+        // 1 GB is 256 chunks of 4 MiB, each followed by a 16-byte tag.
+        const long overhead = 256 * 16;
 
         (await PresignAsync([new("a.enc", "application/octet-stream", OneGb + overhead)], isEncrypted: true))
             .StatusCode.Should().Be(HttpStatusCode.OK);

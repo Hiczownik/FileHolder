@@ -41,10 +41,18 @@ public class FileGroupService
 
     private static bool IsMultipart(long sizeBytes) => sizeBytes > MultipartThreshold;
 
-    private static (long PartSizeBytes, int TotalParts) CalculatePartSizing(long totalSizeBytes)
+    private static (long PartSizeBytes, int TotalParts) CalculatePartSizing(long totalSizeBytes, bool isEncrypted)
     {
         long calculatePartSize = (long)Math.Ceiling((double)totalSizeBytes / 9000);
         long partSize = Math.Max(MinPartSizeBytes, calculatePartSize);
+
+        // An encrypted part must hold whole encrypted chunks, so the browser can encrypt it on its own.
+        if (isEncrypted)
+        {
+            const long chunk = EncryptedStreamFormat.EncryptedChunkBytes;
+            partSize = (partSize + chunk - 1) / chunk * chunk;
+        }
+
         int totalParts = (int)Math.Ceiling((double)totalSizeBytes / partSize);
         return (partSize, totalParts);
     }
@@ -77,7 +85,7 @@ public class FileGroupService
 
             if (IsMultipart(file.SizeBytes))
             {
-                var (partSizeBytes, totalParts) = CalculatePartSizing(file.SizeBytes);
+                var (partSizeBytes, totalParts) = CalculatePartSizing(file.SizeBytes, dto.IsEncrypted);
 
                 var uploadId = await _storageProvider.InitiateMultipartUploadAsync(storageKey, file.ContentType);
 

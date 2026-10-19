@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BundleDecryptionService } from '../bundleDecryptionService';
 import type { FileItemMetadata } from '../../types';
+import { MAX_STREAM_CHUNK_SIZE } from '../../../../shared/utils/crypto/streamCipher';
 
 const FILE_SIZE_BYTES = 1024;
 const ENCRYPTED_SIZE_BYTES = 1052;
@@ -90,6 +91,16 @@ describe('BundleDecryptionService.mapManifestToServerFiles', () => {
 
         expect(() => service.mapManifestToServerFiles(withExecutable, [serverFile('srv-a', 'uuid-a'), serverFile('srv-b', 'uuid-b')]))
             .toThrow('Blocked: invoice.pdf.exe.');
+        expect(service.getManifestIdForServerFile('srv-a')).toBe('srv-a');
+    });
+
+    it('refuses a manifest whose encryption settings are out of bounds, before any download', () => {
+        const service = new BundleDecryptionService();
+        // A chunk size this large would make the recipient buffer it whole before verifying anything.
+        const hostile = [{ ...manifestItem('uuid-a', 'a.txt'), stream: { v: 1, chunkSize: MAX_STREAM_CHUNK_SIZE + 1, noncePrefix: 'AAAAAAAAAA' } }];
+
+        expect(() => service.mapManifestToServerFiles(hostile, [serverFile('srv-a', 'uuid-a')]))
+            .toThrow('invalid encryption settings');
         expect(service.getManifestIdForServerFile('srv-a')).toBe('srv-a');
     });
 

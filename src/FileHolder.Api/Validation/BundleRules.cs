@@ -35,10 +35,11 @@ public static partial class BundleRules
             .WithMessage($"The bundle cannot be larger than {FormatSize(limits.MaxBundleSizeBytes)} in total.");
 
     /// <summary>
-    /// Encrypted files are sized after encryption, so the limit allows for the encryption overhead.
+    /// Encrypted files are sized after encryption, so the limit allows for the 16-byte tag on every chunk.
+    /// Files from the older one-shot format (a 12-byte IV and one tag) fit within the same bound.
     /// </summary>
     public static IRuleBuilderOptions<T, long> MustFitEncryptedFileLimit<T>(this IRuleBuilder<T, long> rule, UploadLimitsOptions limits) =>
-        rule.LessThanOrEqualTo(limits.MaxEncryptedFileSizeBytes + UploadLimitsOptions.EncryptionOverheadBytes)
+        rule.LessThanOrEqualTo(EncryptedStreamFormat.EncryptedSize(limits.MaxEncryptedFileSizeBytes))
             .WithMessage($"Encrypted files cannot be larger than {FormatSize(limits.MaxEncryptedFileSizeBytes)} each.");
 
     public static IRuleBuilderOptions<T, string> MustBeAllowedFileName<T>(this IRuleBuilder<T, string> rule) =>
