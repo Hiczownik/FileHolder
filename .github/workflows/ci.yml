@@ -54,7 +54,7 @@ jobs:
             - name: Install Playwright Browsers & System Dependencies
               run: |
                cd src/fileholder-ui
-               npx playwright install --with-deps chromium
+               npx playwright install --with-deps chromium firefox webkit
             - name: Start Docker Compose Stack
               run: |
                 # Compose requires a Grafana password; CI never logs in, so a throwaway one is enough.

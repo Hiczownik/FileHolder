@@ -287,7 +287,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     }
   });
 
-  test('6. Chunked E2EE: a multipart encrypted file uploads to real storage and decrypts back byte for byte', async ({ page, browser }) => {
+  test('6. Chunked E2EE: a multipart encrypted file uploads to real storage and decrypts back byte for byte @cross-browser', async ({ page, browser, browserName }) => {
     const MIB = 1024 * 1024;
     const ENCRYPTED_CHUNK_BYTES = 4 * MIB + 16;
     const TEST_TIMEOUT_MS = 180_000;
@@ -332,6 +332,13 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
 
       const downloaderContext = await browser.newContext();
       const downloaderPage = await downloaderContext.newPage();
+      // The app logs which saving method the browser used: '[FileHolder] Saved "name" via <method>.'
+      const savedVia = new Promise<string>((resolve) => {
+        downloaderPage.on('console', (msg) => {
+          const text = msg.text();
+          if (text.startsWith('[FileHolder] Saved')) resolve(text);
+        });
+      });
       await downloaderPage.goto(shareUrl);
       await downloaderPage.locator('input[type="password"]').fill('ChunkedPass123!');
       await downloaderPage.getByRole('button', { name: /Unlock Files/i }).click();
@@ -346,6 +353,13 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       const decrypted = fs.readFileSync((await download.path())!);
       expect(decrypted.length).toBe(sizeBytes);
       expect(createHash('sha256').update(decrypted).digest('hex')).toBe(expectedSha256);
+
+      const method = await savedVia;
+      console.log(`[${browserName}] ${method}`);
+      // Chromium must stream through the service worker; a silent fallback would hide a broken worker.
+      if (browserName === 'chromium') {
+        expect(method).toContain('via service-worker');
+      }
 
       await downloaderContext.close();
     } finally {
