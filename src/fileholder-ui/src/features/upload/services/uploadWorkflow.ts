@@ -3,6 +3,12 @@ import { uploadApi } from "../api/uploadApi";
 import type { UploadFormValues } from "../types";
 import { prepareEncryptedBundle } from "./clientEncryptionService";
 import { executeMultipartUpload } from "./multipartUploader";
+import { isExtensionForbidden } from "../../../shared/utils/fileNameSafety";
+
+const PERCENT_COMPLETE = 100;
+// Progress stops short of 100% until every file has finished uploading.
+const MAX_PERCENT_BEFORE_CONFIRM = 99;
+const MULTIPART_CONCURRENCY = 4;
 
 export async function executeStandardUploadWorkflow(
     formValues: UploadFormValues,
@@ -29,7 +35,7 @@ export async function executeStandardUploadWorkflow(
 
     const syncProgress = () => {
         const totalLoaded = fileUploadedBytes.reduce((acc, b) => acc + b, 0);
-        const percent = Math.min(Math.round((totalLoaded / totalBytesAllFiles) * 100), 99);
+        const percent = Math.min(Math.round((totalLoaded / totalBytesAllFiles) * PERCENT_COMPLETE), MAX_PERCENT_BEFORE_CONFIRM);
         onProgress(percent);
     };
 
@@ -42,7 +48,7 @@ export async function executeStandardUploadWorkflow(
                 item,
                 presign.uploadToken, 
                 {
-                    concurrency: 4,
+                    concurrency: MULTIPART_CONCURRENCY,
                     signal,
                     onChunkUploaded: (chunkSize) => {
                         fileUploadedBytes[index] += chunkSize;
@@ -55,14 +61,14 @@ export async function executeStandardUploadWorkflow(
                 throw new Error(`Missing upload URL for file ${item.fileName}`);
             }
             await uploadApi.uploadDirectToS3(item.uploadUrl, currentFile, (percent) => {
-                fileUploadedBytes[index] = Math.round((currentFile.size * percent) / 100);
+                fileUploadedBytes[index] = Math.round((currentFile.size * percent) / PERCENT_COMPLETE);
                 syncProgress();
             });
         }
     });
 
     await Promise.all(uploadTasks);
-    onProgress(100);
+    onProgress(PERCENT_COMPLETE);
 
     const shareToken = await uploadApi.confirmUpload({ 
         uploadToken: presign.uploadToken,
@@ -92,6 +98,12 @@ export async function executeEncryptedUploadWorkflow(
         throw new Error('A passkey is required for Zero-Knowledge End-to-End Encryption.');
     }
 
+    // The server only sees "{uuid}.enc" here, so it can't reject these; recipients would refuse the bundle.
+    const blocked = files.filter((file) => isExtensionForbidden(file.name));
+    if (blocked.length > 0) {
+        throw new Error(`Forbidden file extension detected. Executable files and scripts are not allowed: ${blocked.map((file) => file.name).join(', ')}.`);
+    }
+
     const prepared = await prepareEncryptedBundle(files, formValues.password);
 
     const presign = await uploadApi.getPresignedUrl({
@@ -113,7 +125,7 @@ export async function executeEncryptedUploadWorkflow(
 
     const syncProgress = () => {
         const totalLoaded = fileUploadedBytes.reduce((acc, b) => acc + b, 0);
-        const percent = Math.min(Math.round((totalLoaded / totalBytesAllFiles) * 100), 99);
+        const percent = Math.min(Math.round((totalLoaded / totalBytesAllFiles) * PERCENT_COMPLETE), MAX_PERCENT_BEFORE_CONFIRM);
         onProgress(percent);
     };
 
@@ -126,7 +138,7 @@ export async function executeEncryptedUploadWorkflow(
                 item,
                 presign.uploadToken,
                 {
-                    concurrency: 4,
+                    concurrency: MULTIPART_CONCURRENCY,
                     signal,
                     onChunkUploaded: (chunkSize) => {
                         fileUploadedBytes[index] += chunkSize;
@@ -139,14 +151,14 @@ export async function executeEncryptedUploadWorkflow(
                 throw new Error(`Missing upload URL for file ${item.fileName}`);
             }
             await uploadApi.uploadDirectToS3(item.uploadUrl, currentEncryptedFile, (percent) => {
-                fileUploadedBytes[index] = Math.round((currentEncryptedFile.size * percent) / 100);
+                fileUploadedBytes[index] = Math.round((currentEncryptedFile.size * percent) / PERCENT_COMPLETE);
                 syncProgress();
             });
         }
     });
 
     await Promise.all(uploadTasks);
-    onProgress(100);
+    onProgress(PERCENT_COMPLETE);
 
     const shareToken = await uploadApi.confirmUpload({
         uploadToken: presign.uploadToken,

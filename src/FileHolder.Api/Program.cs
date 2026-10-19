@@ -167,6 +167,17 @@ builder.Services.AddRateLimiter(options =>
                 PermitLimit = 30,
                 Window = TimeSpan.FromMinutes(1)
             }));
+
+    // 4. Bundle metadata: 60 / min per IP. Kept apart from DownloadPolicy so page loads don't eat into
+    // the unlock and download budget, but bounded so share tokens can't be guessed at will.
+    options.AddPolicy("MetadataPolicy", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ResolveClientIp(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1)
+            }));
 });
 
 builder.Services.AddCors(options =>

@@ -41,6 +41,7 @@ public static class FileEndpoints
             .WithName("ConfirmUpload");
 
         group.MapGet("/{shareToken}", GetGroupMetadata)
+            .RequireRateLimiting("MetadataPolicy")
             .WithName("GetGroupMetadata");
 
         group.MapPost("/{shareToken}/unlock", UnlockGroup)

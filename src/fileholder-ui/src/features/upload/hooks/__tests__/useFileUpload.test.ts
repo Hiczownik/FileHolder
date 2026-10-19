@@ -146,6 +146,24 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     }
   });
 
+  it('refuses an encrypted upload of a blocked extension before encrypting or calling the server', async () => {
+    const presignSpy = vi.spyOn(uploadApi, 'getPresignedUrl');
+    const formValues = { title: 'Encrypted Vault', expireInHours: 24, maxDownloads: 5, isEncrypted: true, password: 'VaultPassword123!' } as const;
+    const tinyFileSize = 10;
+
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.upload(formValues, [createDummyFile('notes.txt', tinyFileSize), createDummyFile('setup.exe', tinyFileSize)]);
+    });
+
+    expect(presignSpy).not.toHaveBeenCalled();
+    expect(result.current.uploadState.status).toBe('error');
+    if (result.current.uploadState.status === 'error') {
+      expect(result.current.uploadState.message).toContain('setup.exe');
+    }
+  });
+
   it('transitions to error state with sanitized message on API failure', async () => {
     vi.spyOn(uploadApi, 'getPresignedUrl').mockRejectedValue(new Error('Network failure'));
 

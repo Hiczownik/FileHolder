@@ -66,6 +66,33 @@ describe('BundleDecryptionService.mapManifestToServerFiles', () => {
             .toThrow('The manifest lists the same file more than once.');
     });
 
+    it('reduces a manifest name that climbs out of the folder to its last segment', () => {
+        const service = new BundleDecryptionService();
+        const climbing = [manifestItem('uuid-a', '../../AppData/Roaming/Startup/notes.txt')];
+
+        const mapped = service.mapManifestToServerFiles(climbing, [serverFile('srv-a', 'uuid-a')]);
+
+        expect(mapped[0].fileName).toBe('notes.txt');
+    });
+
+    it('gives files whose names collide distinct names, so none overwrites another in the ZIP', () => {
+        const service = new BundleDecryptionService();
+        const colliding = [manifestItem('uuid-a', 'one/report.pdf'), manifestItem('uuid-b', 'two/Report.pdf')];
+
+        const mapped = service.mapManifestToServerFiles(colliding, [serverFile('srv-a', 'uuid-a'), serverFile('srv-b', 'uuid-b')]);
+
+        expect(mapped.map((file) => file.fileName)).toEqual(['report.pdf', 'Report (2).pdf']);
+    });
+
+    it('refuses a bundle whose manifest holds a blocked extension, and registers no mappings', () => {
+        const service = new BundleDecryptionService();
+        const withExecutable = [manifestItem('uuid-a', 'a.txt'), manifestItem('uuid-b', 'invoice.pdf.exe')];
+
+        expect(() => service.mapManifestToServerFiles(withExecutable, [serverFile('srv-a', 'uuid-a'), serverFile('srv-b', 'uuid-b')]))
+            .toThrow('Blocked: invoice.pdf.exe.');
+        expect(service.getManifestIdForServerFile('srv-a')).toBe('srv-a');
+    });
+
     it('registers no mappings when the bundle is inconsistent', () => {
         const service = new BundleDecryptionService();
 

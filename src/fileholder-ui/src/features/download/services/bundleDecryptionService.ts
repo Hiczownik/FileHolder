@@ -1,8 +1,10 @@
 import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
 import type { FileItemMetadata } from "../types";
+import { isExtensionForbidden, makeFileNamesUnique, sanitizeFileName } from "../../../shared/utils/fileNameSafety";
 
 const ENCRYPTED_FILE_SUFFIX = '.enc';
 const MANIFEST_MISMATCH_MESSAGE = 'This encrypted bundle is inconsistent: its stored files do not match the encrypted manifest.';
+const BLOCKED_FILES_MESSAGE = 'This encrypted bundle contains executable files or scripts, which FileHolder does not allow, so it cannot be opened.';
 
 export class BundleDecryptionService {
     private cachedMasterKey: CryptoKey | null = null;
@@ -46,7 +48,8 @@ export class BundleDecryptionService {
      * Pairs each decrypted manifest entry with its server file and registers the mapping used to
      * derive per-file keys. Encrypted files are uploaded as "{manifestId}.enc", so the pairing is by
      * that name. The server's file order is unrelated to upload order and must never be relied on.
-     * Returns the files in manifest (upload) order, with server IDs and the real names and types.
+     * Returns the files in manifest (upload) order, with server IDs, safe unique names and the real types.
+     * Refuses the whole bundle if any name has a blocked extension, as the server does for plain bundles.
      */
     public mapManifestToServerFiles(manifestItems: FileItemMetadata[], serverFiles: FileItemMetadata[]): FileItemMetadata[] {
         const expectedServerName = (manifestId: string): string => `${manifestId}${ENCRYPTED_FILE_SUFFIX}`;
@@ -66,11 +69,19 @@ export class BundleDecryptionService {
             throw new Error(`${MANIFEST_MISMATCH_MESSAGE} Storage holds files that are not in the manifest.`);
         }
 
-        const mappedFiles = manifestItems.map((item) => {
+        // The server never sees these names, so its file name rules are enforced here instead.
+        const blocked = manifestItems.filter((item) => isExtensionForbidden(item.fileName));
+        if (blocked.length > 0) {
+            throw new Error(`${BLOCKED_FILES_MESSAGE} Blocked: ${blocked.map((item) => sanitizeFileName(item.fileName)).join(', ')}.`);
+        }
+
+        const safeNames = makeFileNamesUnique(manifestItems.map((item) => sanitizeFileName(item.fileName)));
+
+        const mappedFiles = manifestItems.map((item, index) => {
             const serverFile = serverFilesByName.get(expectedServerName(item.id))!;
             return {
                 id: serverFile.id,
-                fileName: item.fileName,
+                fileName: safeNames[index],
                 sizeBytes: item.sizeBytes,
                 contentType: item.contentType,
             };
