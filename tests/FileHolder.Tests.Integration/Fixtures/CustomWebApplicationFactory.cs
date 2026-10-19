@@ -169,6 +169,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 options.AddPolicy("UploadInitiatePolicy", _ => RateLimitPartition.GetNoLimiter("test"));
                 options.AddPolicy("MultipartPipelinePolicy", _ => RateLimitPartition.GetNoLimiter("test"));
                 options.AddPolicy("DownloadPolicy", _ => RateLimitPartition.GetNoLimiter("test"));
+                options.AddPolicy("MetadataPolicy", _ => RateLimitPartition.GetNoLimiter("test"));
             });
 
             var sp = services.BuildServiceProvider();

@@ -280,15 +280,27 @@ public class FileGroupService
 
     public async Task<FileGroupMetadataResponseDto?> GetGroupMetadataByTokenAsync(string shareToken)
     {
+        var cacheKey = $"file_group:{shareToken}";
+
+        // Prefer the live group if a deleted one reused the token, as the unlock and session lookups do.
         var group = await _cache.GetOrCreateAsync(
-            $"file_group:{shareToken}",
+            cacheKey,
             async cancel => await _dbContext.FileGroups
                 .AsNoTracking()
                 .Include(g => g.Files)
-                .FirstOrDefaultAsync(g => g.ShareToken == shareToken, cancel)
+                .Where(g => g.ShareToken == shareToken)
+                .OrderBy(g => g.IsDeleted)
+                .ThenByDescending(g => g.CreatedAt)
+                .FirstOrDefaultAsync(cancel)
         );
 
-        if (group == null) return null;
+        if (group == null)
+        {
+            // HybridCache keeps null results too. Unknown tokens are whatever a caller makes up, so caching
+            // them would let anyone fill memory with requests for random tokens.
+            await _cache.RemoveAsync(cacheKey);
+            return null;
+        }
 
         var now = _dateTimeProvider.UtcNow;
 

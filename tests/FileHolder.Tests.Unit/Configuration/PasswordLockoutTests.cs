@@ -33,4 +33,11 @@ public class PasswordLockoutTests
     {
         PasswordLockout.LockoutAfter(failedAttempts).Should().Be(PasswordLockout.MaxLockout);
     }
+
+    [Fact]
+    public void VerificationHold_IsShorterThanTheFirstLockout()
+    {
+        // A wrong guess replaces the hold with a lockout, and lockouts may only ever be extended.
+        PasswordLockout.VerificationHold.Should().BePositive().And.BeLessThan(PasswordLockout.FirstLockout);
+    }
 }

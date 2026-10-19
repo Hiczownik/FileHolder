@@ -19,6 +19,13 @@ public static class PasswordLockout
     public static readonly TimeSpan MaxLockout = TimeSpan.FromHours(1);
 
     /// <summary>
+    /// Held while a past-the-free-attempts guess is being verified, so no parallel guess can be verified
+    /// alongside it. Long enough to outlast bcrypt, shorter than <see cref="FirstLockout"/> (which replaces
+    /// it on a wrong guess), and short so a request that dies mid-check doesn't lock recipients out for long.
+    /// </summary>
+    public static readonly TimeSpan VerificationHold = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// How long a bundle stays locked after its <paramref name="failedAttempts"/>-th wrong password:
     /// nothing within the free attempts, then 1, 2, 4, ... minutes up to <see cref="MaxLockout"/>.
     /// </summary>

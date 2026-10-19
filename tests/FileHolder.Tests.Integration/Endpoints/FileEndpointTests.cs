@@ -1194,6 +1194,88 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         lockedUntil.Should().BeNull();
     }
 
+    [Fact]
+    public async Task PasswordLockout_ParallelGuesses_OnlyTheFreeAttemptsAndOneMoreAreVerified()
+    {
+        var (shareToken, _) = await CreateBundleAsync(1, maxDownloads: 5, password: LockoutPassword);
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => UnlockAsync(shareToken, "wrong-guess")));
+
+        // The five free attempts plus the one that sets the first lock are verified; the rest arrive while
+        // that check holds the bundle, and must be refused rather than verified alongside it.
+        responses.Count(r => r.StatusCode == HttpStatusCode.Unauthorized).Should().Be(PasswordLockoutFreeAttempts + 1);
+        responses.Count(r => r.StatusCode == HttpStatusCode.TooManyRequests).Should().Be(20 - PasswordLockoutFreeAttempts - 1);
+
+        var (failedAttempts, lockedUntil) = await GetLockStateAsync(shareToken);
+        failedAttempts.Should().Be(PasswordLockoutFreeAttempts + 1);
+        lockedUntil.Should().BeAfter(DateTime.UtcNow.AddSeconds(45), "the wrong guess replaced the short hold with the one-minute lock");
+    }
+
+    [Fact]
+    public async Task PasswordLockout_ParallelGuessesWhenALockExpires_OnlyOneIsVerified()
+    {
+        var (shareToken, _) = await CreateBundleAsync(1, maxDownloads: 5, password: LockoutPassword);
+
+        for (int i = 0; i < 6; i++)
+        {
+            await UnlockAsync(shareToken, "wrong-guess");
+        }
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.FileGroups
+                .Where(g => g.ShareToken == shareToken)
+                .ExecuteUpdateAsync(s => s.SetProperty(g => g.PasswordLockedUntil, DateTime.UtcNow.AddSeconds(-1)));
+        }
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => UnlockAsync(shareToken, "wrong-guess")));
+
+        responses.Count(r => r.StatusCode == HttpStatusCode.Unauthorized).Should().Be(1);
+        responses.Count(r => r.StatusCode == HttpStatusCode.TooManyRequests).Should().Be(19);
+        (await GetLockStateAsync(shareToken)).FailedAttempts.Should().Be(7);
+    }
+
+    private const int PasswordLockoutFreeAttempts = FileHolder.Core.Configuration.PasswordLockout.FreeAttempts;
+
+    #endregion
+
+    #region 9b. Bundle Metadata Lookup
+
+    [Fact]
+    public async Task GetGroupMetadata_ForAnUnknownToken_IsNotCached()
+    {
+        var shareToken = FileHolder.Core.Security.CryptoUtils.GenerateShortToken();
+
+        (await _client.GetAsync($"/api/v1/files/{shareToken}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // Had the miss been cached, a bundle that now holds the token would still answer 404.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.FileGroups.Add(new FileGroup
+            {
+                ShareToken = shareToken,
+                MaxDownloads = 1,
+                ExpiresAt = DateTime.UtcNow.AddHours(1),
+                Files = { new SharedFile { OriginalFileName = "late.pdf", StorageKey = "files/late", ContentType = "application/pdf", SizeBytes = 10 } }
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        (await _client.GetAsync($"/api/v1/files/{shareToken}")).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public void GetGroupMetadata_IsRateLimited()
+    {
+        var endpoint = factory.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints
+            .Single(e => e.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.IEndpointNameMetadata>()?.EndpointName == "GetGroupMetadata");
+
+        endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.RateLimiting.EnableRateLimitingAttribute>()?.PolicyName
+            .Should().Be("MetadataPolicy");
+    }
+
     #endregion
 
     #region 10. Confirm Serves a Copy of Single-PUT Files
