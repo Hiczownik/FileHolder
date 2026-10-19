@@ -18,7 +18,7 @@ export const uploadApi = {
 
     uploadDirectToS3: async (
         uploadUrl: string,
-        file: File,
+        file: Blob,
         onProgress?: (percent: number) => void
     ) : Promise<void> => {
         await axios.put(uploadUrl, file, {

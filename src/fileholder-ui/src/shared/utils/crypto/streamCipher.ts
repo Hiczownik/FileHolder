@@ -188,12 +188,37 @@ export async function encryptChunkRange(
         })
     );
 
-    const output = new Uint8Array(encryptedChunks.reduce((total, chunk) => total + chunk.byteLength, 0));
-    encryptedChunks.reduce((offset, chunk) => {
-        output.set(chunk, offset);
-        return offset + chunk.byteLength;
+    return concatBytes(encryptedChunks);
+}
+
+const concatBytes = (parts: readonly Uint8Array[]): Uint8Array => {
+    const output = new Uint8Array(parts.reduce((total, part) => total + part.byteLength, 0));
+    parts.reduce((offset, part) => {
+        output.set(part, offset);
+        return offset + part.byteLength;
     }, 0);
     return output;
+};
+
+const readAllChunks = async (reader: ReadableStreamDefaultReader<Uint8Array>, received: Uint8Array[]): Promise<Uint8Array[]> => {
+    const { done, value } = await reader.read();
+    if (done) return received;
+    received.push(value);
+    return readAllChunks(reader, received);
+};
+
+/**
+ * Decrypts a whole ciphertext held in memory. Runs the same stream decoder as streaming downloads, so both
+ * paths accept and reject exactly the same inputs.
+ */
+export async function decryptAll(key: CryptoKey, params: StreamParams, ciphertext: Uint8Array): Promise<Uint8Array> {
+    const source = new ReadableStream<Uint8Array>({
+        start: (controller) => {
+            controller.enqueue(ciphertext);
+            controller.close();
+        },
+    });
+    return concatBytes(await readAllChunks(source.pipeThrough(createDecryptionStream(key, params)).getReader(), []));
 }
 
 /**

@@ -1,9 +1,11 @@
 import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
 import type { FileItemMetadata } from "../types";
+import { decryptAll, parseStreamParams, type StreamParams } from "../../../shared/utils/crypto/streamCipher";
 import { isExtensionForbidden, makeFileNamesUnique, sanitizeFileName } from "../../../shared/utils/fileNameSafety";
 
 const ENCRYPTED_FILE_SUFFIX = '.enc';
 const MANIFEST_MISMATCH_MESSAGE = 'This encrypted bundle is inconsistent: its stored files do not match the encrypted manifest.';
+const INVALID_STREAM_MESSAGE = 'This encrypted bundle has invalid encryption settings, so it cannot be opened.';
 const BLOCKED_FILES_MESSAGE = 'This encrypted bundle contains executable files or scripts, which FileHolder does not allow, so it cannot be opened.';
 
 export class BundleDecryptionService {
@@ -11,6 +13,8 @@ export class BundleDecryptionService {
     // Per share token: a kAuth sent to the wrong bundle is just a wrong guess that counts toward its lockout.
     private readonly kAuthByShareToken = new Map<string, string>();
     private serverFileToManifestIdMap = new Map<string, string>();
+    // Chunked-encryption settings per manifest ID. Files without an entry use the older one-shot format.
+    private readonly streamParamsByManifestId = new Map<string, StreamParams>();
 
     public setKAuth(shareToken: string, kAuth: string): void {
         this.kAuthByShareToken.set(shareToken, kAuth);
@@ -76,6 +80,15 @@ export class BundleDecryptionService {
             throw new Error(`${BLOCKED_FILES_MESSAGE} Blocked: ${blocked.map((item) => sanitizeFileName(item.fileName)).join(', ')}.`);
         }
 
+        // The uploader wrote these settings, so they are validated (e.g. chunk size bounds) before any download.
+        const streamParams = manifestItems.map((item) => {
+            try {
+                return item.stream ? parseStreamParams(item.stream) : null;
+            } catch (err: unknown) {
+                throw new Error(INVALID_STREAM_MESSAGE, { cause: err });
+            }
+        });
+
         const safeNames = makeFileNamesUnique(manifestItems.map((item) => sanitizeFileName(item.fileName)));
 
         const mappedFiles = manifestItems.map((item, index) => {
@@ -89,6 +102,11 @@ export class BundleDecryptionService {
         });
 
         mappedFiles.forEach((file, index) => this.registerFileMapping(file.id, manifestItems[index].id));
+        streamParams.forEach((params, index) => {
+            if (params) {
+                this.streamParamsByManifestId.set(manifestItems[index].id, params);
+            }
+        });
         return mappedFiles;
     }
 
@@ -118,12 +136,19 @@ export class BundleDecryptionService {
         }
     }
 
+    /** `fileId` is the manifest ID. Handles both the chunked format and the older one-shot format. */
     public async decryptFile(ciphertextBuffer: ArrayBuffer, fileId: string): Promise<Uint8Array> {
         if (!this.cachedMasterKey) {
             throw new Error('Vault is locked.');
         }
 
         const fileKey = await cryptoEngine.deriveFileKey(this.cachedMasterKey, fileId);
+        const streamParams = this.streamParamsByManifestId.get(fileId);
+        if (streamParams) {
+            // Still decrypted in memory here; streaming the download to disk comes separately.
+            return decryptAll(fileKey, streamParams, new Uint8Array(ciphertextBuffer));
+        }
+
         try {
             return await cryptoEngine.decryptBytes(fileKey, new Uint8Array(ciphertextBuffer));
         } catch (err: unknown) {

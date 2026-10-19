@@ -28,8 +28,22 @@ const abortError = (): DOMException => new DOMException('Upload aborted by user'
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Where the bytes of an upload come from: a plain file's slices, or ciphertext encrypted part by part.
+ * `read` is called once per part, just before the part is sent, so only parts in flight are in memory.
+ */
+export interface UploadSource {
+    readonly size: number;
+    readonly read: (start: number, end: number) => Promise<Blob>;
+}
+
+export const fileSource = (file: Blob): UploadSource => ({
+    size: file.size,
+    read: async (start, end) => file.slice(start, end),
+});
+
 export async function executeMultipartUpload(
-    file: File,
+    source: UploadSource,
     item: PresignedItem,
     uploadToken: string,
     options?: MultipartUploadOptions
@@ -120,10 +134,15 @@ export async function executeMultipartUpload(
 
         const partNumber = partNumbers[currentIndex++];
         const start = (partNumber - 1) * partSizeBytes;
-        const end = Math.min(start + partSizeBytes, file.size);
-        const chunk = file.slice(start, end);
+        const end = Math.min(start + partSizeBytes, source.size);
 
         try {
+            const chunk = await source.read(start, end);
+            // Each part URL is signed for exactly this many bytes, so storage would refuse anything else.
+            if (chunk.size !== end - start) {
+                throw new Error(`Part ${partNumber} is ${chunk.size} bytes, but ${end - start} were expected.`);
+            }
+
             const etag = await uploadPart(partNumber, chunk, 1);
             completedParts.push({ partNumber, eTag: etag });
             options?.onChunkUploaded?.(chunk.size);

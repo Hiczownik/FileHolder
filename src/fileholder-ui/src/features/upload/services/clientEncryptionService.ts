@@ -1,24 +1,39 @@
 import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
+import {
+    createStreamParams,
+    encryptChunkRange,
+    encryptedSize,
+    serializeStreamParams,
+    STREAM_TAG_BYTES,
+    type StreamParams,
+} from "../../../shared/utils/crypto/streamCipher";
 import type { FileItemMetadata } from "../../download/types";
 
+/**
+ * One file of an encrypted bundle, ready to upload. Nothing is encrypted up front: the plaintext stays in
+ * the File, and each upload part is encrypted from its slice just before it is sent, so memory use doesn't
+ * grow with the file size.
+ */
 export interface EncryptedFileItem {
-    id: string;
-    originalName: string;
-    originalSize: number;
-    originalType: string;
-    encryptedFile: File;
+    readonly id: string;
+    readonly file: File;
+    readonly fileKey: CryptoKey;
+    readonly stream: StreamParams;
+    /** The name the server stores, "{id}.enc"; the real name is only in the encrypted manifest. */
+    readonly storageName: string;
+    readonly encryptedSize: number;
 }
 
 export interface PreparedEncryptedPayload {
-    files: EncryptedFileItem[];
-    encryptedManifest: string;
-    keyEnvelope: string;
-    keySalt: string;
-    kAuth: string;
+    readonly files: readonly EncryptedFileItem[];
+    readonly encryptedManifest: string;
+    readonly keyEnvelope: string;
+    readonly keySalt: string;
+    readonly kAuth: string;
 }
 
 export async function prepareEncryptedBundle(
-    files: File[],
+    files: readonly File[],
     password: string
 ): Promise<PreparedEncryptedPayload> {
     const masterKey = await cryptoEngine.generateKey();
@@ -26,42 +41,70 @@ export async function prepareEncryptedBundle(
     const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
     const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap);
 
-    const encryptedFiles: EncryptedFileItem[] = [];
-    const manifestItems: FileItemMetadata[] = [];
+    const encryptedFiles = await Promise.all(files.map(async (file): Promise<EncryptedFileItem> => {
+        const id = crypto.randomUUID();
+        const stream = createStreamParams();
+        return {
+            id,
+            file,
+            fileKey: await cryptoEngine.deriveFileKey(masterKey, id),
+            stream,
+            storageName: `${id}.enc`,
+            encryptedSize: encryptedSize(file.size, stream.chunkSize),
+        };
+    }));
 
-    for (const file of files) {
-        const fileId = crypto.randomUUID();
-        const fileKey = await cryptoEngine.deriveFileKey(masterKey, fileId);
-        const plainBytes = new Uint8Array(await file.arrayBuffer());
-        const encryptedBytes = await cryptoEngine.encryptBytes(fileKey, plainBytes);
-
-        const encryptedFile = new File([encryptedBytes as BlobPart], `${fileId}.enc`, {
-            type: 'application/octet-stream',
-        });
-
-        encryptedFiles.push({
-            id: fileId,
-            originalName: file.name,
-            originalSize: file.size,
-            originalType: file.type || 'application/octet-stream',
-            encryptedFile,
-        });
-
-        manifestItems.push({
-            id: fileId,
-            fileName: file.name,
-            sizeBytes: file.size,
-            contentType: file.type || 'application/octet-stream',
-        });
-    }
-
-    const encryptedManifest = await cryptoEngine.encryptJson(masterKey, manifestItems);
+    const manifestItems: FileItemMetadata[] = encryptedFiles.map((item) => ({
+        id: item.id,
+        fileName: item.file.name,
+        sizeBytes: item.file.size,
+        contentType: item.file.type || 'application/octet-stream',
+        stream: serializeStreamParams(item.stream),
+    }));
 
     return {
         files: encryptedFiles,
-        encryptedManifest,
+        encryptedManifest: await cryptoEngine.encryptJson(masterKey, manifestItems),
         keyEnvelope,
         keySalt: base64Url.encode(salt),
         kAuth,
     };
+}
+
+const encryptedChunkSize = (item: EncryptedFileItem): number => item.stream.chunkSize + STREAM_TAG_BYTES;
+
+/**
+ * Throws unless parts of `partSizeBytes` hold whole encrypted chunks. The server sizes parts that way for
+ * encrypted uploads; a mismatch would mean it was built for a different chunk size.
+ */
+export function assertPartsAlignWithChunks(item: EncryptedFileItem, partSizeBytes: number): void {
+    if (partSizeBytes <= 0 || partSizeBytes % encryptedChunkSize(item) !== 0) {
+        throw new Error('The server sized the upload parts for a different encryption chunk size. Please reload the page and try again.');
+    }
+}
+
+/**
+ * Encrypts the ciphertext bytes start..end (end exclusive) of the file, reading only the plaintext they
+ * cover. Both ends must fall on chunk boundaries (or `end` at the end of the file), as multipart parts do.
+ */
+export async function encryptCiphertextRange(item: EncryptedFileItem, start: number, end: number): Promise<Blob> {
+    const chunkBytes = encryptedChunkSize(item);
+    if (start % chunkBytes !== 0 || (end % chunkBytes !== 0 && end !== item.encryptedSize) || end <= start || end > item.encryptedSize) {
+        throw new Error(`Ciphertext range ${start}-${end} does not fall on encryption chunk boundaries.`);
+    }
+
+    const firstChunk = start / chunkBytes;
+    const count = Math.ceil((end - start) / chunkBytes);
+    const ciphertext = await encryptChunkRange(item.fileKey, item.stream, item.file, firstChunk, count);
+    return new Blob([ciphertext as BlobPart], { type: 'application/octet-stream' });
+}
+
+/** The whole file encrypted at once, for files small enough to go in a single PUT. */
+export async function encryptWholeFile(item: EncryptedFileItem): Promise<Blob> {
+    const blob = await encryptCiphertextRange(item, 0, item.encryptedSize);
+    // The upload URL is signed for exactly encryptedSize bytes; anything else would be refused by storage.
+    if (blob.size !== item.encryptedSize) {
+        throw new Error('Encrypted size does not match what was presigned.');
+    }
+    return blob;
 }

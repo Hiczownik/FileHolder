@@ -1,3 +1,5 @@
+import type { SerializedStreamParams } from '../shared/utils/crypto/streamCipher';
+
 export type UploadMode = 'Single' | 'Multipart';
 
 export interface FileItemInput {
@@ -90,6 +92,11 @@ export interface FileItemMetadata {
     fileName: string;
     sizeBytes: number;
     contentType: string;
+    /**
+     * Only in an encrypted bundle's manifest: how the file was chunk-encrypted. Absent for files in the
+     * older one-shot format, which bundles uploaded before streaming encryption still use.
+     */
+    stream?: SerializedStreamParams;
 }
 
 export interface FileGroupMetadataResponse {

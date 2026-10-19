@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { executeMultipartUpload, PART_URL_MAX_AGE_MS } from '../multipartUploader';
+import { executeMultipartUpload, fileSource, PART_URL_MAX_AGE_MS, type UploadSource } from '../multipartUploader';
 import { uploadApi } from '../../api/uploadApi';
 import type { PresignPartBatchRequest, PresignedItem } from '../../../download/types';
 
@@ -20,7 +20,7 @@ const createItem = (totalParts: number): PresignedItem => ({
     totalParts,
 });
 
-const createFile = (totalParts: number): File => new File(['x'.repeat(PART_SIZE_BYTES * totalParts)], 'big.bin');
+const createFile = (totalParts: number): UploadSource => fileSource(new File(['x'.repeat(PART_SIZE_BYTES * totalParts)], 'big.bin'));
 
 /** Signs URLs that say which batch signed them: "part_3_sig1" is part 3 from the first presign call. */
 const mockPresign = () => {

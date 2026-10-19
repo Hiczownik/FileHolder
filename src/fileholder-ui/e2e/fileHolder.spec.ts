@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 import JSZip from 'jszip';
+import { createHash } from 'node:crypto';
 
 test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
   const testFile1 = {
@@ -283,6 +284,72 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       // Isolated teardown strictly scoped to this test
       if (fs.existsSync(bigFile1Path)) fs.unlinkSync(bigFile1Path);
       if (fs.existsSync(bigFile2Path)) fs.unlinkSync(bigFile2Path);
+    }
+  });
+
+  test('6. Chunked E2EE: a multipart encrypted file uploads to real storage and decrypts back byte for byte', async ({ page, browser }) => {
+    const MIB = 1024 * 1024;
+    const ENCRYPTED_CHUNK_BYTES = 4 * MIB + 16;
+    const TEST_TIMEOUT_MS = 180_000;
+    const TRANSFER_TIMEOUT_MS = 120_000;
+    const PATTERN_LENGTH = 251;
+    test.setTimeout(TEST_TIMEOUT_MS);
+
+    // Over the 50 MB multipart threshold, so the server sizes parts as whole encrypted chunks (16 MiB + 64 bytes)
+    // and storage checks every part against the size its URL was signed for. The odd tail ends mid-chunk.
+    const fileName = 'chunked-e2ee.bin';
+    const filePath = path.join(path.resolve(process.cwd(), 'e2e'), fileName);
+    const sizeBytes = 60 * MIB + 12345;
+    const pattern = Buffer.from(Array.from({ length: PATTERN_LENGTH }, (_, i) => i));
+    const content = Buffer.alloc(sizeBytes, pattern);
+    fs.writeFileSync(filePath, content);
+    const expectedSha256 = createHash('sha256').update(content).digest('hex');
+
+    try {
+      await page.goto('/');
+      await page.getByPlaceholder(/e.g. Project Deliverables v1/i).fill('Chunked E2EE');
+      await page.locator('input[type="file"]').setInputFiles([filePath]);
+      await expect(page.getByText('Selected Files (1)')).toBeVisible();
+      await page.locator('input[type="checkbox"]').click();
+      await page.locator('input[type="password"]').fill('ChunkedPass123!');
+
+      const presignResponsePromise = page.waitForResponse((res) => res.url().includes('/api/v1/files/presign') && res.request().method() === 'POST');
+      await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
+
+      const presign = await (await presignResponsePromise).json();
+      expect(presign.items[0].uploadMode).toBe('Multipart');
+      expect(presign.items[0].partSizeBytes % ENCRYPTED_CHUNK_BYTES).toBe(0);
+
+      const shareLinkInput = page.locator('input[readonly]');
+      const errorBanner = page.locator('.bg-rose-500\\/10');
+      await Promise.race([
+        shareLinkInput.waitFor({ state: 'visible', timeout: TRANSFER_TIMEOUT_MS }),
+        errorBanner.waitFor({ state: 'visible', timeout: TRANSFER_TIMEOUT_MS }).then(async () => {
+          throw new Error(`Upload failed on UI with error message: "${await errorBanner.textContent()}"`);
+        }),
+      ]);
+      const shareUrl = await shareLinkInput.inputValue();
+
+      const downloaderContext = await browser.newContext();
+      const downloaderPage = await downloaderContext.newPage();
+      await downloaderPage.goto(shareUrl);
+      await downloaderPage.locator('input[type="password"]').fill('ChunkedPass123!');
+      await downloaderPage.getByRole('button', { name: /Unlock Files/i }).click();
+      await expect(downloaderPage.getByText(fileName)).toBeVisible();
+
+      // A one-file bundle offers "Download File" (decrypted in the browser) rather than a ZIP.
+      const downloadPromise = downloaderPage.waitForEvent('download', { timeout: TRANSFER_TIMEOUT_MS });
+      await downloaderPage.getByRole('button', { name: /^Download File$/i }).click();
+      const download = await downloadPromise;
+
+      expect(download.suggestedFilename()).toBe(fileName);
+      const decrypted = fs.readFileSync((await download.path())!);
+      expect(decrypted.length).toBe(sizeBytes);
+      expect(createHash('sha256').update(decrypted).digest('hex')).toBe(expectedSha256);
+
+      await downloaderContext.close();
+    } finally {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
   });
 });
