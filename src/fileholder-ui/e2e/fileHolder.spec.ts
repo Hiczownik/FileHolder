@@ -337,12 +337,13 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       await downloaderPage.getByRole('button', { name: /Unlock Files/i }).click();
       await expect(downloaderPage.getByText(fileName)).toBeVisible();
 
+      // A one-file bundle offers "Download File" (decrypted in the browser) rather than a ZIP.
       const downloadPromise = downloaderPage.waitForEvent('download', { timeout: TRANSFER_TIMEOUT_MS });
-      await downloaderPage.getByRole('button', { name: /Download All.*ZIP/i }).click();
+      await downloaderPage.getByRole('button', { name: /^Download File$/i }).click();
       const download = await downloadPromise;
 
-      const zip = await JSZip.loadAsync(fs.readFileSync((await download.path())!));
-      const decrypted = await zip.file(fileName)!.async('nodebuffer');
+      expect(download.suggestedFilename()).toBe(fileName);
+      const decrypted = fs.readFileSync((await download.path())!);
       expect(decrypted.length).toBe(sizeBytes);
       expect(createHash('sha256').update(decrypted).digest('hex')).toBe(expectedSha256);
 
