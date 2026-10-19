@@ -37,4 +37,18 @@ public class FileSecurityUtilsTests
         // The check and the stored name must agree, or the check can be sidestepped.
         FileSecurityUtils.SanitizeFileName("evil.exe ").Should().Be("evil.exe");
     }
+
+    [Fact]
+    public void MakeFileNamesUnique_NumbersDuplicatesIgnoringCase_AndLeavesUniqueNamesAlone()
+    {
+        FileSecurityUtils.MakeFileNamesUnique(["a.txt", "A.txt", "a.txt", "b.txt", "notes"])
+            .Should().Equal("a.txt", "A (2).txt", "a (3).txt", "b.txt", "notes");
+    }
+
+    [Fact]
+    public void MakeFileNamesUnique_SkipsACopyNumberAnotherFileAlreadyUses()
+    {
+        FileSecurityUtils.MakeFileNamesUnique(["a.txt", "a (2).txt", "a.txt"])
+            .Should().Equal("a.txt", "a (2).txt", "a (3).txt");
+    }
 }

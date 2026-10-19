@@ -1,4 +1,5 @@
 using FileHolder.Core.Dtos;
+using FileHolder.Core.Entities;
 using FileHolder.Core.Exceptions;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
@@ -42,6 +43,7 @@ public class MultipartUploadService(
                 session.StorageKey,
                 dto.UploadId,
                 partNumber,
+                PartSizeBytes(session, partNumber),
                 _dateTimeProvider.UtcNow.AddMinutes(30));
 
             parts.Add(new PartPresignedUrlDto(partNumber, presignedUrl));
@@ -49,6 +51,15 @@ public class MultipartUploadService(
 
         return new PresignPartBatchResponseDto(parts);
     }
+
+    /// <summary>
+    /// Every part is PartSizeBytes long except the last, which holds the remainder. The client slices the file
+    /// the same way, and each part URL is signed for exactly this size.
+    /// </summary>
+    private static long PartSizeBytes(MultipartUploadSession session, int partNumber) =>
+        partNumber < session.TotalParts
+            ? session.PartSizeBytes
+            : session.TotalSizeBytes - (long)(session.TotalParts - 1) * session.PartSizeBytes;
 
     public async Task<bool> CompleteMultipartUploadAsync(CompleteMultipartUploadRequestDto dto)
     {

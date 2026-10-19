@@ -20,7 +20,7 @@ public class S3StorageProvider(
     private readonly IAmazonS3 _presignClient = presignClient;
     private readonly StorageOptions _options = options.Value;
 
-    public string GeneratePresignedUploadUrl(string storageKey, DateTime expiresAt)
+    public string GeneratePresignedUploadUrl(string storageKey, long contentLength, DateTime expiresAt)
     {
         var request = new GetPreSignedUrlRequest
         {
@@ -31,10 +31,14 @@ public class S3StorageProvider(
             Protocol = Protocol.HTTP
         };
 
+        // Setting it puts content-length into X-Amz-SignedHeaders, so storage rejects any other body size
+        // and nobody can store more than presign approved, even before confirm checks the size.
+        request.Headers.ContentLength = contentLength;
+
         return _presignClient.GetPreSignedURL(request);
     }
 
-    public string GeneratePresignedPartUploadUrl(string storageKey, string uploadId, int partNumber, DateTime expiresAt)
+    public string GeneratePresignedPartUploadUrl(string storageKey, string uploadId, int partNumber, long contentLength, DateTime expiresAt)
     {
         var request = new GetPreSignedUrlRequest
         {
@@ -46,6 +50,8 @@ public class S3StorageProvider(
             Expires = expiresAt,
             Protocol = Protocol.HTTP
         };
+
+        request.Headers.ContentLength = contentLength;
 
         return _presignClient.GetPreSignedURL(request);
     }

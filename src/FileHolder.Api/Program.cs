@@ -27,6 +27,11 @@ builder.Services.AddOptions<StorageOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+builder.Services.AddOptions<UploadLimitsOptions>()
+    .Bind(builder.Configuration.GetSection(UploadLimitsOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 builder.Services.AddOpenApi();
 
 #pragma warning disable EXTEXP0018

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { FileGroupMetadataResponse, DownloadUrlResponse, DownloadSessionResponse } from '../types';
-import { saveBlobAsFile } from '../../../shared/utils/downloadUtils';
+import { triggerDirectDownload } from '../../../shared/utils/downloadUtils';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api/v1/files';
 
@@ -40,22 +40,12 @@ export const downloadApi = {
         return response.data;
     },
 
-    downloadAllZip: async (
-        shareToken: string,
-        downloadSessionId: string,
-        bundleTitle?: string
-    ): Promise<void> => {
-        const response = await axios.post(
-            `${API_BASE_URL}/${shareToken}/download-all`,
-            { downloadSessionId },
-            { responseType: 'blob' }
-        );
-
-        const blob = new Blob([response.data], { type: 'application/zip' });
-        // Replaces every character that is not a word character, dot or hyphen with "_":
-        // "Q3 Report/v2" becomes "Q3_Report_v2", while "notes-v1.2" is left unchanged.
-        // https://regex101.com/?regex=%5B%5E%5Cw.-%5D&flags=g&testString=Q3%20Report%2Fv2%0Anotes-v1.2
-        const safeTitle = bundleTitle ? bundleTitle.replace(/[^\w.-]/g, '_') : 'bundle';
-        saveBlobAsFile(blob, `${safeTitle}_${shareToken}.zip`);
+    /**
+     * Lets the browser download the ZIP itself, so it streams to disk instead of being held in page memory.
+     * The server names the file. The session must still be valid: an error response would replace the page.
+     */
+    downloadAllZip: (shareToken: string, downloadSessionId: string): void => {
+        const query = new URLSearchParams({ downloadSessionId });
+        triggerDirectDownload(`${API_BASE_URL}/${encodeURIComponent(shareToken)}/download-all?${query.toString()}`);
     },
 };

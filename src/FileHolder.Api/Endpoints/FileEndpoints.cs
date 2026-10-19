@@ -59,6 +59,12 @@ public static class FileEndpoints
         group.MapPost("/{shareToken}/download-all", StreamBundleZip)
             .RequireRateLimiting("DownloadPolicy")
             .WithName("StreamBundleZip");
+
+        // The same ZIP for an open download session, as a plain GET the browser can navigate to, so it is
+        // saved straight to disk instead of being buffered in page memory first.
+        group.MapGet("/{shareToken}/download-all", StreamBundleZipForSession)
+            .RequireRateLimiting("DownloadPolicy")
+            .WithName("StreamBundleZipForSession");
     }
 
     public static async Task<Ok<PresignedUrlResponseDto>> GetPresignedUploadUrl(
@@ -195,19 +201,39 @@ public static class FileEndpoints
         };
     }
 
-    public static async
-        Task<Results<EmptyHttpResult, NotFound, UnauthorizedHttpResult, ProblemHttpResult, BadRequest<string>>>
+    public static Task<Results<EmptyHttpResult, NotFound, UnauthorizedHttpResult, ProblemHttpResult, BadRequest<string>>>
         StreamBundleZip(
             string shareToken,
             DownloadRequestDto dto,
+            HttpContext context,
+            IBundleStreamService bundleStreamService,
+            IDateTimeProvider dateTimeProvider) =>
+        StreamZipAsync(shareToken, dto.Password, dto.DownloadSessionId, context, bundleStreamService, dateTimeProvider);
+
+    public static Task<Results<EmptyHttpResult, NotFound, UnauthorizedHttpResult, ProblemHttpResult, BadRequest<string>>>
+        StreamBundleZipForSession(
+            string shareToken,
+            Guid downloadSessionId,
+            HttpContext context,
+            IBundleStreamService bundleStreamService,
+            IDateTimeProvider dateTimeProvider) =>
+        // Session only, never a password: a password in the URL would end up in logs and browser history.
+        StreamZipAsync(shareToken, null, downloadSessionId, context, bundleStreamService, dateTimeProvider);
+
+    private static async
+        Task<Results<EmptyHttpResult, NotFound, UnauthorizedHttpResult, ProblemHttpResult, BadRequest<string>>>
+        StreamZipAsync(
+            string shareToken,
+            string? password,
+            Guid? downloadSessionId,
             HttpContext context,
             IBundleStreamService bundleStreamService,
             IDateTimeProvider dateTimeProvider)
     {
         var result = await bundleStreamService.StreamBundleZipAsync(
             shareToken,
-            dto.Password,
-            dto.DownloadSessionId,
+            password,
+            downloadSessionId,
             context.Response.Body,
             bundleTitle =>
             {

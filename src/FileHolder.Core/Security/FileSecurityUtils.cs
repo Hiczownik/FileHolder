@@ -39,6 +39,34 @@ public static partial class FileSecurityUtils
         return string.IsNullOrWhiteSpace(finalName) || finalName == sanitizedExt ? $"unnamed_file{sanitizedExt}" : finalName;
     }
 
+    /// <summary>
+    /// Makes names unique ignoring case (Windows and macOS file systems do), so no file overwrites another when
+    /// a bundle is extracted to one folder: "a.txt", "A.txt" becomes "a.txt", "A (2).txt". Mirrors
+    /// makeFileNamesUnique in the UI, which does the same for encrypted bundles.
+    /// </summary>
+    public static IReadOnlyList<string> MakeFileNamesUnique(IReadOnlyList<string> fileNames)
+    {
+        var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unique = new List<string>(fileNames.Count);
+
+        foreach (var name in fileNames)
+        {
+            var candidate = name;
+            var extension = Path.GetExtension(name);
+            var body = name[..^extension.Length];
+
+            for (int copy = 2; taken.Contains(candidate); copy++)
+            {
+                candidate = $"{body} ({copy}){extension}";
+            }
+
+            taken.Add(candidate);
+            unique.Add(candidate);
+        }
+
+        return unique;
+    }
+
     public static string GenerateStorageKey(string fileName)
     {
         var sanitized = SanitizeFileName(fileName);
