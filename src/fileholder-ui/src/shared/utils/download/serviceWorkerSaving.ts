@@ -1,5 +1,5 @@
 import { attachmentDisposition } from './contentDisposition';
-import type { SaveOutcome, StreamedFile } from './streamSaving';
+import { describeError, unavailable, type SaveOutcome, type StreamedFile } from './saveOutcome';
 
 /**
  * Page side of public/download-sw.js (the protocol is described there). The worker serves the stream as an
@@ -52,13 +52,17 @@ const waitUntilActivated = (worker: ServiceWorker): Promise<ServiceWorker> =>
         });
     });
 
+// Why the worker isn't available, reported when the next saving method takes over.
+let registrationProblem = 'the download worker was not activated in time';
+
 const registerWorker = async (): Promise<ServiceWorker | null> => {
     try {
         const registration = await navigator.serviceWorker.register(DOWNLOAD_WORKER_URL, { scope: DOWNLOAD_WORKER_SCOPE });
         const worker = registration.active ?? registration.waiting ?? registration.installing;
         return worker ? await withTimeout(waitUntilActivated(worker), ACTIVATION_TIMEOUT_SECONDS) : null;
-    } catch {
+    } catch (err: unknown) {
         // Blocked (e.g. Firefox private windows, or storage disabled): the next saving method takes over.
+        registrationProblem = `the download worker could not be registered: ${describeError(err)}`;
         return null;
     }
 };
@@ -81,7 +85,7 @@ export const openInHiddenIframe = (url: string): void => {
 const defaultDeps: ServiceWorkerSavingDeps = { getWorker: getDownloadWorker, openUrl: openInHiddenIframe };
 
 /**
- * Returns 'unavailable' without having read from the stream when the worker can't serve this download, so
+ * Steps aside (with a reason) without having read from the stream when the worker can't serve this download, so
  * the caller can still save the stream another way. Once the worker reports the browser has the response,
  * there is no turning back: errors reject (and fail the browser's download) instead.
  */
@@ -92,7 +96,7 @@ export async function saveViaServiceWorker(
 ): Promise<SaveOutcome> {
     const worker = await deps.getWorker();
     if (!worker) {
-        return 'unavailable';
+        return unavailable(registrationProblem);
     }
 
     const id = crypto.randomUUID();
@@ -121,13 +125,13 @@ export async function saveViaServiceWorker(
         worker.postMessage({ type: 'register-download', id, disposition: attachmentDisposition(file.fileName) }, [channel.port2]);
         const registered = await withTimeout(nextMessage(), REGISTERED_TIMEOUT_SECONDS);
         if (registered?.type !== 'registered') {
-            return 'unavailable';
+            return unavailable('the download worker did not accept the download');
         }
 
         deps.openUrl(`${DOWNLOAD_WORKER_SCOPE}${id}`);
         const started = await withTimeout(nextMessage(), STARTED_TIMEOUT_SECONDS);
         if (started?.type !== 'started') {
-            return 'unavailable';
+            return unavailable(`the browser did not start the download within ${STARTED_TIMEOUT_SECONDS} s`);
         }
 
         handedOver = true;

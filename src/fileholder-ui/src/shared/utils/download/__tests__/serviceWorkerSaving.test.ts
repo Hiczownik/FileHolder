@@ -95,7 +95,8 @@ describe('saveViaServiceWorker', () => {
     it('is unavailable, leaving the stream untouched, when there is no worker', async () => {
         const stream = streamOf(FIRST);
 
-        expect(await saveViaServiceWorker(stream, { fileName: 'a.bin' }, { getWorker: async () => null, openUrl: vi.fn() })).toBe('unavailable');
+        expect(await saveViaServiceWorker(stream, { fileName: 'a.bin' }, { getWorker: async () => null, openUrl: vi.fn() }))
+            .toEqual({ unavailable: expect.stringContaining('download worker') });
         expect(stream.locked).toBe(false);
     });
 
@@ -108,7 +109,7 @@ describe('saveViaServiceWorker', () => {
         const outcome = saveViaServiceWorker(stream, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl });
         await vi.advanceTimersByTimeAsync(REGISTERED_TIMEOUT_MS);
 
-        expect(await outcome).toBe('unavailable');
+        expect(await outcome).toEqual({ unavailable: 'the download worker did not accept the download' });
         expect(openUrl).not.toHaveBeenCalled();
         expect(stream.locked).toBe(false);
     });
@@ -124,7 +125,7 @@ describe('saveViaServiceWorker', () => {
         await opened;
         await vi.advanceTimersByTimeAsync(STARTED_TIMEOUT_MS);
 
-        expect(await outcome).toBe('unavailable');
+        expect(await outcome).toEqual({ unavailable: 'the browser did not start the download within 10 s' });
         expect(stream.locked).toBe(false);
         // The first thing a late request would read is an error, so it fails at once.
         expect(await messageQueue(ports[0])()).toMatchObject({ type: 'error' });

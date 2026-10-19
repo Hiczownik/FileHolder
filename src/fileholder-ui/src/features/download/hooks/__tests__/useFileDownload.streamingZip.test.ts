@@ -148,7 +148,7 @@ describe('useFileDownload streaming ZIP of an encrypted bundle', () => {
         let zipBytes = new Uint8Array(0);
         vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
             zipBytes = new Uint8Array(await new Blob(await readAll(stream.getReader(), []) as BlobPart[]).arrayBuffer());
-            return 'service-worker';
+            return { method: 'service-worker', skipped: [] };
         });
 
         const result = await unlockAndDownloadAll(bundle);
@@ -172,7 +172,7 @@ describe('useFileDownload streaming ZIP of an encrypted bundle', () => {
         serveCiphertexts(new Map([...bundle.ciphertexts, ['srv-a', tampered]]), []);
         vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
             await readAll(stream.getReader(), []);
-            return 'memory';
+            return { method: 'memory', skipped: [] };
         });
 
         const result = await unlockAndDownloadAll(bundle);
