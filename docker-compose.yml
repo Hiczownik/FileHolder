@@ -57,8 +57,10 @@ services:
       context: .
       dockerfile: src/FileHolder.Api/Dockerfile
     container_name: fileholder-api
+    # Browsers reach the API through the ui container's nginx (/api/), so it sees real client addresses.
+    # This loopback port is only for local tooling and the CI health check. Metrics (9464) stay internal.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       # Production: Development would return internal exception messages and expose the API reference.
       ASPNETCORE_ENVIRONMENT: Production
@@ -68,6 +70,8 @@ services:
       Storage__AccessKey: "minioadmin"
       Storage__SecretKey: "minioadmin"
       Storage__BucketName: "fileholder-bucket"
+      # X-Forwarded-For is honoured only from the ui container's nginx, pinned to this address below.
+      ForwardedHeaders__KnownProxies__0: "172.30.250.10"
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,6 +87,10 @@ services:
     container_name: fileholder-ui
     ports:
       - "3000:80"
+    networks:
+      default:
+        # Fixed so the API can trust X-Forwarded-For from this container and nothing else.
+        ipv4_address: 172.30.250.10
     depends_on:
       - api
 
@@ -112,3 +120,11 @@ services:
 volumes:
   postgres_data:
   minio_data:
+
+networks:
+  default:
+    # Pinned so the ui container can have a fixed address (see ForwardedHeaders__KnownProxies__0).
+    # If this range clashes with a network on your machine, change it here and in both places above.
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24
