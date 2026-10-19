@@ -20,6 +20,10 @@ public class S3StorageProvider(
     private readonly IAmazonS3 _presignClient = presignClient;
     private readonly StorageOptions _options = options.Value;
 
+    // Browsers block plain-HTTP requests from an HTTPS page, so presigned URLs use the public address's scheme.
+    private readonly Protocol _publicProtocol =
+        S3ClientFactory.IsPlainHttp(options.Value.PublicBaseUrl) ? Protocol.HTTP : Protocol.HTTPS;
+
     public string GeneratePresignedUploadUrl(string storageKey, long contentLength, DateTime expiresAt)
     {
         var request = new GetPreSignedUrlRequest
@@ -28,7 +32,7 @@ public class S3StorageProvider(
             Key = storageKey,
             Verb = HttpVerb.PUT,
             Expires = expiresAt,
-            Protocol = Protocol.HTTP
+            Protocol = _publicProtocol
         };
 
         // Setting it puts content-length into X-Amz-SignedHeaders, so storage rejects any other body size
@@ -48,7 +52,7 @@ public class S3StorageProvider(
             UploadId = uploadId,
             PartNumber = partNumber,
             Expires = expiresAt,
-            Protocol = Protocol.HTTP
+            Protocol = _publicProtocol
         };
 
         request.Headers.ContentLength = contentLength;
@@ -64,7 +68,7 @@ public class S3StorageProvider(
             Key = storageKey,
             Verb = HttpVerb.GET,
             Expires = expiresAt,
-            Protocol = Protocol.HTTP,
+            Protocol = _publicProtocol,
             ResponseHeaderOverrides = new ResponseHeaderOverrides
             {
                 // Storage echoes this back as a response header, so it must be ASCII with the real name in filename*.

@@ -25,6 +25,8 @@ builder.Host.UseSerilog((ctx, lc) => lc.WriteTo.Console(formatProvider: System.G
 builder.Services.AddOptions<StorageOptions>()
     .Bind(builder.Configuration.GetSection(StorageOptions.SectionName))
     .ValidateDataAnnotations()
+    .Validate(o => S3ClientFactory.IsHttpOrHttps(o.ServiceUrl) && S3ClientFactory.IsHttpOrHttps(o.PublicBaseUrl),
+        "Storage:ServiceUrl and Storage:PublicBaseUrl must be absolute http:// or https:// URLs.")
     .ValidateOnStart();
 
 builder.Services.AddOptions<UploadLimitsOptions>()
@@ -52,30 +54,18 @@ builder.Services.AddProblemDetails();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection")));
 
+// The API's own connection to storage.
 builder.Services.AddKeyedSingleton<IAmazonS3>("InternalS3", (sp, _) =>
 {
     var storageOptions = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
-    var config = new AmazonS3Config
-    {
-        ServiceURL = storageOptions.ServiceUrl,
-        ForcePathStyle = true,
-        UseHttp = true,
-        AuthenticationRegion = "us-east-1"
-    };
-    return new AmazonS3Client(storageOptions.AccessKey, storageOptions.SecretKey, config);
+    return S3ClientFactory.Create(storageOptions.ServiceUrl, storageOptions.AccessKey, storageOptions.SecretKey);
 });
 
+// Only signs URLs for browsers, against the address they can reach; it never sends a request itself.
 builder.Services.AddKeyedSingleton<IAmazonS3>("PresignS3", (sp, _) =>
 {
     var storageOptions = sp.GetRequiredService<IOptions<StorageOptions>>().Value;
-    var config = new AmazonS3Config
-    {
-        ServiceURL = storageOptions.PublicBaseUrl,
-        ForcePathStyle = true,
-        UseHttp = true,
-        AuthenticationRegion = "us-east-1"
-    };
-    return new AmazonS3Client(storageOptions.AccessKey, storageOptions.SecretKey, config);
+    return S3ClientFactory.Create(storageOptions.PublicBaseUrl, storageOptions.AccessKey, storageOptions.SecretKey);
 });
 
 builder.Services.AddSingleton<IS3StorageProvider, S3StorageProvider>();

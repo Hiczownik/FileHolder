@@ -40,6 +40,18 @@ public class HostingConfigurationTests(CustomWebApplicationFactory factory) : IC
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    [Theory]
+    [InlineData("Storage:PublicBaseUrl", "files.example.com")]
+    [InlineData("Storage:ServiceUrl", "ftp://minio:9000")]
+    public void Startup_RefusesAStorageAddressThatIsNotAWebUrl(string setting, string value)
+    {
+        using var misconfigured = factory.WithWebHostBuilder(builder => builder.UseSetting(setting, value));
+
+        var start = () => misconfigured.CreateClient();
+
+        start.Should().Throw<OptionsValidationException>().WithMessage("*must be absolute http:// or https:// URLs*");
+    }
+
     [Fact]
     public void ForwardedHeaders_TrustTheConfiguredProxiesAndNetworks()
     {
