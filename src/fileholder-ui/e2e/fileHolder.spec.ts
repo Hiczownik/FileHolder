@@ -133,7 +133,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await downloaderContext.close();
   });
 
-  test('4. Zero-Knowledge E2EE Bundle Journey: Password Envelope Encryption, Clean URL & Decrypted Manifest', async ({ page, browser }) => {
+  test('4. Zero-Knowledge E2EE Bundle Journey: Password Envelope Encryption, Clean URL & Decrypted Manifest @cross-browser', async ({ page, browser, browserName }) => {
     test.setTimeout(60000);
 
     page.on('console', (msg) => console.log(`[Browser ${msg.type()}]: ${msg.text()}`));
@@ -187,6 +187,12 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
 
     downloaderPage.on('console', (msg) => console.log(`[Downloader ${msg.type()}]: ${msg.text()}`));
     downloaderPage.on('pageerror', (err) => console.log(`[Downloader Exception]: ${err.message}`));
+    // The app logs which saving method the browser used: '[FileHolder] Saved "name" via <method>.'
+    const savedVia = new Promise<string>((resolve) => {
+      downloaderPage.on('console', (msg) => {
+        if (msg.text().startsWith('[FileHolder] Saved')) resolve(msg.text());
+      });
+    });
 
     await downloaderPage.goto(shareUrl);
 
@@ -237,6 +243,13 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
 
     expect(doc1Content).toBe('Multi-file payload #1 content');
     expect(doc2Content).toBe('Multi-file payload #2 content');
+
+    // The ZIP is built as a stream and saved like a single file; Chromium must do that through the worker.
+    const method = await savedVia;
+    console.log(`[${browserName}] ${method}`);
+    if (browserName === 'chromium') {
+      expect(method).toContain('via service-worker');
+    }
 
     await downloaderContext.close();
   });

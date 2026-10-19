@@ -7,13 +7,17 @@ import { saveBlobAsFile, triggerDirectDownload } from "../../../shared/utils/dow
 import { DownloadCancelledError, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import { isAxiosError } from "axios";
-import JSZip from "jszip";
+import { makeZip } from "client-zip";
 
 const HTTP_UNAUTHORIZED = 401;
-const ZIP_COMPRESSION_LEVEL = 6;
 // The server-side ZIP is a page navigation, which can't be retried on a 401 like an API call. A stored
 // session is only reused for it with at least this long left; otherwise a fresh one is opened.
 const ZIP_SESSION_MIN_REMAINING_MS = 60_000;
+interface ZipEntry {
+    readonly name: string;
+    readonly input: ReadableStream<Uint8Array> | Uint8Array;
+}
+
 const UNLOCK_AGAIN_MESSAGE = 'This encrypted bundle needs to be unlocked again before downloading. Please reload the page and enter the passkey.';
 
 export const useFileDownload = (shareToken?: string) => {
@@ -148,6 +152,22 @@ export const useFileDownload = (shareToken?: string) => {
         }
     };
 
+    /**
+     * One file of an encrypted bundle, decrypted: a stream for chunk-encrypted files, decrypted as it downloads
+     * so it never has to fit in memory, or the whole file for bundles in the older one-shot format.
+     */
+    const openDecryptedFile = async (token: string, fileId: string): Promise<ReadableStream<Uint8Array> | Uint8Array> => {
+        const manifestId = bundleDecryptionService.getManifestIdForServerFile(fileId);
+        const decryption = await bundleDecryptionService.createDecryptionTransform(manifestId);
+        const downloadUrl = await withDownloadSession(token, true,
+            (sessionId) => downloadApi.getDownloadUrl(token, fileId, sessionId));
+
+        if (decryption) {
+            return (await downloadApi.openCiphertextStream(downloadUrl)).pipeThrough(decryption);
+        }
+        return bundleDecryptionService.decryptFile(await downloadApi.downloadCiphertextBlob(downloadUrl), manifestId);
+    };
+
     const handleDownloadFile = async (fileId: string) => {
         if (!shareToken || !metadata) return;
 
@@ -156,27 +176,19 @@ export const useFileDownload = (shareToken?: string) => {
 
         try {
             if (metadata.isEncrypted) {
-                const manifestId = bundleDecryptionService.getManifestIdForServerFile(fileId);
                 const fileMeta = metadata.files.find((f) => f.id === fileId) || metadata.files[0];
                 const fileName = fileMeta?.fileName || 'downloaded_file';
-                const decryption = await bundleDecryptionService.createDecryptionTransform(manifestId);
-                const downloadUrl = await withDownloadSession(shareToken, true,
-                    (sessionId) => downloadApi.getDownloadUrl(shareToken, fileId, sessionId));
+                const decrypted = await openDecryptedFile(shareToken, fileId);
 
-                if (decryption) {
-                    // Decrypted as it downloads and written to disk as it decrypts: memory stays at about one chunk.
-                    const ciphertext = await downloadApi.openCiphertextStream(downloadUrl);
-                    const method = await saveStreamToDisk(ciphertext.pipeThrough(decryption), { fileName, sizeBytes: fileMeta?.sizeBytes });
-                    // Says which saving method this browser used; handy when checking a new browser or device.
-                    console.info(`[FileHolder] Saved "${fileName}" via ${method}.`);
+                if (decrypted instanceof Uint8Array) {
+                    saveBlobAsFile(new Blob([decrypted as BlobPart], { type: fileMeta?.contentType || 'application/octet-stream' }), fileName);
                     return;
                 }
 
-                // Bundles in the older one-shot format can only be decrypted whole, in memory.
-                const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
-                const decryptedBytes = await bundleDecryptionService.decryptFile(ciphertextBuffer, manifestId);
-                const blob = new Blob([decryptedBytes as BlobPart], { type: fileMeta?.contentType || 'application/octet-stream' });
-                saveBlobAsFile(blob, fileName);
+                // Written to disk as it decrypts: memory stays at about one chunk.
+                const method = await saveStreamToDisk(decrypted, { fileName, sizeBytes: fileMeta?.sizeBytes });
+                // Says which saving method this browser used; handy when checking a new browser or device.
+                console.info(`[FileHolder] Saved "${fileName}" via ${method}.`);
                 return;
             }
 
@@ -201,32 +213,27 @@ export const useFileDownload = (shareToken?: string) => {
 
         try {
             if (metadata.isEncrypted) {
-                const zip = new JSZip();
+                const token = shareToken;
+                const files = metadata.files;
 
-                // Strictly sequential: the first file opens the download session and the rest reuse it.
-                // Fetching in parallel would open several sessions and consume several downloads.
-                await metadata.files.reduce(async (previous, file) => {
-                    await previous;
-                    const manifestId = bundleDecryptionService.getManifestIdForServerFile(file.id);
-                    const downloadUrl = await withDownloadSession(shareToken, true,
-                        (sessionId) => downloadApi.getDownloadUrl(shareToken, file.id, sessionId));
-                    const ciphertextBuffer = await downloadApi.downloadCiphertextBlob(downloadUrl);
-                    const decryptedBytes = await bundleDecryptionService.decryptFile(ciphertextBuffer, manifestId);
-
-                    zip.file(file.fileName, decryptedBytes);
-                }, Promise.resolve());
-
-                const zipBlob = await zip.generateAsync({
-                    type: 'blob',
-                    compression: 'DEFLATE',
-                    compressionOptions: { level: ZIP_COMPRESSION_LEVEL },
-                });
+                // client-zip pulls entries one at a time as it writes the archive, so each file is fetched and
+                // decrypted only when its turn comes. That keeps them strictly sequential too: the first file
+                // opens the download session and the rest reuse it, instead of each consuming a download.
+                async function* decryptedEntries(index: number): AsyncGenerator<ZipEntry> {
+                    const file = files[index];
+                    if (!file) return;
+                    yield { name: file.fileName, input: await openDecryptedFile(token, file.id) };
+                    yield* decryptedEntries(index + 1);
+                }
 
                 // Replaces every character that is not a word character, dot or hyphen with "_":
                 // "Q3 Report/v2" becomes "Q3_Report_v2", while "notes-v1.2" is left unchanged.
                 // https://regex101.com/?regex=%5B%5E%5Cw.-%5D&flags=g&testString=Q3%20Report%2Fv2%0Anotes-v1.2
                 const safeTitle = metadata.title ? metadata.title.replace(/[^\w.-]/g, '_') : 'bundle';
-                saveBlobAsFile(zipBlob, `${safeTitle}_${shareToken}.zip`);
+                const zipName = `${safeTitle}_${shareToken}.zip`;
+                // Entries are stored uncompressed (encrypted content doesn't compress), with Zip64 past 4 GB.
+                const method = await saveStreamToDisk(makeZip(decryptedEntries(0)), { fileName: zipName });
+                console.info(`[FileHolder] Saved "${zipName}" via ${method}.`);
                 return;
             }
 
@@ -234,7 +241,9 @@ export const useFileDownload = (shareToken?: string) => {
             const sessionId = stored?.id ?? await openSession(shareToken, false);
             downloadApi.downloadAllZip(shareToken, sessionId);
         } catch (err: unknown) {
-            setError(parseApiError(err));
+            if (!(err instanceof DownloadCancelledError)) {
+                setError(parseApiError(err));
+            }
         } finally {
             setIsDownloadingAll(false);
         }
