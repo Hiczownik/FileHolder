@@ -43,6 +43,7 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     expect(result.current.uploadState.status).toBe('success');
     if (result.current.uploadState.status === 'success') {
       expect(result.current.uploadState.shareLink).toContain('/f/share_abc');
+      expect(result.current.uploadState.isEncrypted).toBe(false);
     }
   });
 
@@ -134,6 +135,7 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     if (result.current.uploadState.status === 'success') {
       expect(result.current.uploadState.shareLink).toContain('/f/share_enc_abc');
       expect(result.current.uploadState.shareLink).not.toContain('#key=');
+      expect(result.current.uploadState.isEncrypted).toBe(true);
 
       expect(confirmUploadSpy).toHaveBeenCalledTimes(1);
       const confirmArg = confirmUploadSpy.mock.calls[0][0];
