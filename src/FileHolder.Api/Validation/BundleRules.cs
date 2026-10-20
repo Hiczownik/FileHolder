@@ -33,8 +33,7 @@ public static partial class BundleRules
 
     /// <summary>
     /// The same limit for an encrypted bundle. Its files are sized after encryption, so the limit allows for the
-    /// 16-byte tag on every chunk: a bundle of exactly the limit in plaintext still fits. Files in the older
-    /// one-shot format (a 12-byte IV and one tag each) fit within the same bound.
+    /// 16-byte tag on every chunk: a bundle of exactly the limit in plaintext still fits.
     /// </summary>
     public static IRuleBuilderOptions<T, List<TFile>> MustFitEncryptedBundleSizeLimit<T, TFile>(
         this IRuleBuilder<T, List<TFile>> rule, Func<TFile, long> sizeBytes, UploadLimitsOptions limits) =>

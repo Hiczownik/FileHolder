@@ -1,10 +1,11 @@
 import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
 import type { FileItemMetadata } from "../types";
-import { createDecryptionStream, decryptAll, parseStreamParams, type StreamParams } from "../../../shared/utils/crypto/streamCipher";
+import { createDecryptionStream, parseStreamParams, type StreamParams } from "../../../shared/utils/crypto/streamCipher";
 import { isExtensionForbidden, makeFileNamesUnique, sanitizeFileName } from "../../../shared/utils/fileNameSafety";
 
 const ENCRYPTED_FILE_SUFFIX = '.enc';
 const MANIFEST_MISMATCH_MESSAGE = 'This encrypted bundle is inconsistent: its stored files do not match the encrypted manifest.';
+const OLD_FORMAT_MESSAGE = 'This bundle was created with an older version of FileHolder and can no longer be opened. Ask the sender to share it again.';
 const INVALID_STREAM_MESSAGE = 'This encrypted bundle has invalid encryption settings, so it cannot be opened.';
 const BLOCKED_FILES_MESSAGE = 'This encrypted bundle contains executable files or scripts, which FileHolder does not allow, so it cannot be opened.';
 
@@ -13,7 +14,7 @@ export class BundleDecryptionService {
     // Per share token: a kAuth sent to the wrong bundle is just a wrong guess that counts toward its lockout.
     private readonly kAuthByShareToken = new Map<string, string>();
     private serverFileToManifestIdMap = new Map<string, string>();
-    // Chunked-encryption settings per manifest ID. Files without an entry use the older one-shot format.
+    // Chunked-encryption settings per manifest ID.
     private readonly streamParamsByManifestId = new Map<string, StreamParams>();
 
     public setKAuth(shareToken: string, kAuth: string): void {
@@ -81,9 +82,13 @@ export class BundleDecryptionService {
         }
 
         // The uploader wrote these settings, so they are validated (e.g. chunk size bounds) before any download.
+        // Entries without them come from bundles encrypted whole, a format no longer supported.
+        if (manifestItems.some((item) => !item.stream)) {
+            throw new Error(OLD_FORMAT_MESSAGE);
+        }
         const streamParams = manifestItems.map((item) => {
             try {
-                return item.stream ? parseStreamParams(item.stream) : null;
+                return parseStreamParams(item.stream!);
             } catch (err: unknown) {
                 throw new Error(INVALID_STREAM_MESSAGE, { cause: err });
             }
@@ -102,11 +107,7 @@ export class BundleDecryptionService {
         });
 
         mappedFiles.forEach((file, index) => this.registerFileMapping(file.id, manifestItems[index].id));
-        streamParams.forEach((params, index) => {
-            if (params) {
-                this.streamParamsByManifestId.set(manifestItems[index].id, params);
-            }
-        });
+        streamParams.forEach((params, index) => this.streamParamsByManifestId.set(manifestItems[index].id, params));
         return mappedFiles;
     }
 
@@ -137,40 +138,19 @@ export class BundleDecryptionService {
     }
 
     /**
-     * For a chunk-encrypted file: a transform that decrypts the downloaded ciphertext as it arrives, so the
-     * file never has to fit in memory. Null for the older one-shot format, which can only be decrypted whole.
+     * A transform that decrypts a file's downloaded ciphertext as it arrives, so the file never has to fit in
+     * memory. `manifestId` must belong to a bundle mapped with mapManifestToServerFiles.
      */
-    public async createDecryptionTransform(manifestId: string): Promise<TransformStream<Uint8Array, Uint8Array> | null> {
+    public async createDecryptionTransform(manifestId: string): Promise<TransformStream<Uint8Array, Uint8Array>> {
         if (!this.cachedMasterKey) {
             throw new Error('Vault is locked.');
         }
 
         const streamParams = this.streamParamsByManifestId.get(manifestId);
         if (!streamParams) {
-            return null;
+            throw new Error(`No encryption settings for file ${manifestId}; unlock the bundle first.`);
         }
         return createDecryptionStream(await cryptoEngine.deriveFileKey(this.cachedMasterKey, manifestId), streamParams);
-    }
-
-    /** `fileId` is the manifest ID. Handles both the chunked format and the older one-shot format. */
-    public async decryptFile(ciphertextBuffer: ArrayBuffer, fileId: string): Promise<Uint8Array> {
-        if (!this.cachedMasterKey) {
-            throw new Error('Vault is locked.');
-        }
-
-        const fileKey = await cryptoEngine.deriveFileKey(this.cachedMasterKey, fileId);
-        const streamParams = this.streamParamsByManifestId.get(fileId);
-        if (streamParams) {
-            // Still decrypted in memory here; streaming the download to disk comes separately.
-            return decryptAll(fileKey, streamParams, new Uint8Array(ciphertextBuffer));
-        }
-
-        try {
-            return await cryptoEngine.decryptBytes(fileKey, new Uint8Array(ciphertextBuffer));
-        } catch (err: unknown) {
-            // WebCrypto reports an authentication failure as an OperationError with an empty message.
-            throw new Error('Decryption failed. The file is corrupted or does not belong to this bundle.', { cause: err });
-        }
     }
 }
 

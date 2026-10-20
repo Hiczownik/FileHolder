@@ -44,11 +44,6 @@ export const downloadApi = {
         return response.body;
     },
 
-    downloadCiphertextBlob: async (url: string): Promise<ArrayBuffer> => {
-        const response = await axios.get<ArrayBuffer>(url, { responseType: 'arraybuffer' });
-        return response.data;
-    },
-
     /**
      * Lets the browser download the ZIP itself, so it streams to disk instead of being held in page memory.
      * The server names the file. The session must still be valid: an error response would replace the page.

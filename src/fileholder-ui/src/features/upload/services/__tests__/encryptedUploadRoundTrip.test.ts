@@ -42,6 +42,24 @@ const concat = (parts: readonly Uint8Array[]): Uint8Array => {
     return output;
 };
 
+// jsdom's Blob has no .stream(), so streams are built by hand.
+const streamOf = (bytes: Uint8Array): ReadableStream<Uint8Array> =>
+    new ReadableStream({
+        start: (controller) => {
+            controller.enqueue(bytes);
+            controller.close();
+        },
+    });
+
+const readAll = async (reader: ReadableStreamDefaultReader<Uint8Array>, parts: Uint8Array[]): Promise<Uint8Array> => {
+    const { done, value } = await reader.read();
+    if (!done) {
+        parts.push(value);
+        return readAll(reader, parts);
+    }
+    return new Uint8Array(await new Blob(parts as BlobPart[]).arrayBuffer());
+};
+
 /** Stands in for the API and storage, keeping every byte the client sends, by storage key. */
 const createFakeBackend = (partSize: number) => {
     const presignedSizes = new Map<string, number>();
@@ -118,8 +136,8 @@ describe('encrypted upload round trip', () => {
 
         expect(mapped.map((file) => file.fileName)).toEqual(['small.pdf', 'large.pdf']);
         const decrypted = await Promise.all(mapped.map(async (file) => {
-            const ciphertext = backend.stored.get(file.id)!;
-            return recipient.decryptFile(ciphertext.slice().buffer, recipient.getManifestIdForServerFile(file.id));
+            const decryption = await recipient.createDecryptionTransform(recipient.getManifestIdForServerFile(file.id));
+            return readAll(streamOf(backend.stored.get(file.id)!).pipeThrough(decryption).getReader(), []);
         }));
         const expectedDigests = await Promise.all(originals.map(async (file) => sha256Hex(await file.arrayBuffer())));
         expect(await Promise.all(decrypted.map((bytes) => sha256Hex(bytes)))).toEqual(expectedDigests);
