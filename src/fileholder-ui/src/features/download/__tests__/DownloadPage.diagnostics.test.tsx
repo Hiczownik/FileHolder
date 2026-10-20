@@ -26,6 +26,7 @@ vi.mock('../hooks/useFileDownload', () => ({
         isDownloadingAll: false,
         error: null,
         lastSaveReport: LAST_SAVE,
+        downloadProgress: null,
         setPassword: vi.fn(),
         handleUnlock: vi.fn(),
         handleDownloadFile: vi.fn(),
