@@ -19,5 +19,5 @@ export interface UploadFormValues {
 export type UploadState =
     | { status: 'idle' }
     | { status: 'uploading'; progress: number }
-    | { status: 'success'; shareLink: string }
+    | { status: 'success'; shareLink: string; isEncrypted: boolean }
     | { status: 'error'; message: string };

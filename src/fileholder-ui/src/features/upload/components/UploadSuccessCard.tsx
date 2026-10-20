@@ -1,13 +1,15 @@
 import { Check } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { CopyButton } from "../../../shared/components/CopyButton";
 import { Button } from "../../../shared/components/Button";
 
 interface Props {
     shareLink: string;
+    isEncrypted: boolean;
     onReset: () => void;
 }
 
-export const UploadSuccessCard: React.FC<Props> = ({ shareLink, onReset }) => {
+export const UploadSuccessCard: React.FC<Props> = ({ shareLink, isEncrypted, onReset }) => {
     return (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-6">
             <div className="p-4 bg-emerald-500/10 rounded-full w-16 h-16 mx-auto flex items-center justify-center text-emerald-400 border border-emerald-500/20">
@@ -29,6 +31,27 @@ export const UploadSuccessCard: React.FC<Props> = ({ shareLink, onReset }) => {
                     className="bg-transparent text-indigo-300 text-sm px-3 flex-1 outline-none font-mono"
                 />
                 <CopyButton text={shareLink} />
+            </div>
+
+            <div className="space-y-2">
+                {/* Drawn locally: the link must never be sent to a QR service. Dark on white with a margin
+                    so phone cameras can read it on the dark theme. */}
+                <QRCodeSVG
+                    value={shareLink}
+                    size={192}
+                    level="M"
+                    marginSize={4}
+                    bgColor="#ffffff"
+                    fgColor="#020617"
+                    title="QR code for the share link"
+                    className="mx-auto rounded-xl"
+                />
+                <p className="text-xs text-slate-400">Scan to open the link on another device.</p>
+                {isEncrypted && (
+                    <p className="text-xs text-amber-400">
+                        The QR code holds only the link. Share the passkey separately.
+                    </p>
+                )}
             </div>
 
             <Button

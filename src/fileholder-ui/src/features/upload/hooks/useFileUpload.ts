@@ -9,25 +9,26 @@ import {
 type UploadAction =
     | { type: 'START_UPLOAD' }
     | { type: 'SET_PROGRESS'; payload: number }
-    | { type: 'UPLOAD_SUCCESS'; payload: string }
+    | { type: 'UPLOAD_SUCCESS'; payload: { shareLink: string; isEncrypted: boolean } }
     | { type: 'UPLOAD_ERROR'; payload: string }
     | { type: 'RESET' };
 
+type UploadActionHandlers = {
+    readonly [K in UploadAction['type']]: (action: Extract<UploadAction, { type: K }>) => UploadState;
+};
+
+const uploadActionHandlers: UploadActionHandlers = {
+    START_UPLOAD: () => ({ status: 'uploading', progress: 0 }),
+    SET_PROGRESS: (action) => ({ status: 'uploading', progress: action.payload }),
+    UPLOAD_SUCCESS: (action) => ({ status: 'success', ...action.payload }),
+    UPLOAD_ERROR: (action) => ({ status: 'error', message: action.payload }),
+    RESET: () => ({ status: 'idle' }),
+};
+
 const uploadReducer = (_state: UploadState, action: UploadAction): UploadState => {
-    switch (action.type) {
-        case 'START_UPLOAD':
-            return { status: 'uploading', progress: 0 };
-        case 'SET_PROGRESS':
-            return { status: 'uploading', progress: action.payload };
-        case 'UPLOAD_SUCCESS':
-            return { status: 'success', shareLink: action.payload };
-        case 'UPLOAD_ERROR':
-            return { status: 'error', message: action.payload };
-        case 'RESET':
-            return { status: 'idle' };
-        default:
-            return { status: 'idle' };
-    }
+    // TypeScript can't correlate the handler with the action's own type, so widen the handler here.
+    const handler = uploadActionHandlers[action.type] as (action: UploadAction) => UploadState;
+    return handler(action);
 };
 
 export const useFileUpload = () => {
@@ -64,7 +65,10 @@ export const useFileUpload = () => {
                     abortControllerRef.current.signal
                 );
 
-            dispatch({ type: 'UPLOAD_SUCCESS', payload: shareLink });
+            dispatch({
+                type: 'UPLOAD_SUCCESS',
+                payload: { shareLink, isEncrypted: Boolean(formValues.isEncrypted) },
+            });
         } catch (err: unknown) {
             dispatch({ type: 'UPLOAD_ERROR', payload: parseApiError(err) });
         }

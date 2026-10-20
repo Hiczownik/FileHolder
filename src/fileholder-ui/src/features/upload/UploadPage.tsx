@@ -23,7 +23,11 @@ export const UploadPage: React.FC = () => {
             )}
 
             {uploadState.status === 'success' ? (
-                <UploadSuccessCard shareLink={uploadState.shareLink} onReset={reset} />
+                <UploadSuccessCard
+                    shareLink={uploadState.shareLink}
+                    isEncrypted={uploadState.isEncrypted}
+                    onReset={reset}
+                />
             ) : (
                 <UploadForm uploadState={uploadState} onUpload={upload} />
             )}
