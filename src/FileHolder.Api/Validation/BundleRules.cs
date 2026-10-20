@@ -28,19 +28,23 @@ public static partial class BundleRules
     /// </summary>
     public static IRuleBuilderOptions<T, List<TFile>> MustFitBundleSizeLimit<T, TFile>(
         this IRuleBuilder<T, List<TFile>> rule, Func<TFile, long> sizeBytes, UploadLimitsOptions limits) =>
-        // Each file is checked first so that huge declared sizes are rejected instead of overflowing the sum.
-        rule.Must(files => files == null
-                           || (files.All(f => sizeBytes(f) <= limits.MaxBundleSizeBytes)
-                               && files.Sum(sizeBytes) <= limits.MaxBundleSizeBytes))
+        rule.Must(files => FitsWithin(files, sizeBytes, limits.MaxBundleSizeBytes))
             .WithMessage($"The bundle cannot be larger than {FormatSize(limits.MaxBundleSizeBytes)} in total.");
 
     /// <summary>
-    /// Encrypted files are sized after encryption, so the limit allows for the 16-byte tag on every chunk.
-    /// Files from the older one-shot format (a 12-byte IV and one tag) fit within the same bound.
+    /// The same limit for an encrypted bundle. Its files are sized after encryption, so the limit allows for the
+    /// 16-byte tag on every chunk: a bundle of exactly the limit in plaintext still fits. Files in the older
+    /// one-shot format (a 12-byte IV and one tag each) fit within the same bound.
     /// </summary>
-    public static IRuleBuilderOptions<T, long> MustFitEncryptedFileLimit<T>(this IRuleBuilder<T, long> rule, UploadLimitsOptions limits) =>
-        rule.LessThanOrEqualTo(EncryptedStreamFormat.EncryptedSize(limits.MaxEncryptedFileSizeBytes))
-            .WithMessage($"Encrypted files cannot be larger than {FormatSize(limits.MaxEncryptedFileSizeBytes)} each.");
+    public static IRuleBuilderOptions<T, List<TFile>> MustFitEncryptedBundleSizeLimit<T, TFile>(
+        this IRuleBuilder<T, List<TFile>> rule, Func<TFile, long> sizeBytes, UploadLimitsOptions limits) =>
+        rule.Must(files => files == null
+                           || FitsWithin(files, sizeBytes, EncryptedStreamFormat.MaxEncryptedTotal(limits.MaxBundleSizeBytes, files.Count)))
+            .WithMessage($"The bundle cannot be larger than {FormatSize(limits.MaxBundleSizeBytes)} in total.");
+
+    // Each file is checked first so that huge declared sizes are rejected instead of overflowing the sum.
+    private static bool FitsWithin<TFile>(List<TFile>? files, Func<TFile, long> sizeBytes, long maxTotal) =>
+        files == null || (files.All(f => sizeBytes(f) <= maxTotal) && files.Sum(sizeBytes) <= maxTotal);
 
     public static IRuleBuilderOptions<T, string> MustBeAllowedFileName<T>(this IRuleBuilder<T, string> rule) =>
         rule.NotEmpty().WithMessage("File name is required.")

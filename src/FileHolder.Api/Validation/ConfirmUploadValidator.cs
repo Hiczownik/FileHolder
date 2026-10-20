@@ -29,10 +29,8 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
 
         var limits = uploadLimits.Value;
 
-        RuleFor(x => x.Files).MustFitBundleSizeLimit(f => f.SizeBytes, limits);
-
-        When(x => x.IsEncrypted, () =>
-            RuleForEach(x => x.Files).ChildRules(file => file.RuleFor(f => f.SizeBytes).MustFitEncryptedFileLimit(limits)));
+        When(x => !x.IsEncrypted, () => RuleFor(x => x.Files).MustFitBundleSizeLimit(f => f.SizeBytes, limits));
+        When(x => x.IsEncrypted, () => RuleFor(x => x.Files).MustFitEncryptedBundleSizeLimit(f => f.SizeBytes, limits));
 
         RuleForEach(x => x.Files).ChildRules(file =>
         {

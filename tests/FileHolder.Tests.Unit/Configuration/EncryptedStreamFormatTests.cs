@@ -25,4 +25,26 @@ public class EncryptedStreamFormatTests
     {
         EncryptedStreamFormat.EncryptedChunkBytes.Should().Be(Chunk + 16);
     }
+
+    // However the plaintext is split between files, the encrypted total never exceeds MaxEncryptedTotal: otherwise
+    // the server would refuse an encrypted bundle that is within the limit before encryption.
+    [Theory]
+    [InlineData(new long[] { 5 * Chunk })]
+    [InlineData(new long[] { 1, 5 * Chunk - 1 })]
+    [InlineData(new long[] { Chunk + 1, Chunk + 1, Chunk + 1 })]
+    [InlineData(new long[] { 1, 1, 1, 1, 1 })]
+    [InlineData(new long[] { 2 * Chunk, 2 * Chunk, Chunk })]
+    public void MaxEncryptedTotal_IsNeverExceededByFilesWithinThePlaintextLimit(long[] plaintextSizes)
+    {
+        long plaintextTotal = plaintextSizes.Sum();
+        long encryptedTotal = plaintextSizes.Sum(EncryptedStreamFormat.EncryptedSize);
+
+        encryptedTotal.Should().BeLessThanOrEqualTo(EncryptedStreamFormat.MaxEncryptedTotal(plaintextTotal, plaintextSizes.Length));
+    }
+
+    [Fact]
+    public void MaxEncryptedTotal_AllowsATagPerChunkPlusOnePerFile()
+    {
+        EncryptedStreamFormat.MaxEncryptedTotal(5 * Chunk, 2).Should().Be(5 * Chunk + (5 + 2) * 16);
+    }
 }

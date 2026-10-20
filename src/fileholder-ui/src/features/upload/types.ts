@@ -2,13 +2,10 @@
 const BYTES_PER_KB = 1024;
 const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
 const BYTES_PER_GB = BYTES_PER_KB * BYTES_PER_MB;
-const E2EE_MAX_BUNDLE_MB = 200;
 const STANDARD_MAX_TOTAL_GB = 5;
 
-export const E2EE_MAX_BUNDLE_BYTES = E2EE_MAX_BUNDLE_MB * BYTES_PER_MB;
-// Encrypted files are encrypted and decrypted whole in browser memory, so each is capped.
-export const E2EE_MAX_SINGLE_FILE_BYTES = BYTES_PER_GB;
-// Keep in sync with UploadLimits on the server (UploadLimitsOptions.cs).
+// Applies to encrypted bundles too, measured before encryption: they are encrypted and decrypted a chunk at a
+// time, so their size no longer depends on memory. Keep in sync with UploadLimits on the server (UploadLimitsOptions.cs).
 export const STANDARD_MAX_TOTAL_BYTES = STANDARD_MAX_TOTAL_GB * BYTES_PER_GB;
 
 export interface UploadFormValues {

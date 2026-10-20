@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
 using Amazon.S3.Model;
+using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
@@ -1474,17 +1475,34 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     [Fact]
-    public async Task Presign_CapsEncryptedFilesAt1Gb_PlusATagPerChunk()
+    public async Task Presign_AcceptsEncryptedFilesOver1Gb()
     {
-        // 1 GB is 256 chunks of 4 MiB, each followed by a 16-byte tag.
-        const long overhead = 256 * 16;
-
-        (await PresignAsync([new("a.enc", "application/octet-stream", OneGb + overhead)], isEncrypted: true))
+        (await PresignAsync([new("a.enc", "application/octet-stream", EncryptedStreamFormat.EncryptedSize(2 * OneGb))], isEncrypted: true))
             .StatusCode.Should().Be(HttpStatusCode.OK);
-        (await PresignAsync([new("a.enc", "application/octet-stream", OneGb + overhead + 1)], isEncrypted: true))
+    }
+
+    [Fact]
+    public async Task Presign_LetsAnEncryptedBundleOfExactly5GbOfPlaintextThrough_ButNoMore()
+    {
+        // Five 1 GB files encrypt to 5 GB plus their tags, which the plain 5 GB limit alone would refuse.
+        var fullBundle = Enumerable.Range(1, 5)
+            .Select(i => new FileItemInputDto($"part{i}.enc", "application/octet-stream", EncryptedStreamFormat.EncryptedSize(OneGb)))
+            .ToList();
+        (await PresignAsync(fullBundle, isEncrypted: true)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // The bound itself, and one byte past it.
+        long maxForOneFile = EncryptedStreamFormat.MaxEncryptedTotal(5 * OneGb, 1);
+        (await PresignAsync([new("a.enc", "application/octet-stream", maxForOneFile)], isEncrypted: true))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+        (await PresignAsync([new("a.enc", "application/octet-stream", maxForOneFile + 1)], isEncrypted: true))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        (await PresignAsync([new("a.bin", "application/octet-stream", 2 * OneGb)]))
-            .StatusCode.Should().Be(HttpStatusCode.OK, "the per-file cap only applies to encrypted bundles");
+    }
+
+    [Fact]
+    public async Task Presign_DoesNotGivePlainBundlesTheEncryptionAllowance()
+    {
+        (await PresignAsync([new("a.bin", "application/octet-stream", 5 * OneGb + 1)]))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Theory]

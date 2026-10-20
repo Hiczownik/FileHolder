@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
     describeSaveResult,
     isWebKitUserAgent,
+    MAX_IN_MEMORY_BYTES,
+    memoryOnlyLimitProblem,
     planSaveMethods,
     saveInMemory,
     saveStreamToDisk,
@@ -135,6 +137,26 @@ describe('saveStreamToDisk', () => {
     });
 });
 
+describe('memoryOnlyLimitProblem', () => {
+    const memoryOnly = { methods: [{ name: 'memory' as const, save: vi.fn() }], skipped: [] };
+    const canStream = { methods: [{ name: 'service-worker' as const, save: vi.fn() }, ...memoryOnly.methods], skipped: [] };
+
+    it('lets anything through when the browser can stream to disk', () => {
+        expect(memoryOnlyLimitProblem(MAX_IN_MEMORY_BYTES * BYTE_COUNT, canStream)).toBeNull();
+    });
+
+    it('lets content up to the cap through on a memory-only browser', () => {
+        expect(memoryOnlyLimitProblem(MAX_IN_MEMORY_BYTES, memoryOnly)).toBeNull();
+    });
+
+    it('refuses more than the cap on a memory-only browser, with advice', () => {
+        const problem = memoryOnlyLimitProblem(MAX_IN_MEMORY_BYTES + 1, memoryOnly);
+
+        expect(problem).toContain('can only save up to 1 GB');
+        expect(problem).toContain('Chrome, Edge or Firefox');
+    });
+});
+
 describe('saveInMemory', () => {
     beforeEach(() => {
         vi.mocked(saveBlobAsFile).mockClear();
@@ -152,12 +174,12 @@ describe('saveInMemory', () => {
         const cancel = vi.fn();
         const source = new ReadableStream<Uint8Array>({ cancel });
 
-        await expect(saveInMemory(source, { fileName: 'a.bin', sizeBytes: SMALL_CAP + 1 }, SMALL_CAP)).rejects.toThrow('can only save files up to');
+        await expect(saveInMemory(source, { fileName: 'a.bin', sizeBytes: SMALL_CAP + 1 }, SMALL_CAP)).rejects.toThrow('can only save up to');
         expect(cancel).toHaveBeenCalled();
     });
 
     it('stops at the cap even when the declared size was too small', async () => {
-        await expect(saveInMemory(streamOf(BYTES), { fileName: 'a.bin', sizeBytes: 1 }, SMALL_CAP)).rejects.toThrow('can only save files up to');
+        await expect(saveInMemory(streamOf(BYTES), { fileName: 'a.bin', sizeBytes: 1 }, SMALL_CAP)).rejects.toThrow('can only save up to');
         expect(saveBlobAsFile).not.toHaveBeenCalled();
     });
 });

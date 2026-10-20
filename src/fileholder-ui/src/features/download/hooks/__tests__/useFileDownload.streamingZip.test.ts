@@ -6,7 +6,7 @@ import { downloadApi } from '../../api/downloadApi';
 import { downloadSessionStore } from '../../services/downloadSessionStore';
 import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
 import { chunkCount, createStreamParams, encryptChunkRange, MIN_STREAM_CHUNK_SIZE, serializeStreamParams, STREAM_TAG_BYTES } from '../../../../shared/utils/crypto/streamCipher';
-import { saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
+import { MAX_IN_MEMORY_BYTES, saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
 import type { FileGroupMetadataResponse } from '../../types';
 
 vi.mock('../../../../shared/utils/downloadUtils', () => ({
@@ -46,7 +46,8 @@ const FILES: readonly PlainFile[] = [
     { manifestId: 'uuid-b', serverId: 'srv-b', fileName: 'notes.txt', bytes: pattern(SMALL_FILE_BYTES, SMALL_SEED) },
 ];
 
-const buildBundle = async (files: readonly PlainFile[]) => {
+/** `claimedSizeOf` is what the manifest states for each file; by default its real size. */
+const buildBundle = async (files: readonly PlainFile[], claimedSizeOf: (file: PlainFile) => number = (file) => file.bytes.byteLength) => {
     const salt = cryptoEngine.generateSalt();
     const { kWrap } = await cryptoEngine.deriveDualKeys(PASSWORD, salt);
     const masterKey = await cryptoEngine.generateKey();
@@ -74,7 +75,7 @@ const buildBundle = async (files: readonly PlainFile[]) => {
         isUnlocked: true,
         keyEnvelope: await cryptoEngine.wrapMasterKey(masterKey, kWrap),
         encryptedManifest: await cryptoEngine.encryptJson(masterKey, encrypted.map(({ file, params }) => ({
-            id: file.manifestId, fileName: file.fileName, sizeBytes: file.bytes.byteLength, contentType: 'application/octet-stream', stream: serializeStreamParams(params),
+            id: file.manifestId, fileName: file.fileName, sizeBytes: claimedSizeOf(file), contentType: 'application/octet-stream', stream: serializeStreamParams(params),
         }))),
         files: encrypted.map(({ file, ciphertext }) => ({
             id: file.serverId, fileName: `${file.manifestId}.enc`, sizeBytes: ciphertext.byteLength, contentType: 'application/octet-stream',
@@ -178,5 +179,18 @@ describe('useFileDownload streaming ZIP of an encrypted bundle', () => {
         const result = await unlockAndDownloadAll(bundle);
 
         expect(result.current.error).toContain('Decryption failed at chunk 1');
+    });
+
+    it('refuses a ZIP over what this browser can save in memory, before using up a download', async () => {
+        // Each file fits under the cap on its own; together they don't.
+        const justOverHalfTheCap = MAX_IN_MEMORY_BYTES / FILES.length + 1;
+        const bundle = await buildBundle(FILES, () => justOverHalfTheCap);
+        serveCiphertexts(bundle.ciphertexts, []);
+
+        const result = await unlockAndDownloadAll(bundle);
+
+        expect(result.current.error).toContain('can only save up to 1 GB');
+        expect(downloadApi.openDownloadSession).not.toHaveBeenCalled();
+        expect(saveStreamToDisk).not.toHaveBeenCalled();
     });
 });

@@ -57,6 +57,11 @@ docker compose up --build
 * **Metrics** are served only on port 9464 (`Metrics:Port`), which compose never publishes; Prometheus scrapes `api:9464` over the internal network.
 * **Storage addresses** (`Storage:ServiceUrl` for the API, `Storage:PublicBaseUrl` for browsers) may each be `http://` or `https://`. Upload and download links follow `PublicBaseUrl`'s scheme, so when the app is served over HTTPS, storage must be too, or browsers block the links as mixed content.
 
+### Upload Limits & Encrypted Downloads
+* **Bundles** hold up to 50 files and 5 GB in total (`UploadLimits:MaxBundleSizeBytes`), encrypted or not. For encrypted bundles the limit is measured before encryption.
+* **Encrypted files** are encrypted and decrypted in the browser in 4 MiB chunks, so their size doesn't depend on the browser's memory. Downloads are written to disk as they decrypt: through a service worker (Chrome, Edge, Firefox), otherwise a "Save as" dialog, otherwise the site's private storage (OPFS, which Safari has).
+* **Browsers with none of those** save in memory, capped at 1 GB. They are told before the download starts (so no download is used up) to open the link in Chrome, Edge or Firefox for anything larger. Safari's behaviour on real Apple devices hasn't been verified yet.
+
 ---
 
 ## 🧪 Running the Test Suites
