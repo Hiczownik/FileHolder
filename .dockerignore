@@ -1,0 +1,10 @@
+# Build context of the API image. It needs only the solution, Directory.Build.props and the projects under src/.
+**/bin/
+**/obj/
+**/node_modules/
+.git/
+.idea/
+.vs/
+.env
+src/fileholder-ui/
+tests/
