@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { executeMultipartUpload, fileSource, PART_URL_MAX_AGE_MS, type UploadSource } from '../multipartUploader';
 import { uploadApi } from '../../api/uploadApi';
+import { createConcurrencyLimiter } from '../../../../shared/utils/concurrencyLimiter';
 import type { PresignPartBatchRequest, PresignedItem } from '../../../download/types';
 
 const PART_SIZE_BYTES = 4;
@@ -10,6 +11,10 @@ const CONCURRENCY = 4;
 const TWO_PARTS = 2;
 const PRESIGN_CALLS_WITH_ONE_RETRY = 2;
 const MAX_ATTEMPTS_PER_PART = 3;
+const SHARED_LIMIT = 2;
+const TWO_UPLOADS = 2;
+const PARTS_PER_FILE = 6;
+const UPLOAD_DELAY_MS = 5;
 
 const createItem = (totalParts: number): PresignedItem => ({
     fileName: 'big.bin',
@@ -92,5 +97,34 @@ describe('executeMultipartUpload', () => {
             .rejects.toThrow('network down');
         expect(uploadApi.uploadMultipartChunkDirectToS3).toHaveBeenCalledTimes(MAX_ATTEMPTS_PER_PART);
         expect(completeSpy).not.toHaveBeenCalled();
+    });
+
+    it('shares a limiter with other uploads, never building or sending more parts at once than it allows', async () => {
+        mockPresign();
+        let inFlight = 0;
+        let maxInFlight = 0;
+        // Counts a part from the moment it is read (for an encrypted file, encrypted into memory) until it is sent.
+        const counted = (source: UploadSource): UploadSource => ({
+            size: source.size,
+            read: async (start, end) => {
+                inFlight++;
+                maxInFlight = Math.max(maxInFlight, inFlight);
+                return source.read(start, end);
+            },
+        });
+        vi.spyOn(uploadApi, 'uploadMultipartChunkDirectToS3').mockImplementation(async () => {
+            await new Promise((resolve) => setTimeout(resolve, UPLOAD_DELAY_MS));
+            inFlight--;
+            return 'etag';
+        });
+        const limiter = createConcurrencyLimiter(SHARED_LIMIT);
+
+        await Promise.all([
+            executeMultipartUpload(counted(createFile(PARTS_PER_FILE)), createItem(PARTS_PER_FILE), UPLOAD_TOKEN, { concurrency: CONCURRENCY, limiter }),
+            executeMultipartUpload(counted(createFile(PARTS_PER_FILE)), { ...createItem(PARTS_PER_FILE), uploadId: 'upload_2' }, UPLOAD_TOKEN, { concurrency: CONCURRENCY, limiter }),
+        ]);
+
+        expect(maxInFlight).toBe(SHARED_LIMIT);
+        expect(uploadApi.uploadMultipartChunkDirectToS3).toHaveBeenCalledTimes(PARTS_PER_FILE * TWO_UPLOADS);
     });
 });

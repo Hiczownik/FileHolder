@@ -10,11 +10,16 @@ import {
 import { executeMultipartUpload, fileSource } from "./multipartUploader";
 import { isExtensionForbidden } from "../../../shared/utils/fileNameSafety";
 import { formatSize } from "../../../shared/utils/formatSize";
+import { createConcurrencyLimiter } from "../../../shared/utils/concurrencyLimiter";
 
 const PERCENT_COMPLETE = 100;
 // Progress stops short of 100% until every file has finished uploading.
 const MAX_PERCENT_BEFORE_CONFIRM = 99;
 const MULTIPART_CONCURRENCY = 4;
+// Parts (or whole small files) being read, encrypted and sent at once, across all the bundle's files. Encrypted
+// parts are built in memory just before they are sent (16 MiB each, a few copies while encrypting), so this is
+// what bounds memory however many files a bundle has. Browsers open about 6 connections per host anyway.
+const MAX_PARTS_IN_FLIGHT = 4;
 
 /** Fails before anything is uploaded, with the same limit the server enforces at presign. */
 function assertWithinBundleLimit(files: readonly File[]): void {
@@ -55,6 +60,7 @@ export async function executeStandardUploadWorkflow(
         onProgress(percent);
     };
 
+    const limiter = createConcurrencyLimiter(MAX_PARTS_IN_FLIGHT);
     const uploadTasks = items.map(async (item, index) => {
         const currentFile = files[index];
 
@@ -65,6 +71,7 @@ export async function executeStandardUploadWorkflow(
                 presign.uploadToken, 
                 {
                     concurrency: MULTIPART_CONCURRENCY,
+                    limiter,
                     signal,
                     onChunkUploaded: (chunkSize) => {
                         fileUploadedBytes[index] += chunkSize;
@@ -76,10 +83,11 @@ export async function executeStandardUploadWorkflow(
             if (!item.uploadUrl) {
                 throw new Error(`Missing upload URL for file ${item.fileName}`);
             }
-            await uploadApi.uploadDirectToS3(item.uploadUrl, currentFile, (percent) => {
+            const uploadUrl = item.uploadUrl;
+            await limiter.run(() => uploadApi.uploadDirectToS3(uploadUrl, currentFile, (percent) => {
                 fileUploadedBytes[index] = Math.round((currentFile.size * percent) / PERCENT_COMPLETE);
                 syncProgress();
-            });
+            }));
         }
     });
 
@@ -157,6 +165,7 @@ export async function executeEncryptedUploadWorkflow(
         onProgress(percent);
     };
 
+    const limiter = createConcurrencyLimiter(MAX_PARTS_IN_FLIGHT);
     const uploadTasks = items.map(async (item, index) => {
         const encryptedItem = prepared.files[index];
 
@@ -170,6 +179,7 @@ export async function executeEncryptedUploadWorkflow(
                 presign.uploadToken,
                 {
                     concurrency: MULTIPART_CONCURRENCY,
+                    limiter,
                     signal,
                     onChunkUploaded: (chunkSize) => {
                         fileUploadedBytes[index] += chunkSize;
@@ -181,11 +191,15 @@ export async function executeEncryptedUploadWorkflow(
             if (!item.uploadUrl) {
                 throw new Error(`Missing upload URL for file ${item.fileName}`);
             }
-            // Single uploads are at most the multipart threshold (50 MB), so encrypting them whole is fine.
-            const ciphertext = await encryptWholeFile(encryptedItem);
-            await uploadApi.uploadDirectToS3(item.uploadUrl, ciphertext, (percent) => {
-                fileUploadedBytes[index] = Math.round((encryptedItem.encryptedSize * percent) / PERCENT_COMPLETE);
-                syncProgress();
+            // Single uploads are at most the multipart threshold (50 MB), so encrypting one whole is fine; holding a
+            // slot while encrypting keeps many of them from being encrypted into memory at the same time.
+            const uploadUrl = item.uploadUrl;
+            await limiter.run(async () => {
+                const ciphertext = await encryptWholeFile(encryptedItem);
+                await uploadApi.uploadDirectToS3(uploadUrl, ciphertext, (percent) => {
+                    fileUploadedBytes[index] = Math.round((encryptedItem.encryptedSize * percent) / PERCENT_COMPLETE);
+                    syncProgress();
+                });
             });
         }
     });
