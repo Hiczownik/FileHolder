@@ -1,0 +1,9 @@
+# Local settings for reaching the stack from a phone over HTTPS tunnels (README: "Testing from a Phone").
+# Copy this file to docker-compose.override.yml, which git ignores and docker compose merges in automatically,
+# replace the address below, then run: docker compose up -d api
+services:
+  api:
+    environment:
+      # The storage tunnel's address. Upload and download links handed to the phone point here, so they must
+      # be HTTPS too; plain HTTP links would be blocked on an HTTPS page as mixed content.
+      Storage__PublicBaseUrl: "https://REPLACE-WITH-YOUR-STORAGE-TUNNEL.trycloudflare.com"

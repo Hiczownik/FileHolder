@@ -81,3 +81,23 @@ npx playwright test
 ```bash
 npx playwright test --ui
 ```
+
+### 3. Testing from a Phone (e.g. Safari on iPhone)
+Encrypted downloads are saved differently per browser (see *Upload Limits & Encrypted Downloads*), and CI can't run real Safari. To check a phone by hand, it has to reach your local stack **over HTTPS**: Safari only enables service workers and its private file storage (OPFS) on HTTPS, so a plain `http://<your-PC-IP>:3000` test would silently fall back to saving in memory and prove nothing.
+
+1. **Run the current stack.** Older builds don't route the API through the UI: `docker compose up -d --build`
+2. **Open two HTTPS tunnels** with [Cloudflare quick tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) (free, no account; on Windows `winget install --id Cloudflare.cloudflared`), each in its own terminal. Each prints a temporary `https://….trycloudflare.com` address:
+   ```bash
+   cloudflared tunnel --url http://localhost:3000   # the app
+   cloudflared tunnel --url http://localhost:9000   # storage: upload and download links point straight at it
+   ```
+3. **Point upload and download links at the storage tunnel:** copy `docker-compose.override.example.yml` to `docker-compose.override.yml` (git-ignored), put the storage tunnel's address in it, then `docker compose up -d api`.
+4. **Upload through the app tunnel's address** (on the PC is fine), so the share link uses that address too. Open the share link on the phone with `?diagnostics` added, e.g. `https://….trycloudflare.com/f/AbCd1234?diagnostics`. A *Diagnostics* panel shows which saving methods the browser will try, why others are left out, the free site storage, and how the last download was saved. **Copy** puts the whole report on the clipboard.
+5. **Checks:**
+   - A small encrypted file downloads to *Files → Downloads* and opens; the panel says `via opfs`.
+   - An encrypted file of about 1.5 GB (over the 1 GB in-memory cap) also says `via opfs`. If the page instead says the browser *can only save up to 1 GB*, the panel's *Left out up front* / *Skipped* reasons say why OPFS wasn't used.
+   - *Download All* on a multi-file encrypted bundle gives a ZIP that opens in Files.
+   - A tampered file must fail with an error, not save. Tamper with the stored copy (Git Bash on Windows): `scripts/tamper-stored-file.sh <share-token> [file-number] [byte-offset]`. It flips one byte (by default in the middle of the file) and prints the command that restores it.
+6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the MinIO console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api`.
+
+If uploads fail with `403 SignatureDoesNotMatch`, the storage tunnel isn't passing the original host name on to MinIO (upload links are signed for it). A named Cloudflare tunnel has a fixed host name that can be set with `--http-host-header`. Upload parts are 16 MiB and single uploads at most 50 MB, well under Cloudflare's per-request size limit.

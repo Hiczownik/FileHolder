@@ -27,6 +27,8 @@ export const useFileDownload = (shareToken?: string) => {
     const [isUnlocking, setIsUnlocking] = useState<boolean>(false);
     const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
     const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
+    // How the last encrypted download was saved, for the ?diagnostics panel; the console gets the same line.
+    const [lastSaveReport, setLastSaveReport] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -186,7 +188,9 @@ export const useFileDownload = (shareToken?: string) => {
                 // Written to disk as it decrypts: memory stays at about one chunk.
                 const saved = await saveStreamToDisk(decrypted, { fileName, sizeBytes: fileMeta?.sizeBytes });
                 // Says which saving method this browser used and why it skipped the others; handy on a new browser or device.
-                console.info(`[FileHolder] Saved "${fileName}" ${describeSaveResult(saved)}.`);
+                const report = `Saved "${fileName}" ${describeSaveResult(saved)}.`;
+                console.info(`[FileHolder] ${report}`);
+                setLastSaveReport(report);
                 return;
             }
 
@@ -238,7 +242,9 @@ export const useFileDownload = (shareToken?: string) => {
                 const zipName = `${safeTitle}_${shareToken}.zip`;
                 // Entries are stored uncompressed (encrypted content doesn't compress), with Zip64 past 4 GB.
                 const saved = await saveStreamToDisk(makeZip(decryptedEntries(0)), { fileName: zipName });
-                console.info(`[FileHolder] Saved "${zipName}" ${describeSaveResult(saved)}.`);
+                const report = `Saved "${zipName}" ${describeSaveResult(saved)}.`;
+                console.info(`[FileHolder] ${report}`);
+                setLastSaveReport(report);
                 return;
             }
 
@@ -262,6 +268,7 @@ export const useFileDownload = (shareToken?: string) => {
         downloadingFileId,
         isDownloadingAll,
         error,
+        lastSaveReport,
         setPassword,
         handleUnlock,
         handleDownloadFile,

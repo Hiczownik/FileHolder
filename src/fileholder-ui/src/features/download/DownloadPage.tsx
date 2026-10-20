@@ -1,16 +1,20 @@
 import React from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { ShieldAlert, Download, ShieldCheck } from 'lucide-react';
 import { useFileDownload } from './hooks/useFileDownload';
 import { BundleHeader } from './components/BundleHeader';
 import { PasswordPrompt } from './components/PasswordPrompt';
 import { FileItemRow } from './components/FileItemRow';
 import { ZipDownloadButton } from './components/ZipDownloadButton';
+import { SaveDiagnostics } from './components/SaveDiagnostics';
 import { Button } from '../../shared/components/Button';
 import { StatusAlert } from '../../shared/components/StatusAlert';
 
 export const DownloadPage: React.FC = () => {
     const { shareToken } = useParams<{ shareToken: string }>();
+    // Adding ?diagnostics to a share link shows how this browser saves encrypted downloads (see SaveDiagnostics).
+    const [searchParams] = useSearchParams();
+    const showDiagnostics = searchParams.has('diagnostics');
     const {
         metadata,
         password,
@@ -19,6 +23,7 @@ export const DownloadPage: React.FC = () => {
         downloadingFileId,
         isDownloadingAll,
         error,
+        lastSaveReport,
         setPassword,
         handleUnlock,
         handleDownloadFile,
@@ -112,6 +117,8 @@ export const DownloadPage: React.FC = () => {
                         </div>
                     </>
                 )}
+
+                {showDiagnostics && <SaveDiagnostics lastSaveReport={lastSaveReport} />}
             </div>
         </div>
     );

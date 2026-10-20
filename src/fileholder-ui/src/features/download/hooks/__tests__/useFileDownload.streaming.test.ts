@@ -125,6 +125,7 @@ describe('useFileDownload streaming decryption', () => {
 
         expect(result.current.error).toBeNull();
         expect(vi.mocked(saveStreamToDisk).mock.calls[0][1]).toEqual({ fileName: FILE_NAME, sizeBytes: FILE_SIZE });
+        expect(result.current.lastSaveReport).toBe(`Saved "${FILE_NAME}" via service-worker.`);
         expect(new Uint8Array(await new Blob(saved as BlobPart[]).arrayBuffer())).toEqual(plaintext);
     });
 
