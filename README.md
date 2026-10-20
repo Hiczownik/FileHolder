@@ -60,7 +60,7 @@ docker compose up --build
 ### Upload Limits & Encrypted Downloads
 * **Bundles** hold up to 50 files and 5 GB in total (`UploadLimits:MaxBundleSizeBytes`), encrypted or not. For encrypted bundles the limit is measured before encryption.
 * **Encrypted files** are encrypted and decrypted in the browser in 4 MiB chunks, so their size doesn't depend on the browser's memory. Downloads are written to disk as they decrypt: through a service worker (Chrome, Edge, Firefox), otherwise a "Save as" dialog, otherwise the site's private storage (OPFS, which Safari has).
-* **Browsers with none of those** save in memory, capped at 1 GB. They are told before the download starts (so no download is used up) to open the link in Chrome, Edge or Firefox for anything larger. Safari's behaviour on real Apple devices hasn't been verified yet.
+* **Browsers with none of those** save in memory, capped at 1 GB. They are told before the download starts (so no download is used up) to open the link in Chrome, Edge or Firefox for anything larger. Checked on a real iPhone (iOS 18.7, Safari 26.6.1): a 1.5 GB encrypted file, a multi-file ZIP and a tampered file (refused) all behaved correctly, saving through OPFS.
 
 ---
 
@@ -99,5 +99,7 @@ Encrypted downloads are saved differently per browser (see *Upload Limits & Encr
    - *Download All* on a multi-file encrypted bundle gives a ZIP that opens in Files.
    - A tampered file must fail with an error, not save. Tamper with the stored copy (Git Bash on Windows): `scripts/tamper-stored-file.sh <share-token> [file-number] [byte-offset]`. It flips one byte (by default in the middle of the file) and prints the command that restores it.
 6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the MinIO console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api`.
+
+**If `cloudflared` reports it can't reach port 7844** (some networks block it), use [Tailscale](https://tailscale.com) instead: it only needs normal HTTPS, and the addresses are reachable by your own devices only. Install it on the PC and the phone with the same account, turn on *MagicDNS* and *HTTPS Certificates* in the admin console, then `tailscale serve --bg --https=443 http://127.0.0.1:3000` and `tailscale serve --bg --https=8443 http://127.0.0.1:9000`. Set `Storage__PublicBaseUrl` to `https://<your-pc>.<tailnet>.ts.net:8443` (`tailscale serve status` shows the address), and stop serving afterwards with `tailscale serve reset`.
 
 If uploads fail with `403 SignatureDoesNotMatch`, the storage tunnel isn't passing the original host name on to MinIO (upload links are signed for it). A named Cloudflare tunnel has a fixed host name that can be set with `--http-host-header`. Upload parts are 16 MiB and single uploads at most 50 MB, well under Cloudflare's per-request size limit.

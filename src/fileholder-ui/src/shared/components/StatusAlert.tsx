@@ -8,7 +8,7 @@ const alertVariants = cva('p-4 rounded-xl border text-sm flex items-start gap-3'
         variant: {
             error: 'bg-rose-500/10 border-rose-500/30 text-rose-400',
             success: 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400',
-            warning: 'bg-amber-500/10 borer-amber-500/30 text-amber-400',
+            warning: 'bg-amber-500/10 border-amber-500/30 text-amber-400',
             info: 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400',
         },
     },
