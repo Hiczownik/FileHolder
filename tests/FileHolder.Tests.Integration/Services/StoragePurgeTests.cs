@@ -306,6 +306,47 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
     }
 
     [Fact]
+    public async Task PurgeExpiredFilesAsync_WaitsForALongDownloadStillRunning_ThenDeletes()
+    {
+        // The bundle's last download was counted (and the bundle closed) long ago, but that download is still
+        // running, e.g. a 5 GB ZIP on a slow connection: its session hasn't ended.
+        var storageKey = "uploads/longdl_" + Guid.NewGuid().ToString("N") + ".pdf";
+        var closedLongAgo = DateTime.UtcNow - TimeSpan.FromHours(2);
+        var group = await SeedGroupAsync("longdl_", storageKey, maxDownloads: 1, downloadCount: 1, deletedAt: closedLongAgo);
+        var session = new DownloadSession { FileGroupId = group.Id, CreatedAt = closedLongAgo, ExpiresAt = DateTime.UtcNow.AddHours(4) };
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.DownloadSessions.Add(session);
+            await dbContext.SaveChangesAsync();
+        }
+
+        factory.MockS3Client.ClearReceivedCalls();
+        await RunPurgeAsync();
+
+        (await LoadGroupAsync(group.Id)).StoragePurgedAt.Should().BeNull("the download that is still running needs the files");
+        await factory.MockS3Client.DidNotReceive().DeleteObjectsAsync(
+            Arg.Is<DeleteObjectsRequest>(req => req != null && req.Objects.Any(o => o.Key == storageKey)),
+            Arg.Any<CancellationToken>());
+
+        // Once the session has ended, and the last URL it could have issued has expired too, the files go.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.DownloadSessions
+                .Where(s => s.Id == session.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.ExpiresAt, DateTime.UtcNow - StoragePurgeService.DeletionGracePeriod - TimeSpan.FromMinutes(1)));
+        }
+
+        await RunPurgeAsync();
+
+        (await LoadGroupAsync(group.Id)).StoragePurgedAt.Should().NotBeNull();
+        await factory.MockS3Client.Received(1).DeleteObjectsAsync(
+            Arg.Is<DeleteObjectsRequest>(req => req != null && req.Objects.Any(o => o.Key == storageKey)),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task PurgeExpiredFilesAsync_WhenStorageDeleteFails_LeavesGroupPendingForRetry()
     {
         var storageKey = "uploads/delete_fail_" + Guid.NewGuid().ToString("N") + ".pdf";

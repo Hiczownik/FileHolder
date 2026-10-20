@@ -7,9 +7,12 @@ namespace FileHolder.Core.Configuration;
 public static class DownloadTimings
 {
     /// <summary>
-    /// How long one counted download (a download session) can keep requesting file URLs.
+    /// How long one counted download (a download session) can keep requesting file URLs, though never past the
+    /// group's own expiry. Long enough for a 5 GB bundle on a slow connection, and for retrying after a dropped
+    /// connection without counting another download. Holding a session lets its holder fetch the files again
+    /// meanwhile, so this is also the cap on that.
     /// </summary>
-    public static readonly TimeSpan SessionLifetime = TimeSpan.FromMinutes(15);
+    public static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(6);
 
     /// <summary>
     /// Validity of a presigned GET URL handed out within a session.
@@ -17,11 +20,11 @@ public static class DownloadTimings
     public static readonly TimeSpan PresignedUrlLifetime = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// The last URL can be issued just before a session ends and stays valid for its own lifetime,
-    /// so storage must not be purged before both have elapsed (plus a safety margin).
+    /// How long storage outlives both the group closing and its last download session ending: a URL issued just
+    /// before either stays valid for its own lifetime (plus a safety margin). The purge also checks the sessions
+    /// themselves, so a download that runs for hours is never cut off part way.
     /// </summary>
-    public static readonly TimeSpan StorageDeletionGracePeriod =
-        SessionLifetime + PresignedUrlLifetime + TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan StorageDeletionGracePeriod = PresignedUrlLifetime + TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Expired session rows are kept this long before the purge worker removes them.
