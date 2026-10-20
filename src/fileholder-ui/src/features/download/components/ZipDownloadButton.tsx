@@ -5,9 +5,11 @@ interface Props {
     fileCount: number;
     isDownloading: boolean;
     onDownloadZip: () => void;
+    /** Shown while downloading instead of the generic text, e.g. "Decrypting… 640 MB of 1.5 GB". */
+    progressText?: string;
 }
 
-export const ZipDownloadButton: React.FC<Props> = ({ fileCount, isDownloading, onDownloadZip }) => {
+export const ZipDownloadButton: React.FC<Props> = ({ fileCount, isDownloading, onDownloadZip, progressText }) => {
     return (
         <Button
             type="button"
@@ -15,7 +17,7 @@ export const ZipDownloadButton: React.FC<Props> = ({ fileCount, isDownloading, o
             size="md"
             onClick={onDownloadZip}
             isLoading={isDownloading}
-            loadingText="Streaming & Compressing ZIP..."
+            loadingText={progressText ?? "Streaming & Compressing ZIP..."}
             className="w-full text-indigo-400 hover:border-indigo-500/50"
         >
             <Archive className="w-4 h-4" />

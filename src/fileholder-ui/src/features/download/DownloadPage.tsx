@@ -7,6 +7,7 @@ import { PasswordPrompt } from './components/PasswordPrompt';
 import { FileItemRow } from './components/FileItemRow';
 import { ZipDownloadButton } from './components/ZipDownloadButton';
 import { SaveDiagnostics } from './components/SaveDiagnostics';
+import { describeDownloadProgress } from '../../shared/utils/download/progress';
 import { Button } from '../../shared/components/Button';
 import { StatusAlert } from '../../shared/components/StatusAlert';
 
@@ -24,6 +25,7 @@ export const DownloadPage: React.FC = () => {
         isDownloadingAll,
         error,
         lastSaveReport,
+        downloadProgress,
         setPassword,
         handleUnlock,
         handleDownloadFile,
@@ -51,6 +53,8 @@ export const DownloadPage: React.FC = () => {
     }
 
     const isLocked = metadata?.requiresPassword && !metadata?.isUnlocked;
+    // Encrypted downloads report decrypted bytes; without it a long one looks as if it has stopped.
+    const progressText = downloadProgress ? describeDownloadProgress(downloadProgress) : undefined;
 
     return (
         <div className="max-w-xl mx-auto my-12 px-4">
@@ -88,7 +92,7 @@ export const DownloadPage: React.FC = () => {
                                 size="lg"
                                 onClick={() => handleDownloadFile(metadata.files[0].id)}
                                 isLoading={downloadingFileId === metadata.files[0].id}
-                                loadingText="Decrypting & Downloading File..."
+                                loadingText={progressText ?? "Decrypting & Downloading File..."}
                             >
                                 <Download className="w-4 h-4" />
                                 <span>Download File</span>
@@ -100,6 +104,7 @@ export const DownloadPage: React.FC = () => {
                                 fileCount={metadata.fileCount}
                                 isDownloading={isDownloadingAll}
                                 onDownloadZip={handleDownloadAllZip}
+                                progressText={progressText}
                             />
                         )}
 

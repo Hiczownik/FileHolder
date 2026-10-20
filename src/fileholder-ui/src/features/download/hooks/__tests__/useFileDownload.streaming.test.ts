@@ -129,6 +129,47 @@ describe('useFileDownload streaming decryption', () => {
         expect(new Uint8Array(await new Blob(saved as BlobPart[]).arrayBuffer())).toEqual(plaintext);
     });
 
+    it('reports decrypted bytes while the download runs, and clears them when it ends', async () => {
+        const bundle = await buildStreamBundle();
+        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(bundle.locked);
+        vi.spyOn(downloadApi, 'unlockGroup').mockResolvedValue(bundle.unlocked);
+        vi.spyOn(downloadApi, 'openDownloadSession').mockResolvedValue({
+            downloadSessionId: 'session', expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(), remainingDownloads: null,
+        });
+        vi.spyOn(downloadApi, 'getDownloadUrl').mockResolvedValue('storage://stream');
+        vi.spyOn(downloadApi, 'openCiphertextStream').mockResolvedValue(asNetworkStream(bundle.ciphertext));
+        // The saver reads one decrypted chunk, then waits, so the test can look at the progress mid-download.
+        let releaseSaver: () => void = () => undefined;
+        const saverMayFinish = new Promise<void>((resolve) => { releaseSaver = resolve; });
+        vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
+            const reader = stream.getReader();
+            await reader.read();
+            await saverMayFinish;
+            await readAll(reader, []);
+            return { method: 'opfs', skipped: [] };
+        });
+
+        const { result } = renderHook(() => useFileDownload(bundle.locked.shareToken));
+        await waitFor(() => expect(result.current.isLoading).toBe(false));
+        act(() => result.current.setPassword(PASSWORD));
+        await act(async () => {
+            await result.current.handleUnlock({ preventDefault: vi.fn() } as unknown as React.FormEvent);
+        });
+        let downloading: Promise<void> = Promise.resolve();
+        act(() => {
+            downloading = result.current.handleDownloadFile(SERVER_ID);
+        });
+
+        await waitFor(() => expect(result.current.downloadProgress).toEqual({ receivedBytes: CHUNK, totalBytes: FILE_SIZE }));
+
+        releaseSaver();
+        await act(async () => {
+            await downloading;
+        });
+        expect(result.current.downloadProgress).toBeNull();
+        expect(result.current.error).toBeNull();
+    });
+
     it('shows an error when the downloaded file was tampered with', async () => {
         const bundle = await buildStreamBundle();
         const tampered = bundle.ciphertext.slice();

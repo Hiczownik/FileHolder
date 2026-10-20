@@ -5,6 +5,7 @@ import { bundleDecryptionService } from "../services/bundleDecryptionService";
 import { downloadSessionStore } from "../services/downloadSessionStore";
 import { triggerDirectDownload } from "../../../shared/utils/downloadUtils";
 import { describeSaveResult, DownloadCancelledError, memoryOnlyLimitProblem, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
+import { countingStream, type DownloadProgress } from "../../../shared/utils/download/progress";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import { isAxiosError } from "axios";
 import { makeZip } from "client-zip";
@@ -29,6 +30,18 @@ export const useFileDownload = (shareToken?: string) => {
     const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
     // How the last encrypted download was saved, for the ?diagnostics panel; the console gets the same line.
     const [lastSaveReport, setLastSaveReport] = useState<string | null>(null);
+    // Decrypted bytes so far of the encrypted download in progress, shown on its button; null when none is running.
+    const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
+
+    /** Counts decrypted bytes into downloadProgress; a ZIP's files all add to the same count. */
+    const trackProgress = (totalBytes: number | null): (() => TransformStream<Uint8Array, Uint8Array>) => {
+        let receivedBytes = 0;
+        setDownloadProgress({ receivedBytes, totalBytes });
+        return () => countingStream((byteLength) => {
+            receivedBytes += byteLength;
+            setDownloadProgress({ receivedBytes, totalBytes });
+        });
+    };
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
@@ -183,7 +196,8 @@ export const useFileDownload = (shareToken?: string) => {
                     return;
                 }
 
-                const decrypted = await openDecryptedFile(shareToken, fileId);
+                const counter = trackProgress(fileMeta?.sizeBytes ?? null);
+                const decrypted = (await openDecryptedFile(shareToken, fileId)).pipeThrough(counter());
 
                 // Written to disk as it decrypts: memory stays at about one chunk.
                 const saved = await saveStreamToDisk(decrypted, { fileName, sizeBytes: fileMeta?.sizeBytes });
@@ -204,6 +218,7 @@ export const useFileDownload = (shareToken?: string) => {
             }
         } finally {
             setDownloadingFileId(null);
+            setDownloadProgress(null);
         }
     };
 
@@ -219,11 +234,13 @@ export const useFileDownload = (shareToken?: string) => {
                 const files = metadata.files;
 
                 // Before the session opens, as for single files; the ZIP is about the size of its files together.
-                const tooLarge = memoryOnlyLimitProblem(files.reduce((total, file) => total + file.sizeBytes, 0));
+                const totalBytes = files.reduce((total, file) => total + file.sizeBytes, 0);
+                const tooLarge = memoryOnlyLimitProblem(totalBytes);
                 if (tooLarge) {
                     setError(tooLarge);
                     return;
                 }
+                const counter = trackProgress(totalBytes);
 
                 // client-zip pulls entries one at a time as it writes the archive, so each file is fetched and
                 // decrypted only when its turn comes. That keeps them strictly sequential too: the first file
@@ -231,7 +248,7 @@ export const useFileDownload = (shareToken?: string) => {
                 async function* decryptedEntries(index: number): AsyncGenerator<ZipEntry> {
                     const file = files[index];
                     if (!file) return;
-                    yield { name: file.fileName, input: await openDecryptedFile(token, file.id) };
+                    yield { name: file.fileName, input: (await openDecryptedFile(token, file.id)).pipeThrough(counter()) };
                     yield* decryptedEntries(index + 1);
                 }
 
@@ -257,6 +274,7 @@ export const useFileDownload = (shareToken?: string) => {
             }
         } finally {
             setIsDownloadingAll(false);
+            setDownloadProgress(null);
         }
     };
 
@@ -269,6 +287,7 @@ export const useFileDownload = (shareToken?: string) => {
         isDownloadingAll,
         error,
         lastSaveReport,
+        downloadProgress,
         setPassword,
         handleUnlock,
         handleDownloadFile,
