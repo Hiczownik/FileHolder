@@ -25,6 +25,11 @@ const INVALID_CHARS = /[^\p{L}\p{M}\p{Nd}\p{Pc}.-]/gu;
 // https://regex101.com/?regex=%5B%2F%5C%5C%5D&flags=g&testString=..%2F..%2FStartup%2Fx.bat%0AC%3A%5CUsers%5Cx.bat
 const PATH_SEPARATOR = /[/\\]/;
 
+// Matches the trailing dots and spaces Windows drops when it saves a file: in "invoice.exe. ." the final ". ." matches,
+// so "invoice.exe" is what lands on disk; "report.pdf" has none.
+// https://regex101.com/?regex=%5B.%20%5D%2B%24&flags=gm&testString=invoice.exe.%20.%0Areport.pdf
+const TRAILING_DOTS_AND_SPACES = /[. ]+$/;
+
 // Matches a name made only of dots, like "." or "..", but not "a.b" or ".env".
 // https://regex101.com/?regex=%5E%5C.%2B%24&flags=gm&testString=.%0A..%0Aa.b%0A.env
 const DOTS_ONLY = /^\.+$/;
@@ -43,7 +48,9 @@ const splitExtension = (name: string): { readonly body: string; readonly extensi
  * name like "../../Startup/x.bat" can't climb out of the folder a ZIP is extracted into.
  */
 export function sanitizeFileName(fileName: string): string {
-    const baseName = fileName.split(PATH_SEPARATOR).pop() ?? '';
+    // Trailing dots and spaces go first, as Windows and browsers drop them on saving: otherwise "invoice.exe."
+    // would have no extension here, pass the blocked-extension check, and still be saved as "invoice.exe".
+    const baseName = (fileName.split(PATH_SEPARATOR).pop() ?? '').replace(TRAILING_DOTS_AND_SPACES, '');
     if (baseName.trim() === '') return FALLBACK_NAME;
 
     const { body, extension } = splitExtension(baseName);

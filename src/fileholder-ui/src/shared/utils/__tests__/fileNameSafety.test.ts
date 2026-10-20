@@ -21,6 +21,8 @@ describe('sanitizeFileName', () => {
         ['..', 'unnamed_file'],
         ['.', 'unnamed_file'],
         ['dir/', 'unnamed_file'],
+        ['...', 'unnamed_file'],
+        ['. . .', 'unnamed_file'],
         ['.env', 'unnamed_file.env'],
     ])('falls back to a safe name for %j', (input, expected) => {
         expect(sanitizeFileName(input)).toBe(expected);
@@ -34,8 +36,20 @@ describe('sanitizeFileName', () => {
     });
 });
 
+describe('sanitizeFileName with trailing dots and spaces', () => {
+    it.each([
+        ['report.pdf.', 'report.pdf'],
+        ['report.pdf . ', 'report.pdf'],
+        ['notes...', 'notes'],
+    ])('saves %j as Windows would, as %j', (input, expected) => {
+        expect(sanitizeFileName(input)).toBe(expected);
+    });
+});
+
 describe('isExtensionForbidden', () => {
-    it.each(['evil.exe', 'EVIL.EXE', 'evil.exe ', 'evil.e x e', 'dir/run.ps1', 'archive.tar.bat', 'setup.msi'])(
+    // Windows drops trailing dots and spaces on saving, so "invoice.exe." lands as "invoice.exe".
+    it.each(['evil.exe', 'EVIL.EXE', 'evil.exe ', 'evil.e x e', 'dir/run.ps1', 'archive.tar.bat', 'setup.msi',
+        'invoice.exe.', 'invoice.exe. .', 'invoice.exe . ', 'run.bat...'])(
         'blocks %j',
         (name) => {
             expect(isExtensionForbidden(name)).toBe(true);

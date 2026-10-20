@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import  { FileDropzone } from '../FileDropzone';
 import { userEvent } from '@testing-library/user-event';
@@ -66,5 +66,17 @@ describe('FileDropzone Component', () => {
 
         await user.click(removeButtons[1]);
         expect(handleRemove).toHaveBeenCalledWith(1);
+    });
+
+    it('keeps the browser from opening a dropped file, and selects it instead', () => {
+        const onFilesSelect = vi.fn();
+        const dropped = new File(['%PDF'], 'contract.pdf', { type: 'application/pdf' });
+        render(<FileDropzone selectedFiles={[]} onFilesSelect={onFilesSelect} onRemoveFile={vi.fn()} />);
+
+        // fireEvent returns false when the handler called preventDefault.
+        const browserDefaultRan = fireEvent.drop(screen.getByText('browse'), { dataTransfer: { files: [dropped] } });
+
+        expect(browserDefaultRan).toBe(false);
+        expect(onFilesSelect).toHaveBeenCalledWith([dropped]);
     });
 });
