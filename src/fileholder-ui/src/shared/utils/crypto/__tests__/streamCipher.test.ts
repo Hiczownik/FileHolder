@@ -4,7 +4,6 @@ import {
     chunkNonce,
     createDecryptionStream,
     createStreamParams,
-    decryptAll,
     encryptChunkRange,
     encryptedSize,
     MAX_STREAM_CHUNK_SIZE,
@@ -244,25 +243,6 @@ describe('tampering is always detected', () => {
         expect(outcome.error).toBeInstanceOf(Error);
         expect(outcome.plaintext.byteLength).toBeLessThanOrEqual(DOUBLE * CHUNK);
         expect(outcome.plaintext).toEqual(plaintext.subarray(0, outcome.plaintext.byteLength));
-    });
-});
-
-describe('decryptAll', () => {
-    it('restores a whole ciphertext held in memory', async () => {
-        const key = await generateKey();
-        const params = createStreamParams(CHUNK);
-        const plaintext = patternBytes(TAMPER_FILE_SIZE);
-
-        expect(await decryptAll(key, params, await encryptWhole(key, params, plaintext))).toEqual(plaintext);
-    });
-
-    it('rejects what the stream decoder rejects', async () => {
-        const key = await generateKey();
-        const params = createStreamParams(CHUNK);
-        const ciphertext = await encryptWhole(key, params, patternBytes(TAMPER_FILE_SIZE));
-
-        await expect(decryptAll(key, params, ciphertext.subarray(0, FULL_CHUNKS_IN_TAMPER_FILE * ENCRYPTED_CHUNK))).rejects.toThrow('Decryption failed');
-        await expect(decryptAll(key, params, new Uint8Array(0))).rejects.toThrow('incomplete');
     });
 });
 

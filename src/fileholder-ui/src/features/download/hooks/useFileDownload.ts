@@ -3,7 +3,7 @@ import type { FileGroupMetadataResponse } from "../types";
 import { downloadApi } from "../api/downloadApi";
 import { bundleDecryptionService } from "../services/bundleDecryptionService";
 import { downloadSessionStore } from "../services/downloadSessionStore";
-import { saveBlobAsFile, triggerDirectDownload } from "../../../shared/utils/downloadUtils";
+import { triggerDirectDownload } from "../../../shared/utils/downloadUtils";
 import { describeSaveResult, DownloadCancelledError, memoryOnlyLimitProblem, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import { isAxiosError } from "axios";
@@ -15,7 +15,7 @@ const HTTP_UNAUTHORIZED = 401;
 const ZIP_SESSION_MIN_REMAINING_MS = 60_000;
 interface ZipEntry {
     readonly name: string;
-    readonly input: ReadableStream<Uint8Array> | Uint8Array;
+    readonly input: ReadableStream<Uint8Array>;
 }
 
 const UNLOCK_AGAIN_MESSAGE = 'This encrypted bundle needs to be unlocked again before downloading. Please reload the page and enter the passkey.';
@@ -153,19 +153,15 @@ export const useFileDownload = (shareToken?: string) => {
     };
 
     /**
-     * One file of an encrypted bundle, decrypted: a stream for chunk-encrypted files, decrypted as it downloads
-     * so it never has to fit in memory, or the whole file for bundles in the older one-shot format.
+     * One file of an encrypted bundle, decrypted as it downloads, so it never has to fit in memory.
      */
-    const openDecryptedFile = async (token: string, fileId: string): Promise<ReadableStream<Uint8Array> | Uint8Array> => {
+    const openDecryptedFile = async (token: string, fileId: string): Promise<ReadableStream<Uint8Array>> => {
         const manifestId = bundleDecryptionService.getManifestIdForServerFile(fileId);
         const decryption = await bundleDecryptionService.createDecryptionTransform(manifestId);
         const downloadUrl = await withDownloadSession(token, true,
             (sessionId) => downloadApi.getDownloadUrl(token, fileId, sessionId));
 
-        if (decryption) {
-            return (await downloadApi.openCiphertextStream(downloadUrl)).pipeThrough(decryption);
-        }
-        return bundleDecryptionService.decryptFile(await downloadApi.downloadCiphertextBlob(downloadUrl), manifestId);
+        return (await downloadApi.openCiphertextStream(downloadUrl)).pipeThrough(decryption);
     };
 
     const handleDownloadFile = async (fileId: string) => {
@@ -186,11 +182,6 @@ export const useFileDownload = (shareToken?: string) => {
                 }
 
                 const decrypted = await openDecryptedFile(shareToken, fileId);
-
-                if (decrypted instanceof Uint8Array) {
-                    saveBlobAsFile(new Blob([decrypted as BlobPart], { type: fileMeta?.contentType || 'application/octet-stream' }), fileName);
-                    return;
-                }
 
                 // Written to disk as it decrypts: memory stays at about one chunk.
                 const saved = await saveStreamToDisk(decrypted, { fileName, sizeBytes: fileMeta?.sizeBytes });

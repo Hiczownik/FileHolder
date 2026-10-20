@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BundleDecryptionService } from '../bundleDecryptionService';
 import type { FileItemMetadata } from '../../types';
-import { MAX_STREAM_CHUNK_SIZE } from '../../../../shared/utils/crypto/streamCipher';
+import { createStreamParams, MAX_STREAM_CHUNK_SIZE, serializeStreamParams } from '../../../../shared/utils/crypto/streamCipher';
 
 const FILE_SIZE_BYTES = 1024;
 const ENCRYPTED_SIZE_BYTES = 1052;
@@ -11,6 +11,7 @@ const manifestItem = (id: string, fileName: string): FileItemMetadata => ({
     fileName,
     sizeBytes: FILE_SIZE_BYTES,
     contentType: 'text/plain',
+    stream: serializeStreamParams(createStreamParams()),
 });
 
 const serverFile = (serverId: string, manifestId: string): FileItemMetadata => ({
@@ -101,6 +102,15 @@ describe('BundleDecryptionService.mapManifestToServerFiles', () => {
 
         expect(() => service.mapManifestToServerFiles(hostile, [serverFile('srv-a', 'uuid-a')]))
             .toThrow('invalid encryption settings');
+        expect(service.getManifestIdForServerFile('srv-a')).toBe('srv-a');
+    });
+
+    it('refuses a manifest from the older whole-file format, and registers no mappings', () => {
+        const service = new BundleDecryptionService();
+        const withoutStreamSettings = [manifestItem('uuid-a', 'a.txt'), { ...manifestItem('uuid-b', 'b.txt'), stream: undefined }];
+
+        expect(() => service.mapManifestToServerFiles(withoutStreamSettings, [serverFile('srv-a', 'uuid-a'), serverFile('srv-b', 'uuid-b')]))
+            .toThrow('older version of FileHolder');
         expect(service.getManifestIdForServerFile('srv-a')).toBe('srv-a');
     });
 

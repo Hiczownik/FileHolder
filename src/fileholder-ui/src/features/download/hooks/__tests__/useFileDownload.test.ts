@@ -4,6 +4,7 @@ import { AxiosError, AxiosHeaders } from 'axios';
 import { useFileDownload } from '../useFileDownload';
 import { downloadApi } from '../../api/downloadApi';
 import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
+import { createStreamParams, serializeStreamParams } from '../../../../shared/utils/crypto/streamCipher';
 import type { FileGroupMetadataResponse } from '../../types';
 
 describe('useFileDownload Hook Lifecycle & Cryptographic States', () => {
@@ -106,7 +107,7 @@ describe('useFileDownload Hook Lifecycle & Cryptographic States', () => {
         const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap);
 
         const plaintextManifest = [
-            { id: 'file_uuid_1', fileName: 'secret.txt', sizeBytes: 100, contentType: 'text/plain' },
+            { id: 'file_uuid_1', fileName: 'secret.txt', sizeBytes: 100, contentType: 'text/plain', stream: serializeStreamParams(createStreamParams()) },
         ];
         const encryptedManifestCiphertext = await cryptoEngine.encryptJson(masterKey, plaintextManifest);
 

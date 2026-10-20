@@ -120,14 +120,12 @@ describe('useFileDownload streaming decryption', () => {
             saved.push(...(await readAll(stream.getReader(), [])));
             return { method: 'service-worker', skipped: [] };
         });
-        const wholeFileSpy = vi.spyOn(downloadApi, 'downloadCiphertextBlob');
 
         const result = await unlockAndDownload(bundle, bundle.ciphertext);
 
         expect(result.current.error).toBeNull();
         expect(vi.mocked(saveStreamToDisk).mock.calls[0][1]).toEqual({ fileName: FILE_NAME, sizeBytes: FILE_SIZE });
         expect(new Uint8Array(await new Blob(saved as BlobPart[]).arrayBuffer())).toEqual(plaintext);
-        expect(wholeFileSpy).not.toHaveBeenCalled();
     });
 
     it('shows an error when the downloaded file was tampered with', async () => {

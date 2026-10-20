@@ -93,8 +93,8 @@ export interface FileItemMetadata {
     sizeBytes: number;
     contentType: string;
     /**
-     * Only in an encrypted bundle's manifest: how the file was chunk-encrypted. Absent for files in the
-     * older one-shot format, which bundles uploaded before streaming encryption still use.
+     * Only in an encrypted bundle's manifest, where every file has it: how the file was chunk-encrypted.
+     * Manifests without it come from an older, whole-file format that can no longer be opened.
      */
     stream?: SerializedStreamParams;
 }

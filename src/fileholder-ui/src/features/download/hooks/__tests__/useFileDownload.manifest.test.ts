@@ -4,12 +4,18 @@ import { useFileDownload } from '../useFileDownload';
 import { downloadApi } from '../../api/downloadApi';
 import { downloadSessionStore } from '../../services/downloadSessionStore';
 import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
-import { saveBlobAsFile } from '../../../../shared/utils/downloadUtils';
+import { chunkCount, createStreamParams, encryptChunkRange, MIN_STREAM_CHUNK_SIZE, serializeStreamParams } from '../../../../shared/utils/crypto/streamCipher';
+import { saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
 import type { FileGroupMetadataResponse } from '../../types';
 
 vi.mock('../../../../shared/utils/downloadUtils', () => ({
     saveBlobAsFile: vi.fn(),
     triggerDirectDownload: vi.fn(),
+}));
+
+vi.mock('../../../../shared/utils/download/streamSaving', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../../../../shared/utils/download/streamSaving')>()),
+    saveStreamToDisk: vi.fn(),
 }));
 
 const PASSWORD = 'VaultPass123!';
@@ -28,26 +34,52 @@ const FILE_A: PlainFile = { manifestId: 'uuid-file-a', serverId: 'srv-a', fileNa
 const FILE_B: PlainFile = { manifestId: 'uuid-file-b', serverId: 'srv-b', fileName: 'doc2.txt', content: 'Payload of the second file' };
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
-/** Builds an encrypted bundle exactly like the upload flow does, keyed by manifest ID. */
-const buildEncryptedBundle = async (files: readonly PlainFile[]) => {
+// jsdom's Blob has no .stream(), so streams are built by hand.
+const streamOf = (bytes: Uint8Array): ReadableStream<Uint8Array> =>
+    new ReadableStream({
+        start: (controller) => {
+            controller.enqueue(bytes);
+            controller.close();
+        },
+    });
+
+const readAll = async (reader: ReadableStreamDefaultReader<Uint8Array>, parts: Uint8Array[]): Promise<Uint8Array> => {
+    const { done, value } = await reader.read();
+    if (!done) {
+        parts.push(value);
+        return readAll(reader, parts);
+    }
+    return new Uint8Array(await new Blob(parts as BlobPart[]).arrayBuffer());
+};
+
+
+/**
+ * Builds an encrypted bundle exactly like the upload flow does: each file chunk-encrypted with its own key and
+ * stream settings, keyed by manifest ID. `withStreamSettings: false` makes a manifest in the older, whole-file
+ * format, which can no longer be opened.
+ */
+const buildEncryptedBundle = async (files: readonly PlainFile[], withStreamSettings = true) => {
     const salt = cryptoEngine.generateSalt();
     const { kWrap } = await cryptoEngine.deriveDualKeys(PASSWORD, salt);
     const masterKey = await cryptoEngine.generateKey();
 
-    const ciphertexts = new Map<string, ArrayBuffer>(
-        await Promise.all(files.map(async (file): Promise<[string, ArrayBuffer]> => {
-            const fileKey = await cryptoEngine.deriveFileKey(masterKey, file.manifestId);
-            const packed = await cryptoEngine.encryptBytes(fileKey, encoder.encode(file.content));
-            return [file.serverId, packed.slice().buffer];
-        }))
-    );
+    const encrypted = await Promise.all(files.map(async (file) => {
+        const params = createStreamParams(MIN_STREAM_CHUNK_SIZE);
+        const fileKey = await cryptoEngine.deriveFileKey(masterKey, file.manifestId);
+        const bytes = encoder.encode(file.content);
+        const ciphertext = await encryptChunkRange(fileKey, params, new Blob([bytes as BlobPart]), 0, chunkCount(bytes.byteLength, MIN_STREAM_CHUNK_SIZE));
+        return { file, params, ciphertext };
+    }));
+    const ciphertexts = new Map(encrypted.map(({ file, ciphertext }) => [file.serverId, ciphertext]));
 
-    const manifest = files.map((file) => ({
+    const manifest = encrypted.map(({ file, params }) => ({
         id: file.manifestId,
         fileName: file.fileName,
         sizeBytes: encoder.encode(file.content).byteLength,
         contentType: 'text/plain',
+        ...(withStreamSettings ? { stream: serializeStreamParams(params) } : {}),
     }));
 
     return {
@@ -61,7 +93,7 @@ const buildEncryptedBundle = async (files: readonly PlainFile[]) => {
 describe('useFileDownload E2EE manifest-to-file matching', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
-        vi.mocked(saveBlobAsFile).mockClear();
+        vi.mocked(saveStreamToDisk).mockReset();
         downloadSessionStore.clear(SHARE_TOKEN);
     });
 
@@ -103,9 +135,14 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
             remainingDownloads: null,
         });
         const urlSpy = vi.spyOn(downloadApi, 'getDownloadUrl').mockImplementation(async (_token, fileId) => `storage://${fileId}`);
-        vi.spyOn(downloadApi, 'downloadCiphertextBlob').mockImplementation(
-            async (url) => bundle.ciphertexts.get(url.replace('storage://', ''))!
+        vi.spyOn(downloadApi, 'openCiphertextStream').mockImplementation(
+            async (url) => streamOf(bundle.ciphertexts.get(url.replace('storage://', ''))!)
         );
+        const saved: (readonly [string, string])[] = [];
+        vi.mocked(saveStreamToDisk).mockImplementation(async (stream, file) => {
+            saved.push([file.fileName, decoder.decode(await readAll(stream.getReader(), []))]);
+            return { method: 'memory', skipped: [] };
+        });
 
         const { result } = renderHook(() => useFileDownload(SHARE_TOKEN));
         await waitFor(() => {
@@ -134,9 +171,6 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
         });
 
         expect(result.current.error).toBeNull();
-        const saved = await Promise.all(
-            vi.mocked(saveBlobAsFile).mock.calls.map(async ([blob, name]) => [name, await blob.text()])
-        );
         expect(saved).toEqual([
             [FILE_B.fileName, FILE_B.content],
             [FILE_A.fileName, FILE_A.content],
@@ -178,5 +212,43 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
 
         expect(openSessionSpy).not.toHaveBeenCalled();
         expect(result.current.error).toContain('unlocked again');
+    });
+
+    it('refuses a bundle in the older whole-file format at unlock, with advice instead of a decryption error', async () => {
+        const bundle = await buildEncryptedBundle([FILE_A], false);
+        const locked: FileGroupMetadataResponse = {
+            shareToken: SHARE_TOKEN,
+            title: 'Old Drop',
+            totalSizeBytes: 0,
+            fileCount: 1,
+            requiresPassword: true,
+            isUnlocked: false,
+            isEncrypted: true,
+            keySalt: bundle.keySalt,
+            isExpired: false,
+            files: [],
+        };
+        vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(locked);
+        vi.spyOn(downloadApi, 'unlockGroup').mockResolvedValue({
+            ...locked,
+            isUnlocked: true,
+            keyEnvelope: bundle.keyEnvelope,
+            encryptedManifest: bundle.encryptedManifest,
+            files: [{ id: FILE_A.serverId, fileName: `${FILE_A.manifestId}.enc`, sizeBytes: 1, contentType: 'application/octet-stream' }],
+        });
+
+        const { result } = renderHook(() => useFileDownload(SHARE_TOKEN));
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false);
+        });
+        act(() => {
+            result.current.setPassword(PASSWORD);
+        });
+        await act(async () => {
+            await result.current.handleUnlock({ preventDefault: vi.fn() } as unknown as React.FormEvent);
+        });
+
+        expect(result.current.error).toContain('older version of FileHolder');
+        expect(result.current.metadata?.files).toEqual([]);
     });
 });
