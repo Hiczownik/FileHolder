@@ -4,7 +4,7 @@ import { downloadApi } from "../api/downloadApi";
 import { bundleDecryptionService } from "../services/bundleDecryptionService";
 import { downloadSessionStore } from "../services/downloadSessionStore";
 import { saveBlobAsFile, triggerDirectDownload } from "../../../shared/utils/downloadUtils";
-import { DownloadCancelledError, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
+import { describeSaveResult, DownloadCancelledError, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import { isAxiosError } from "axios";
 import { makeZip } from "client-zip";
@@ -186,9 +186,9 @@ export const useFileDownload = (shareToken?: string) => {
                 }
 
                 // Written to disk as it decrypts: memory stays at about one chunk.
-                const method = await saveStreamToDisk(decrypted, { fileName, sizeBytes: fileMeta?.sizeBytes });
-                // Says which saving method this browser used; handy when checking a new browser or device.
-                console.info(`[FileHolder] Saved "${fileName}" via ${method}.`);
+                const saved = await saveStreamToDisk(decrypted, { fileName, sizeBytes: fileMeta?.sizeBytes });
+                // Says which saving method this browser used and why it skipped the others; handy on a new browser or device.
+                console.info(`[FileHolder] Saved "${fileName}" ${describeSaveResult(saved)}.`);
                 return;
             }
 
@@ -232,8 +232,8 @@ export const useFileDownload = (shareToken?: string) => {
                 const safeTitle = metadata.title ? metadata.title.replace(/[^\w.-]/g, '_') : 'bundle';
                 const zipName = `${safeTitle}_${shareToken}.zip`;
                 // Entries are stored uncompressed (encrypted content doesn't compress), with Zip64 past 4 GB.
-                const method = await saveStreamToDisk(makeZip(decryptedEntries(0)), { fileName: zipName });
-                console.info(`[FileHolder] Saved "${zipName}" via ${method}.`);
+                const saved = await saveStreamToDisk(makeZip(decryptedEntries(0)), { fileName: zipName });
+                console.info(`[FileHolder] Saved "${zipName}" ${describeSaveResult(saved)}.`);
                 return;
             }
 

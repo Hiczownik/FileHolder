@@ -306,6 +306,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     const TEST_TIMEOUT_MS = 180_000;
     const TRANSFER_TIMEOUT_MS = 120_000;
     const PATTERN_LENGTH = 251;
+    const PROBE_TIMEOUT_MS = 5_000;
     test.setTimeout(TEST_TIMEOUT_MS);
 
     // Over the 50 MB multipart threshold, so the server sizes parts as whole encrypted chunks (16 MiB + 64 bytes)
@@ -373,6 +374,55 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       if (browserName === 'chromium') {
         expect(method).toContain('via service-worker');
       }
+
+      // Diagnostics only, never fails the test: which disk-storage features this engine offers to the page and
+      // to a worker (createSyncAccessHandle only exists in workers), to guide saving on engines that fall back.
+      const storageFeatures = await downloaderPage.evaluate(async (probeTimeoutMs: number) => {
+        const describe = (err: unknown): string => (err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+        const page: Record<string, string> = { secureContext: String(isSecureContext), getDirectory: typeof navigator.storage?.getDirectory };
+        try {
+          const root = await navigator.storage.getDirectory();
+          const handle = await root.getFileHandle('feature-probe-page', { create: true });
+          page.createWritable = typeof (handle as Partial<FileSystemFileHandle>).createWritable;
+          await root.removeEntry('feature-probe-page');
+        } catch (err) {
+          page.error = describe(err);
+        }
+
+        const workerSource = `self.onmessage = async () => {
+          const result = {};
+          try {
+            const root = await navigator.storage.getDirectory();
+            const handle = await root.getFileHandle('feature-probe-worker', { create: true });
+            result.createSyncAccessHandle = typeof handle.createSyncAccessHandle;
+            result.createWritable = typeof handle.createWritable;
+            if (typeof handle.createSyncAccessHandle === 'function') {
+              const access = await handle.createSyncAccessHandle();
+              access.write(new Uint8Array([1, 2, 3]), { at: 0 });
+              access.flush();
+              result.syncWriteBytes = String(access.getSize());
+              access.close();
+            }
+            await root.removeEntry('feature-probe-worker');
+          } catch (err) {
+            result.error = err.name + ': ' + err.message;
+          }
+          postMessage(result);
+        };`;
+        const worker = await new Promise<Record<string, string>>((resolve) => {
+          try {
+            const probe = new Worker(URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' })));
+            probe.onmessage = (event) => resolve(event.data);
+            probe.onerror = (event) => resolve({ workerError: event.message });
+            probe.postMessage('probe');
+            setTimeout(() => resolve({ timeout: 'no answer in 5 s' }), probeTimeoutMs);
+          } catch (err) {
+            resolve({ workerError: describe(err) });
+          }
+        });
+        return { page, worker };
+      }, PROBE_TIMEOUT_MS).catch((err: unknown) => ({ probeFailed: String(err) }));
+      console.log(`[${browserName}] storage features: ${JSON.stringify(storageFeatures)}`);
 
       await downloaderContext.close();
     } finally {

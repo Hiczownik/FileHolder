@@ -1,6 +1,15 @@
 import { saveBlobAsFile } from '../downloadUtils';
 import { formatSize } from '../formatSize';
 import { DownloadCancelledError, saveViaServiceWorker } from './serviceWorkerSaving';
+import {
+    describeError,
+    unavailable,
+    type SaveMethodName,
+    type SaveOutcome,
+    type SaveResult,
+    type SkippedMethod,
+    type StreamedFile,
+} from './saveOutcome';
 
 /**
  * Saves a stream (e.g. a file being decrypted as it downloads) to disk without holding it all in memory.
@@ -11,21 +20,21 @@ import { DownloadCancelledError, saveViaServiceWorker } from './serviceWorkerSav
  *   3. opfs                 written to the site's private disk storage, then downloaded: Safari (macOS, iOS)
  *   4. memory               collected in memory first, capped at MAX_IN_MEMORY_BYTES: anything else
  *
- * A method returns 'unavailable' only if it has not read from the stream, so the next one can still use it.
+ * A method steps aside (with a reason) only if it has not read from the stream, so the next one can still
+ * use it. The reasons are reported with the result, to show which browser feature was missing.
  */
 
-export interface StreamedFile {
-    readonly fileName: string;
-    /** When known, lets a method refuse up front instead of failing part way (storage quota, memory cap). */
-    readonly sizeBytes?: number;
-}
-
-export type SaveOutcome = 'saved' | 'unavailable';
-export type SaveMethodName = 'service-worker' | 'file-system-access' | 'opfs' | 'memory';
+export * from './saveOutcome';
 
 export interface SaveMethod {
     readonly name: SaveMethodName;
     readonly save: (stream: ReadableStream<Uint8Array>, file: StreamedFile) => Promise<SaveOutcome>;
+}
+
+/** The methods to try, in order, and those left out up front because the browser lacks what they need. */
+export interface SavePlan {
+    readonly methods: readonly SaveMethod[];
+    readonly skipped: readonly SkippedMethod[];
 }
 
 export interface BrowserCapabilities {
@@ -69,16 +78,24 @@ export function detectCapabilities(): BrowserCapabilities {
     };
 }
 
-/** Which methods to try, in order, given what this browser supports. */
-export function chooseSaveMethods(capabilities: BrowserCapabilities): SaveMethodName[] {
-    const useServiceWorker = capabilities.serviceWorker && (!capabilities.isWebKit || SERVICE_WORKER_SAVING_ON_WEBKIT);
-    const candidates: readonly (readonly [SaveMethodName, boolean])[] = [
-        ['service-worker', useServiceWorker],
-        ['file-system-access', capabilities.fileSystemAccess],
-        ['opfs', capabilities.opfs],
-        ['memory', true],
+/** Which methods to try, in order, given what this browser supports, and why the others are left out. */
+export function planSaveMethods(capabilities: BrowserCapabilities): { readonly methods: SaveMethodName[]; readonly skipped: SkippedMethod[] } {
+    const heldBackOnWebKit = capabilities.isWebKit && !SERVICE_WORKER_SAVING_ON_WEBKIT;
+    const serviceWorkerReasons: readonly (readonly [boolean, string])[] = [
+        [!capabilities.serviceWorker, 'no service worker support or not a secure context'],
+        [heldBackOnWebKit, 'held back on WebKit'],
     ];
-    return candidates.filter(([, available]) => available).map(([name]) => name);
+    const serviceWorkerReason = serviceWorkerReasons.find(([applies]) => applies)?.[1] ?? null;
+    const candidates: readonly (readonly [SaveMethodName, string | null])[] = [
+        ['service-worker', serviceWorkerReason],
+        ['file-system-access', capabilities.fileSystemAccess ? null : 'no showSaveFilePicker'],
+        ['opfs', capabilities.opfs ? null : 'no navigator.storage.getDirectory or not a secure context'],
+        ['memory', null],
+    ];
+    return {
+        methods: candidates.filter(([, reason]) => reason === null).map(([name]) => name),
+        skipped: candidates.flatMap(([method, reason]) => (reason === null ? [] : [{ method, reason }])),
+    };
 }
 
 // ---- file-system-access ----------------------------------------------------------------------------------
@@ -93,9 +110,12 @@ interface NavigatorWithActivation {
 
 async function saveViaFileSystemAccess(stream: ReadableStream<Uint8Array>, file: StreamedFile): Promise<SaveOutcome> {
     const picker = (window as WindowWithSavePicker).showSaveFilePicker;
+    if (!picker) {
+        return unavailable('no showSaveFilePicker');
+    }
     // The dialog may only open shortly after a click; by now the download may have taken too long to start.
-    if (!picker || (navigator as NavigatorWithActivation).userActivation?.isActive === false) {
-        return 'unavailable';
+    if ((navigator as NavigatorWithActivation).userActivation?.isActive === false) {
+        return unavailable('the click that started the download is too long ago to open a dialog');
     }
 
     let handle: FileSystemFileHandle;
@@ -105,7 +125,7 @@ async function saveViaFileSystemAccess(stream: ReadableStream<Uint8Array>, file:
         if (err instanceof DOMException && err.name === 'AbortError') {
             throw new DownloadCancelledError();
         }
-        return 'unavailable';
+        return unavailable(describeError(err));
     }
 
     // pipeTo aborts the writable if the stream fails, so a failed download never leaves a partial file behind.
@@ -163,21 +183,41 @@ async function hasRoomFor(sizeBytes: number | undefined): Promise<boolean> {
     return quota === undefined || usage === undefined || quota - usage >= sizeBytes * QUOTA_HEADROOM;
 }
 
+interface PreparedOpfsFile {
+    readonly root: FileSystemDirectoryHandle;
+    readonly name: string;
+    readonly handle: FileSystemFileHandle;
+}
+
+/** Everything that can fail before the stream is read; a failure here only makes OPFS unavailable. */
+async function prepareOpfsFile(file: StreamedFile): Promise<PreparedOpfsFile | string> {
+    try {
+        const root = await navigator.storage.getDirectory();
+        await removeStaleOpfsFiles(root);
+        if (!(await hasRoomFor(file.sizeBytes))) {
+            return 'not enough storage quota';
+        }
+
+        const name = `${OPFS_PREFIX}${Date.now()}-${crypto.randomUUID()}`;
+        const handle = await root.getFileHandle(name, { create: true });
+        if (!canWrite(handle)) {
+            await removeQuietly(root, name);
+            return 'no createWritable';
+        }
+        return { root, name, handle };
+    } catch (err: unknown) {
+        return describeError(err);
+    }
+}
+
 async function saveViaOpfs(stream: ReadableStream<Uint8Array>, file: StreamedFile): Promise<SaveOutcome> {
-    const root = await navigator.storage.getDirectory();
-    await removeStaleOpfsFiles(root);
-    if (!(await hasRoomFor(file.sizeBytes))) {
-        return 'unavailable';
+    const prepared = await prepareOpfsFile(file);
+    if (typeof prepared === 'string') {
+        return unavailable(prepared);
     }
 
-    const name = `${OPFS_PREFIX}${Date.now()}-${crypto.randomUUID()}`;
-    const handle = await root.getFileHandle(name, { create: true });
+    const { root, name, handle } = prepared;
     const remove = (): Promise<void> => removeQuietly(root, name);
-    if (!canWrite(handle)) {
-        await remove();
-        return 'unavailable';
-    }
-
     try {
         await stream.pipeTo(await handle.createWritable());
         // The File reads from disk as the browser saves it, so it never has to fit in memory.
@@ -236,8 +276,9 @@ const METHODS: Readonly<Record<SaveMethodName, SaveMethod['save']>> = {
     memory: (stream, file) => saveInMemory(stream, file),
 };
 
-export function defaultSaveMethods(capabilities: BrowserCapabilities = detectCapabilities()): SaveMethod[] {
-    return chooseSaveMethods(capabilities).map((name) => ({ name, save: METHODS[name] }));
+export function defaultSavePlan(capabilities: BrowserCapabilities = detectCapabilities()): SavePlan {
+    const { methods, skipped } = planSaveMethods(capabilities);
+    return { methods: methods.map((name) => ({ name, save: METHODS[name] })), skipped };
 }
 
 async function cancelQuietly(stream: ReadableStream<Uint8Array>): Promise<void> {
@@ -248,28 +289,31 @@ async function cancelQuietly(stream: ReadableStream<Uint8Array>): Promise<void> 
     }
 }
 
-/** Tries each method in order; returns the one that saved the file. */
+/** Tries each method in order; returns the one that saved the file, and why the earlier ones didn't. */
 export async function saveStreamToDisk(
     stream: ReadableStream<Uint8Array>,
     file: StreamedFile,
-    methods: readonly SaveMethod[] = defaultSaveMethods()
-): Promise<SaveMethodName> {
-    const [method, ...rest] = methods;
+    plan: SavePlan = defaultSavePlan()
+): Promise<SaveResult> {
+    const [method, ...rest] = plan.methods;
     if (!method) {
         await stream.cancel();
         throw new Error('This browser has no way to save the file.');
     }
 
+    let outcome: SaveOutcome;
     try {
-        if ((await method.save(stream, file)) === 'saved') {
-            return method.name;
-        }
+        outcome = await method.save(stream, file);
     } catch (err: unknown) {
         // The method may have read part of the stream, so no other method can take over.
         await cancelQuietly(stream);
         throw err;
     }
-    return saveStreamToDisk(stream, file, rest);
+
+    if (outcome === 'saved') {
+        return { method: method.name, skipped: plan.skipped };
+    }
+    return saveStreamToDisk(stream, file, { methods: rest, skipped: [...plan.skipped, { method: method.name, reason: outcome.unavailable }] });
 }
 
 export { DownloadCancelledError };

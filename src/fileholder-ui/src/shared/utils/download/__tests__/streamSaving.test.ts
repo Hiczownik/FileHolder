@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-    chooseSaveMethods,
+    describeSaveResult,
     isWebKitUserAgent,
+    planSaveMethods,
     saveInMemory,
     saveStreamToDisk,
+    unavailable,
     type BrowserCapabilities,
     type SaveMethod,
 } from '../streamSaving';
@@ -56,7 +58,7 @@ describe('isWebKitUserAgent', () => {
     });
 });
 
-describe('chooseSaveMethods', () => {
+describe('planSaveMethods', () => {
     const everything: BrowserCapabilities = { serviceWorker: true, isWebKit: false, fileSystemAccess: true, opfs: true };
 
     it.each([
@@ -66,7 +68,16 @@ describe('chooseSaveMethods', () => {
         ['Safari (service worker held back)', { ...everything, isWebKit: true, fileSystemAccess: false }, ['opfs', 'memory']],
         ['a page served over plain http', { serviceWorker: false, isWebKit: false, fileSystemAccess: false, opfs: false }, ['memory']],
     ] as const)('%s', (_, capabilities, expected) => {
-        expect(chooseSaveMethods(capabilities)).toEqual(expected);
+        expect(planSaveMethods(capabilities).methods).toEqual(expected);
+    });
+
+    it('says why each method was left out', () => {
+        const safari = { ...everything, isWebKit: true, fileSystemAccess: false };
+
+        expect(planSaveMethods(safari).skipped).toEqual([
+            { method: 'service-worker', reason: 'held back on WebKit' },
+            { method: 'file-system-access', reason: 'no showSaveFilePicker' },
+        ]);
     });
 });
 
@@ -78,12 +89,23 @@ describe('saveStreamToDisk', () => {
     it('hands the untouched stream on when a method is unavailable', async () => {
         const received: number[][] = [];
         const methods: SaveMethod[] = [
-            { name: 'service-worker', save: async () => 'unavailable' },
+            { name: 'service-worker', save: async () => unavailable('the download worker did not accept the download') },
             { name: 'opfs', save: async (stream) => { received.push(await readAll(stream)); return 'saved'; } },
         ];
+        const plan = { methods, skipped: [{ method: 'file-system-access' as const, reason: 'no showSaveFilePicker' }] };
 
-        expect(await saveStreamToDisk(streamOf(BYTES), { fileName: 'a.bin' }, methods)).toBe('opfs');
+        const result = await saveStreamToDisk(streamOf(BYTES), { fileName: 'a.bin' }, plan);
+
         expect(received).toEqual([Array.from(BYTES)]);
+        expect(result).toEqual({
+            method: 'opfs',
+            skipped: [
+                { method: 'file-system-access', reason: 'no showSaveFilePicker' },
+                { method: 'service-worker', reason: 'the download worker did not accept the download' },
+            ],
+        });
+        expect(describeSaveResult(result)).toBe(
+            'via opfs. Skipped: file-system-access (no showSaveFilePicker), service-worker (the download worker did not accept the download)');
     });
 
     it('does not fall back once a method has failed part way, and cancels the stream', async () => {
@@ -103,13 +125,13 @@ describe('saveStreamToDisk', () => {
             { name: 'memory', save: fallback },
         ];
 
-        await expect(saveStreamToDisk(source, { fileName: 'a.bin' }, methods)).rejects.toThrow('disk full');
+        await expect(saveStreamToDisk(source, { fileName: 'a.bin' }, { methods, skipped: [] })).rejects.toThrow('disk full');
         expect(fallback).not.toHaveBeenCalled();
         expect(cancel).toHaveBeenCalled();
     });
 
     it('fails when no method can save the file', async () => {
-        await expect(saveStreamToDisk(streamOf(BYTES), { fileName: 'a.bin' }, [])).rejects.toThrow('no way to save');
+        await expect(saveStreamToDisk(streamOf(BYTES), { fileName: 'a.bin' }, { methods: [], skipped: [] })).rejects.toThrow('no way to save');
     });
 });
 

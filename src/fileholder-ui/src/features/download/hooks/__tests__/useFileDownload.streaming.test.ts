@@ -114,7 +114,7 @@ describe('useFileDownload streaming decryption', () => {
         const saved: Uint8Array[] = [];
         vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
             saved.push(...(await readAll(stream.getReader(), [])));
-            return 'service-worker';
+            return { method: 'service-worker', skipped: [] };
         });
         const wholeFileSpy = vi.spyOn(downloadApi, 'downloadCiphertextBlob');
 
@@ -133,7 +133,7 @@ describe('useFileDownload streaming decryption', () => {
         tampered[CHUNK + STREAM_TAG_BYTES] ^= 1;
         vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
             await readAll(stream.getReader(), []);
-            return 'memory';
+            return { method: 'memory', skipped: [] };
         });
 
         const result = await unlockAndDownload(bundle, tampered);
