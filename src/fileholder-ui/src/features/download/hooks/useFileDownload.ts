@@ -4,7 +4,7 @@ import { downloadApi } from "../api/downloadApi";
 import { bundleDecryptionService } from "../services/bundleDecryptionService";
 import { downloadSessionStore } from "../services/downloadSessionStore";
 import { saveBlobAsFile, triggerDirectDownload } from "../../../shared/utils/downloadUtils";
-import { describeSaveResult, DownloadCancelledError, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
+import { describeSaveResult, DownloadCancelledError, memoryOnlyLimitProblem, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import { isAxiosError } from "axios";
 import { makeZip } from "client-zip";
@@ -178,6 +178,13 @@ export const useFileDownload = (shareToken?: string) => {
             if (metadata.isEncrypted) {
                 const fileMeta = metadata.files.find((f) => f.id === fileId) || metadata.files[0];
                 const fileName = fileMeta?.fileName || 'downloaded_file';
+                // Before the session opens, so a download that can't succeed never uses up one of the bundle's downloads.
+                const tooLarge = memoryOnlyLimitProblem(fileMeta?.sizeBytes ?? 0);
+                if (tooLarge) {
+                    setError(tooLarge);
+                    return;
+                }
+
                 const decrypted = await openDecryptedFile(shareToken, fileId);
 
                 if (decrypted instanceof Uint8Array) {
@@ -215,6 +222,13 @@ export const useFileDownload = (shareToken?: string) => {
             if (metadata.isEncrypted) {
                 const token = shareToken;
                 const files = metadata.files;
+
+                // Before the session opens, as for single files; the ZIP is about the size of its files together.
+                const tooLarge = memoryOnlyLimitProblem(files.reduce((total, file) => total + file.sizeBytes, 0));
+                if (tooLarge) {
+                    setError(tooLarge);
+                    return;
+                }
 
                 // client-zip pulls entries one at a time as it writes the archive, so each file is fetched and
                 // decrypted only when its turn comes. That keeps them strictly sequential too: the first file

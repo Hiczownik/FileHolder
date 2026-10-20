@@ -25,4 +25,16 @@ public static class EncryptedStreamFormat
         long chunks = Math.Max(1, (plaintextBytes + ChunkPlaintextBytes - 1) / ChunkPlaintextBytes);
         return plaintextBytes + chunks * TagBytes;
     }
+
+    /// <summary>
+    /// The most ciphertext <paramref name="fileCount"/> files holding at most <paramref name="maxPlaintextBytes"/>
+    /// between them can encrypt to. Each file has at most its share of the full chunks plus one partial chunk,
+    /// so the tags add at most one per full chunk of the total, plus one per file. The server only sees
+    /// encrypted sizes, so this is how a plaintext limit is applied to an encrypted bundle.
+    /// </summary>
+    public static long MaxEncryptedTotal(long maxPlaintextBytes, int fileCount)
+    {
+        long fullChunks = (maxPlaintextBytes + ChunkPlaintextBytes - 1) / ChunkPlaintextBytes;
+        return maxPlaintextBytes + (fullChunks + fileCount) * TagBytes;
+    }
 }

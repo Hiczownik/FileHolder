@@ -5,7 +5,7 @@ import { downloadApi } from '../../api/downloadApi';
 import { downloadSessionStore } from '../../services/downloadSessionStore';
 import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
 import { chunkCount, createStreamParams, encryptChunkRange, MIN_STREAM_CHUNK_SIZE, serializeStreamParams, STREAM_TAG_BYTES } from '../../../../shared/utils/crypto/streamCipher';
-import { DownloadCancelledError, saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
+import { DownloadCancelledError, MAX_IN_MEMORY_BYTES, saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
 import type { FileGroupMetadataResponse } from '../../types';
 
 vi.mock('../../../../shared/utils/downloadUtils', () => ({
@@ -33,14 +33,18 @@ const PATTERN_MODULUS = 251;
 
 const plaintext = new Uint8Array(FILE_SIZE).map((_, i) => i % PATTERN_MODULUS);
 
-const buildStreamBundle = async () => {
+// What a manifest may claim for a file: more than a memory-only browser (as the test environment is) can save.
+const OVER_MEMORY_CAP = MAX_IN_MEMORY_BYTES + 1;
+
+/** `claimedSize` is the plaintext size the manifest states; the real content is always FILE_SIZE bytes. */
+const buildStreamBundle = async (claimedSize: number = FILE_SIZE) => {
     const salt = cryptoEngine.generateSalt();
     const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(PASSWORD, salt);
     const masterKey = await cryptoEngine.generateKey();
     const params = createStreamParams(CHUNK);
     const fileKey = await cryptoEngine.deriveFileKey(masterKey, MANIFEST_ID);
     const ciphertext = await encryptChunkRange(fileKey, params, new Blob([plaintext as BlobPart]), 0, chunkCount(FILE_SIZE, CHUNK));
-    const manifest = [{ id: MANIFEST_ID, fileName: FILE_NAME, sizeBytes: FILE_SIZE, contentType: 'application/pdf', stream: serializeStreamParams(params) }];
+    const manifest = [{ id: MANIFEST_ID, fileName: FILE_NAME, sizeBytes: claimedSize, contentType: 'application/pdf', stream: serializeStreamParams(params) }];
 
     const locked: FileGroupMetadataResponse = {
         shareToken: 'stream_token',
@@ -148,5 +152,16 @@ describe('useFileDownload streaming decryption', () => {
         const result = await unlockAndDownload(bundle, bundle.ciphertext);
 
         expect(result.current.error).toBeNull();
+    });
+
+    it('refuses a file this browser can only save in memory, before using up a download', async () => {
+        const bundle = await buildStreamBundle(OVER_MEMORY_CAP);
+
+        const result = await unlockAndDownload(bundle, bundle.ciphertext);
+
+        expect(result.current.error).toContain('can only save up to 1 GB');
+        expect(downloadApi.openDownloadSession).not.toHaveBeenCalled();
+        expect(downloadApi.getDownloadUrl).not.toHaveBeenCalled();
+        expect(saveStreamToDisk).not.toHaveBeenCalled();
     });
 });

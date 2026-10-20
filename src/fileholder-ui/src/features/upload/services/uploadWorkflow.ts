@@ -1,6 +1,6 @@
 import type { PresignedItem } from "../../download/types";
 import { uploadApi } from "../api/uploadApi";
-import { E2EE_MAX_SINGLE_FILE_BYTES, STANDARD_MAX_TOTAL_BYTES, type UploadFormValues } from "../types";
+import { STANDARD_MAX_TOTAL_BYTES, type UploadFormValues } from "../types";
 import {
     assertPartsAlignWithChunks,
     encryptCiphertextRange,
@@ -121,12 +121,6 @@ export async function executeEncryptedUploadWorkflow(
     }
 
     assertWithinBundleLimit(files);
-
-    // Checked before encrypting: a larger file would exhaust the memory of the browser encrypting it.
-    const oversized = files.filter((file) => file.size > E2EE_MAX_SINGLE_FILE_BYTES);
-    if (oversized.length > 0) {
-        throw new Error(`Encrypted files cannot be larger than ${formatSize(E2EE_MAX_SINGLE_FILE_BYTES)} each: ${oversized.map((file) => file.name).join(', ')}.`);
-    }
 
     // Nothing is encrypted yet: each file is encrypted part by part as it uploads, so memory doesn't grow
     // with file size. The encrypted sizes are known up front, so the upload URLs can be signed for them.

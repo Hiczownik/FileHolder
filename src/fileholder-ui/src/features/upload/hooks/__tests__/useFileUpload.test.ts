@@ -2,7 +2,8 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useFileUpload } from '../useFileUpload';
 import { uploadApi } from '../../api/uploadApi';
-import { E2EE_MAX_SINGLE_FILE_BYTES, STANDARD_MAX_TOTAL_BYTES } from '../../types';
+import { STANDARD_MAX_TOTAL_BYTES } from '../../types';
+import { encryptedSize } from '../../../../shared/utils/crypto/streamCipher';
 
 describe('useFileUpload Hook (Vertical Slice)', () => {
   beforeEach(() => {
@@ -165,6 +166,11 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     }
   });
 
+  const FIVE_GB_IN_GB = 5;
+  const TWO_GB_IN_GB = 2;
+  const EXPIRE_IN_HOURS = 24;
+  const MAX_DOWNLOADS = 5;
+
   // Only the reported size matters to the limit checks, so no real content is allocated.
   const createSizedFile = (name: string, size: number): File => {
     const file = new File(['x'], name);
@@ -174,7 +180,7 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
 
   it.each([
     { label: 'a plain bundle over the 5 GB total', isEncrypted: false, sizes: [STANDARD_MAX_TOTAL_BYTES, 1], expected: 'cannot be larger than 5 GB in total' },
-    { label: 'an encrypted file over 1 GB', isEncrypted: true, sizes: [E2EE_MAX_SINGLE_FILE_BYTES + 1], expected: 'Encrypted files cannot be larger than 1 GB' },
+    { label: 'an encrypted bundle over the 5 GB total', isEncrypted: true, sizes: [STANDARD_MAX_TOTAL_BYTES, 1], expected: 'cannot be larger than 5 GB in total' },
   ])('refuses $label before calling the server', async ({ isEncrypted, sizes, expected }) => {
     const presignSpy = vi.spyOn(uploadApi, 'getPresignedUrl');
     const formValues = { title: 'Too Big', expireInHours: 24, maxDownloads: 5, isEncrypted, password: 'VaultPassword123!' } as const;
@@ -190,6 +196,21 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     if (result.current.uploadState.status === 'error') {
       expect(result.current.uploadState.message).toContain(expected);
     }
+  });
+
+  it('lets an encrypted file over 1 GB through to presign, sized after encryption', async () => {
+    const twoGb = STANDARD_MAX_TOTAL_BYTES / FIVE_GB_IN_GB * TWO_GB_IN_GB;
+    const presignSpy = vi.spyOn(uploadApi, 'getPresignedUrl').mockRejectedValue(new Error('stop after presign'));
+    const formValues = { title: 'Big Encrypted', expireInHours: EXPIRE_IN_HOURS, maxDownloads: MAX_DOWNLOADS, isEncrypted: true, password: 'VaultPassword123!' } as const;
+
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.upload(formValues, [createSizedFile('big.bin', twoGb)]);
+    });
+
+    expect(presignSpy).toHaveBeenCalledTimes(1);
+    expect(presignSpy.mock.calls[0][0].files[0].sizeBytes).toBe(encryptedSize(twoGb));
   });
 
   it('transitions to error state with sanitized message on API failure', async () => {

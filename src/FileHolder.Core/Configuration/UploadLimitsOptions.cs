@@ -10,13 +10,11 @@ public class UploadLimitsOptions
 {
     public const string SectionName = "UploadLimits";
 
-    [Range(1, long.MaxValue)]
-    public long MaxBundleSizeBytes { get; set; } = 5L * 1024 * 1024 * 1024; // 5 GB
-
     /// <summary>
-    /// Caps each file of an encrypted bundle (before encryption). Browsers encrypt and decrypt a whole file in
-    /// memory, so a recipient couldn't open much larger ones. Keep in sync with E2EE_MAX_SINGLE_FILE_BYTES in the UI.
+    /// Applies to encrypted bundles too, measured before encryption. Browsers encrypt and decrypt them a chunk at a
+    /// time, so file size no longer depends on the recipient's memory. Keep in sync with STANDARD_MAX_TOTAL_BYTES
+    /// in the UI.
     /// </summary>
     [Range(1, long.MaxValue)]
-    public long MaxEncryptedFileSizeBytes { get; set; } = 1L * 1024 * 1024 * 1024; // 1 GB
+    public long MaxBundleSizeBytes { get; set; } = 5L * 1024 * 1024 * 1024; // 5 GB
 }

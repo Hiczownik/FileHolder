@@ -232,8 +232,24 @@ async function saveViaOpfs(stream: ReadableStream<Uint8Array>, file: StreamedFil
 
 // ---- memory ----------------------------------------------------------------------------------------------
 
+const OPEN_ELSEWHERE_ADVICE = 'Open the link in Chrome, Edge or Firefox on a computer to download it.';
+
 const tooLargeForMemory = (): Error =>
-    new Error(`This browser can only save files up to ${formatSize(MAX_IN_MEMORY_BYTES)} this way. Try a recent Chrome, Edge, Firefox or Safari.`);
+    new Error(`This browser can only save up to ${formatSize(MAX_IN_MEMORY_BYTES)} from an encrypted bundle. ${OPEN_ELSEWHERE_ADVICE}`);
+
+/**
+ * Checked before a download starts (and is counted against the bundle's download limit): if this browser could
+ * only save in memory, content over the memory cap would fail part way, so it is refused up front with advice
+ * instead. The size comes from the bundle's manifest, which the uploader wrote, so the cap is still enforced as
+ * bytes arrive. Returns the message to show, or null when the download can go ahead.
+ */
+export function memoryOnlyLimitProblem(sizeBytes: number, plan: SavePlan = defaultSavePlan()): string | null {
+    const canStreamToDisk = plan.methods.some((method) => method.name !== 'memory');
+    if (canStreamToDisk || sizeBytes <= MAX_IN_MEMORY_BYTES) {
+        return null;
+    }
+    return `This is ${formatSize(sizeBytes)}, but this browser can only save up to ${formatSize(MAX_IN_MEMORY_BYTES)} from an encrypted bundle. ${OPEN_ELSEWHERE_ADVICE}`;
+}
 
 const collectWithCap = async (
     reader: ReadableStreamDefaultReader<Uint8Array>,
