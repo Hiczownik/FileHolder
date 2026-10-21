@@ -137,6 +137,20 @@ export class BundleDecryptionService {
         }
     }
 
+    /** Decrypts an encrypted bundle's title. It is authenticated with the same key as the manifest, so a failure means the same. */
+    public async decryptTitle(encryptedTitle: string, masterKey?: CryptoKey): Promise<string> {
+        const key = masterKey || this.cachedMasterKey;
+        if (!key) {
+            throw new Error('Vault is locked. No master key available.');
+        }
+
+        try {
+            return await cryptoEngine.decryptJson<string>(key, encryptedTitle);
+        } catch (err: unknown) {
+            throw new Error('Decryption failed. Cryptographic authentication mismatch. The passkey may be incorrect or the data is corrupted.', { cause: err });
+        }
+    }
+
     /**
      * A transform that decrypts a file's downloaded ciphertext as it arrives, so the file never has to fit in
      * memory. `manifestId` must belong to a bundle mapped with mapManifestToServerFiles.

@@ -64,6 +64,10 @@ namespace FileHolder.Infrastructure.Data.Migrations
                     b.Property<string>("EncryptedManifest")
                         .HasColumnType("text");
 
+                    b.Property<string>("EncryptedTitle")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
                     b.Property<DateTime?>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 

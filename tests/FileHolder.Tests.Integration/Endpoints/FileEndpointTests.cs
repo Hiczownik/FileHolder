@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
 using Amazon.S3.Model;
+using FileHolder.Api.Validation;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
@@ -44,8 +45,10 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         string? password = null,
         bool isEncrypted = false)
     {
+        // An encrypted bundle's title only ever travels encrypted (EncryptedTitle), so these send none.
+        var plainTitle = isEncrypted ? null : title;
         var presignResponse = await _client.PostAsJsonAsync("/api/v1/files/presign",
-            new CreatePresignedUrlRequestDto(title, files, 24, maxDownloads, password, isEncrypted));
+            new CreatePresignedUrlRequestDto(plainTitle, files, 24, maxDownloads, password, isEncrypted));
         presignResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var presign = (await presignResponse.Content.ReadFromJsonAsync<PresignedUrlResponseDto>())!;
 
@@ -57,7 +60,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             })
             .ToList();
 
-        return new ConfirmUploadRequestDto(presign.UploadToken, title, confirmedFiles, 24, maxDownloads, password, isEncrypted);
+        return new ConfirmUploadRequestDto(presign.UploadToken, plainTitle, confirmedFiles, 24, maxDownloads, password, isEncrypted);
     }
 
     private async Task<(string ShareToken, List<Guid> FileIds)> CreateBundleAsync(int fileCount, int? maxDownloads, string? password = null)
@@ -416,6 +419,69 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         unlockedMetadata.KeySalt.Should().Be("salt_base64");
         unlockedMetadata.EncryptedManifest.Should().Be("encrypted_manifest_base64");
         unlockedMetadata.Files.Should().HaveCount(1);
+    }
+
+    private async Task<ConfirmUploadRequestDto> PresignEncryptedAsync(string name) =>
+        (await PresignAndUploadAsync(name, [new("blob.enc", "application/octet-stream", 1024)], maxDownloads: 5,
+            password: "k_auth_derived_token_123", isEncrypted: true)) with
+        {
+            EncryptedManifest = "encrypted_manifest_base64",
+            KeyEnvelope = "key_envelope_base64",
+            KeySalt = "salt_base64"
+        };
+
+    [Fact]
+    public async Task EncryptedTitle_IsNeverShownBeforeUnlocking_AndIsReturnedAfter()
+    {
+        const string encryptedTitle = "encrypted_title_base64url";
+        var request = await PresignEncryptedAsync("Encrypted Title") with { EncryptedTitle = encryptedTitle };
+        var shareToken = await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>();
+
+        // Anyone with the link, without the passkey, sees neither the title nor its ciphertext.
+        var locked = await _client.GetAsync($"/api/v1/files/{shareToken}");
+        var lockedJson = await locked.Content.ReadAsStringAsync();
+        var lockedMetadata = await locked.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        lockedMetadata!.Title.Should().BeNull();
+        lockedMetadata.EncryptedTitle.Should().BeNull();
+        lockedJson.Should().NotContain(encryptedTitle);
+
+        var unlocked = await (await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("k_auth_derived_token_123"))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        unlocked!.Title.Should().BeNull();
+        unlocked.EncryptedTitle.Should().Be(encryptedTitle);
+    }
+
+    [Fact]
+    public async Task EncryptedUploads_ThatSendAPlainTitle_AreRefused()
+    {
+        var presign = new CreatePresignedUrlRequestDto("Tax return 2026", [new("blob.enc", "application/octet-stream", 1024)], 24, 5, "k_auth_derived_token_123", true);
+        (await _client.PostAsJsonAsync("/api/v1/files/presign", presign)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var confirm = await PresignEncryptedAsync("Plain Title");
+        (await ConfirmAsync(confirm with { Title = "Tax return 2026" })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(confirm)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Theory]
+    [InlineData(2049)]
+    [InlineData(0)]
+    public async Task ConfirmUpload_Returns400_WhenTheEncryptedTitleIsOversizedOrMalformed(int length)
+    {
+        var request = await PresignEncryptedAsync("Bad Encrypted Title");
+        var encryptedTitle = length > 0 ? new string('t', length) : "not base64url!";
+
+        (await ConfirmAsync(request with { EncryptedTitle = encryptedTitle })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request with { EncryptedTitle = new string('t', ConfirmUploadValidator.MaxEncryptedTitleLength) }))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenAPlainUploadCarriesAnEncryptedTitle()
+    {
+        var request = await PresignAndUploadAsync("Plain", [new("plain.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        (await ConfirmAsync(request with { EncryptedTitle = "smuggled" })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
     }
     
     #endregion
@@ -1603,7 +1669,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
     private Task<HttpResponseMessage> PresignAsync(List<FileItemInputDto> files, bool isEncrypted = false) =>
         _client.PostAsJsonAsync("/api/v1/files/presign",
-            new CreatePresignedUrlRequestDto("Limits", files, 24, 5, isEncrypted ? "EncryptedPass1" : null, isEncrypted));
+            new CreatePresignedUrlRequestDto(isEncrypted ? null : "Limits", files, 24, 5, isEncrypted ? "EncryptedPass1" : null, isEncrypted));
 
     private List<GetPreSignedUrlRequest> UploadPresignRequests() => factory.MockS3Client.ReceivedCalls()
         .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.GetPreSignedURL))

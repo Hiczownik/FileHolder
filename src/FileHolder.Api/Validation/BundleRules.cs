@@ -63,6 +63,10 @@ public static partial class BundleRules
     public static IRuleBuilderOptions<T, string?> MustBeValidTitle<T>(this IRuleBuilder<T, string?> rule) =>
         rule.MaximumLength(255).WithMessage("Title cannot exceed 255 characters.");
 
+    // The server must never receive an encrypted bundle's title in plain text: it goes in EncryptedTitle.
+    public static IRuleBuilderOptions<T, string?> MustBeEmptyForEncryptedBundles<T>(this IRuleBuilder<T, string?> rule) =>
+        rule.Empty().WithMessage("Titles of encrypted bundles must be encrypted.");
+
     // Required: the purge only removes a bundle's storage once it expires or runs out of downloads,
     // so a bundle with neither limit would keep its files forever.
     public static IRuleBuilderOptions<T, int?> MustBeValidExpiry<T>(this IRuleBuilder<T, int?> rule) =>

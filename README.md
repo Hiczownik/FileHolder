@@ -33,8 +33,9 @@
   * **Keys:** the browser creates a random master key and locks it with a key derived from the passkey (PBKDF2-SHA-256, 300,000 rounds, then HKDF). Each file gets its own key derived from the master key.
   * **File contents:** encrypted with AES-256-GCM in 4 MiB chunks. Each chunk's position and a last-chunk flag are authenticated, so chunks can't be reordered, dropped or added.
   * **File names and types:** live only in an encrypted manifest. Storage holds `<id>.enc` files.
+  * **Title:** encrypted with the master key like the manifest, and only returned once the bundle is unlocked. Until then, the page shows "Encrypted bundle".
   * **What the server receives:** never the passkey, only a separate value derived from it, used to check the unlock.
-  * **What it can still see:** the number of files, their encrypted sizes (about the real sizes), the expiry and download limits, and the bundle title ([#65](https://github.com/Hiczownik/FileHolder/issues/65) tracks encrypting the title).
+  * **What it can still see:** the number of files, each file's encrypted size (the real size to within 16 bytes per 4 MiB), the expiry, the download limit and how many downloads were used. Anyone with the link sees the same, without the passkey.
 
 ---
 

@@ -189,10 +189,10 @@ export async function executeEncryptedUploadWorkflow(
 
     // Nothing is encrypted yet: each file is encrypted part by part as it uploads, so memory doesn't grow
     // with file size. The encrypted sizes are known up front, so the upload URLs can be signed for them.
-    const prepared = await prepareEncryptedBundle(files, formValues.password);
+    // The title is encrypted with the files: the server never receives it in plain text.
+    const prepared = await prepareEncryptedBundle(files, formValues.password, formValues.title);
 
     const presign = await uploadApi.getPresignedUrl({
-        title: formValues.title || undefined,
         files: prepared.files.map((item) => ({
             fileName: item.storageName,
             contentType: 'application/octet-stream',
@@ -265,7 +265,7 @@ export async function executeEncryptedUploadWorkflow(
 
     const shareToken = await uploadApi.confirmUpload({
         uploadToken: presign.uploadToken,
-        title: formValues.title || undefined,
+        encryptedTitle: prepared.encryptedTitle,
         files: items.map((item, index) => ({
             storageKey: item.storageKey,
             fileName: item.fileName,

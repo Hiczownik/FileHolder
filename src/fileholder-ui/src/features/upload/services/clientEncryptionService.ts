@@ -30,11 +30,14 @@ export interface PreparedEncryptedPayload {
     readonly keyEnvelope: string;
     readonly keySalt: string;
     readonly kAuth: string;
+    /** The title, encrypted with the master key like the manifest; absent when the bundle has none. */
+    readonly encryptedTitle?: string;
 }
 
 export async function prepareEncryptedBundle(
     files: readonly File[],
-    password: string
+    password: string,
+    title?: string
 ): Promise<PreparedEncryptedPayload> {
     const masterKey = await cryptoEngine.generateKey();
     const salt = cryptoEngine.generateSalt();
@@ -62,12 +65,16 @@ export async function prepareEncryptedBundle(
         stream: serializeStreamParams(item.stream),
     }));
 
+    // Trimmed as the server trims plain titles. Kept out of the manifest, so the manifest's format stays as it is.
+    const trimmedTitle = title?.trim() ?? '';
+
     return {
         files: encryptedFiles,
         encryptedManifest: await cryptoEngine.encryptJson(masterKey, manifestItems),
         keyEnvelope,
         keySalt: base64Url.encode(salt),
         kAuth,
+        encryptedTitle: trimmedTitle === '' ? undefined : await cryptoEngine.encryptJson(masterKey, trimmedTitle),
     };
 }
 

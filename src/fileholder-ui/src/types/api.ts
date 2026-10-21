@@ -85,6 +85,8 @@ export interface ConfirmUploadRequest {
     encryptedManifest?: string;
     keyEnvelope?: string;
     keySalt?: string;
+    /** An encrypted bundle's title, encrypted like the manifest; such bundles never send `title`. */
+    encryptedTitle?: string;
 }
 
 export interface FileItemMetadata {
@@ -114,6 +116,8 @@ export interface FileGroupMetadataResponse {
     remainingDownloads?: number;
     isExpired: boolean;
     files: FileItemMetadata[];
+    /** Only once an encrypted bundle is unlocked; the page decrypts it into `title`. */
+    encryptedTitle?: string | null;
 }
 
 export interface DownloadUrlResponse {

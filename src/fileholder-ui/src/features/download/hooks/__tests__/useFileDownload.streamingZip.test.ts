@@ -58,9 +58,9 @@ const buildBundle = async (files: readonly PlainFile[], claimedSizeOf: (file: Pl
         return { file, params, ciphertext };
     }));
 
+    // An encrypted bundle has no plain title; it arrives encrypted, and only once unlocked.
     const locked: FileGroupMetadataResponse = {
         shareToken: SHARE_TOKEN,
-        title: 'Streamed Zip',
         totalSizeBytes: 0,
         fileCount: files.length,
         requiresPassword: true,
@@ -73,6 +73,7 @@ const buildBundle = async (files: readonly PlainFile[], claimedSizeOf: (file: Pl
     const unlocked: FileGroupMetadataResponse = {
         ...locked,
         isUnlocked: true,
+        encryptedTitle: await cryptoEngine.encryptJson(masterKey, 'Streamed Zip'),
         keyEnvelope: await cryptoEngine.wrapMasterKey(masterKey, kWrap),
         encryptedManifest: await cryptoEngine.encryptJson(masterKey, encrypted.map(({ file, params }) => ({
             id: file.manifestId, fileName: file.fileName, sizeBytes: claimedSizeOf(file), contentType: 'application/octet-stream', stream: serializeStreamParams(params),

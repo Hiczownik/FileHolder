@@ -32,7 +32,8 @@ public record ConfirmUploadRequestDto(
     bool IsEncrypted = false,
     string? EncryptedManifest = null,
     string? KeyEnvelope = null,
-    string? KeySalt = null
+    string? KeySalt = null,
+    string? EncryptedTitle = null
 );
 
 public record DownloadRequestDto(

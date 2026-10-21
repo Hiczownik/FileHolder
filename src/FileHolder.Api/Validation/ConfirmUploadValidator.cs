@@ -15,6 +15,10 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
     public const int MaxKeyEnvelopeLength = 128;
     public const int MaxEncryptedManifestLength = 256 * 1024;
 
+    // A 255-character title is at most 1020 UTF-8 bytes; as JSON plus a 12-byte IV and 16-byte tag that is about
+    // 1050 bytes, or 1400 base64url characters.
+    public const int MaxEncryptedTitleLength = 2048;
+
     public ConfirmUploadValidator(IOptions<UploadLimitsOptions> uploadLimits)
     {
         RuleFor(x => x.UploadToken)
@@ -52,8 +56,13 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
             RuleFor(x => x.KeySalt).MustBeKeyMaterial("Key salt", MaxKeySaltLength);
             RuleFor(x => x.KeyEnvelope).MustBeKeyMaterial("Key envelope", MaxKeyEnvelopeLength);
             RuleFor(x => x.EncryptedManifest).MustBeKeyMaterial("Encrypted manifest", MaxEncryptedManifestLength);
+            RuleFor(x => x.Title).MustBeEmptyForEncryptedBundles();
+            // Optional, as titles are.
+            RuleFor(x => x.EncryptedTitle).MustBeKeyMaterial("Encrypted title", MaxEncryptedTitleLength)
+                .When(x => !string.IsNullOrEmpty(x.EncryptedTitle));
         }).Otherwise(() =>
         {
+            RuleFor(x => x.EncryptedTitle).Empty().WithMessage("Encrypted title is only allowed for encrypted uploads.");
             RuleFor(x => x.KeySalt).Empty().WithMessage("Key salt is only allowed for encrypted uploads.");
             RuleFor(x => x.KeyEnvelope).Empty().WithMessage("Key envelope is only allowed for encrypted uploads.");
             RuleFor(x => x.EncryptedManifest).Empty().WithMessage("Encrypted manifest is only allowed for encrypted uploads.");
