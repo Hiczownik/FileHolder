@@ -18,16 +18,15 @@ public class FileSecurityUtilsProperties
     /// <summary>Whether every surrogate is part of a pair: Postgres can't store half a character.</summary>
     private static bool IsValidUtf16(string text)
     {
-        for (int i = 0; i < text.Length; i++)
+        var remaining = text.AsSpan();
+        while (!remaining.IsEmpty)
         {
-            if (char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
-            {
-                i++;
-            }
-            else if (char.IsSurrogate(text[i]))
+            if (System.Text.Rune.DecodeFromUtf16(remaining, out _, out var consumed) != System.Buffers.OperationStatus.Done)
             {
                 return false;
             }
+
+            remaining = remaining[consumed..];
         }
 
         return true;

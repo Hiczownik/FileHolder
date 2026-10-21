@@ -26,6 +26,13 @@ public class ContentDispositionUtilsTests
             .Should().StartWith("attachment; filename=\"a_b_c.txt\"; filename*=UTF-8''a%22b%5Cc.txt");
     }
 
+    // Found by the property tests (#70): Normalize threw on half a character, which would have been a 500.
+    [Fact]
+    public void Attachment_OfANameWithHalfACharacter_ReplacesIt_InsteadOfThrowing()
+    {
+        ContentDispositionUtils.Attachment("a\uD800.txt").Should().Be("attachment; filename=\"a_.txt\"");
+    }
+
     [Theory]
     [InlineData("Zdjęcia z wakacji.zip")]
     [InlineData("報告書.pdf")]

@@ -31,11 +31,13 @@ public static class PasswordLockout
     /// </summary>
     public static TimeSpan? LockoutAfter(int failedAttempts)
     {
-        int excess = failedAttempts - FreeAttempts;
-        if (excess <= 0)
+        // Compared before subtracting: int.MinValue - FreeAttempts wraps around to a huge positive number.
+        if (failedAttempts <= FreeAttempts)
         {
             return null;
         }
+
+        int excess = failedAttempts - FreeAttempts;
 
         // Past 2^10 minutes the cap applies anyway; stopping here keeps the shift from overflowing.
         if (excess > 10)

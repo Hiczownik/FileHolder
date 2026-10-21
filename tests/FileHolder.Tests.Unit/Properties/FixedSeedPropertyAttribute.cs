@@ -8,6 +8,7 @@ namespace FileHolder.Tests.Unit.Properties;
 /// The nightly run sets FSCHECK_RANDOM=1 for fresh inputs and FSCHECK_MAX_TEST for many more of them; a failure
 /// there prints its seed, which goes into <c>Replay</c> to rerun it locally.
 /// </summary>
+[AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 public sealed class FixedSeedPropertyAttribute : PropertyAttribute
 {
     // FsCheck's "(seed,gamma)"; any fixed pair will do, as long as it stays the same.

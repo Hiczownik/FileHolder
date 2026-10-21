@@ -41,9 +41,11 @@ public static partial class BundleRules
                            || FitsWithin(files, sizeBytes, EncryptedStreamFormat.MaxEncryptedTotal(limits.MaxBundleSizeBytes, files.Count)))
             .WithMessage($"The bundle cannot be larger than {FormatSize(limits.MaxBundleSizeBytes)} in total.");
 
-    // Each file is checked first so that huge declared sizes are rejected instead of overflowing the sum.
+    // Summed as Int128, which 50 (or any realistic number of) longs can't overflow: under a configured limit near
+    // long.MaxValue, files that each fit could otherwise add up past it, and checked long addition throws.
     private static bool FitsWithin<TFile>(List<TFile>? files, Func<TFile, long> sizeBytes, long maxTotal) =>
-        files == null || (files.All(f => sizeBytes(f) <= maxTotal) && files.Sum(sizeBytes) <= maxTotal);
+        files == null || (files.All(f => sizeBytes(f) <= maxTotal)
+                          && files.Aggregate(Int128.Zero, (total, file) => total + sizeBytes(file)) <= maxTotal);
 
     public static IRuleBuilderOptions<T, string> MustBeAllowedFileName<T>(this IRuleBuilder<T, string> rule) =>
         rule.NotEmpty().WithMessage("File name is required.")
