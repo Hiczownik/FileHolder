@@ -48,9 +48,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
             });
 
         MockS3Client.InitiateMultipartUploadAsync(Arg.Any<InitiateMultipartUploadRequest>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo => new InitiateMultipartUploadResponse
+            .Returns(callInfo =>
             {
-                UploadId = "mock_upload_id_" + Guid.NewGuid().ToString("N")
+                // Lets a test fail one file's initiate partway through a presign.
+                if (callInfo.ArgAt<InitiateMultipartUploadRequest>(0).Key.Contains("initiate_fail"))
+                {
+                    throw new AmazonS3Exception("Initiate failed.");
+                }
+
+                return new InitiateMultipartUploadResponse
+                {
+                    UploadId = "mock_upload_id_" + Guid.NewGuid().ToString("N")
+                };
             });
 
         MockS3Client.CompleteMultipartUploadAsync(Arg.Any<CompleteMultipartUploadRequest>(), Arg.Any<CancellationToken>())

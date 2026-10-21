@@ -700,6 +700,23 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     [Fact]
+    public async Task OpenDownloadSession_ForAUsedUpBundle_Returns410_WithoutCheckingOrCountingThePassword()
+    {
+        var (shareToken, _) = await CreateBundleAsync(fileCount: 1, maxDownloads: 1, password: "UsedUpPass123!");
+        await OpenSessionIdAsync(shareToken, "UsedUpPass123!");
+
+        // More than the free attempts, so counting them would have ended in a lockout.
+        for (int i = 0; i < 8; i++)
+        {
+            (await OpenSessionAsync(shareToken, "wrong-guess")).StatusCode.Should().Be(HttpStatusCode.Gone);
+        }
+
+        var (failedAttempts, lockedUntil) = await GetLockStateAsync(shareToken);
+        failedAttempts.Should().Be(0, "guesses at a bundle that is gone are never verified");
+        lockedUntil.Should().BeNull();
+    }
+
+    [Fact]
     public async Task UnlockGroup_Returns410Gone_WhenBundleHasPassedItsExpiry()
     {
         var (shareToken, _) = await CreateBundleAsync(fileCount: 1, maxDownloads: 5, password: "ExpiredPass123!");
@@ -872,6 +889,40 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         }
     }
 
+    [Fact]
+    public async Task GetPresignedUrl_WhenALaterFileFailsToStart_AbortsTheMultipartUploadsAlreadyStarted()
+    {
+        long fileSize120Mb = 120L * 1024 * 1024;
+        var marker = Guid.NewGuid().ToString("N");
+
+        var response = await PresignAsync(
+        [
+            new($"first_{marker}.mp4", "video/mp4", fileSize120Mb),
+            new($"second_{marker}.mp4", "video/mp4", fileSize120Mb),
+            new($"initiate_fail_{marker}.mp4", "video/mp4", fileSize120Mb)
+        ]);
+
+        response.IsSuccessStatusCode.Should().BeFalse();
+
+        var calls = factory.MockS3Client.ReceivedCalls().ToList();
+        var started = calls
+            .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.InitiateMultipartUploadAsync))
+            .Select(c => ((InitiateMultipartUploadRequest)c.GetArguments()[0]!).Key)
+            .Where(key => key.Contains(marker) && !key.Contains("initiate_fail"))
+            .ToList();
+        var aborted = calls
+            .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.AbortMultipartUploadAsync))
+            .Select(c => ((AbortMultipartUploadRequest)c.GetArguments()[0]!).Key);
+
+        // No session row was saved for them, so the purge could never have aborted them.
+        started.Should().HaveCount(2);
+        aborted.Should().Contain(started);
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await dbContext.MultipartUploadSessions.AnyAsync(m => m.StorageKey.Contains(marker))).Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(-2_000_000_000, 50)]
     [InlineData(0, 50)]
@@ -992,7 +1043,8 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await ConfirmAsync(request with { Files = [file with { SizeBytes = 512 }] }))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
-        (await ConfirmAsync(request with { IsEncrypted = true }))
+        // With key material, so it is the mismatch with presign that refuses it, not the missing keys.
+        (await ConfirmAsync(request with { IsEncrypted = true, KeySalt = "salt", KeyEnvelope = "envelope", EncryptedManifest = "manifest" }))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -1065,6 +1117,41 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         (await ConfirmAsync(valid)).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    [Theory]
+    [InlineData("KeySalt", null)]
+    [InlineData("KeySalt", "")]
+    [InlineData("KeyEnvelope", null)]
+    [InlineData("KeyEnvelope", "")]
+    [InlineData("EncryptedManifest", null)]
+    [InlineData("EncryptedManifest", "")]
+    [InlineData("KeySalt", "not base64url!")]
+    [InlineData("KeyEnvelope", "padded+/==")]
+    public async Task ConfirmUpload_Returns400_WhenEncryptedUploadLacksUsableKeyMaterial(string field, string? value)
+    {
+        var request = await PresignAndUploadAsync(
+            "Keyless",
+            [new("blob.enc", "application/octet-stream", 1024)],
+            maxDownloads: 5,
+            password: "k_auth_derived_token_123",
+            isEncrypted: true);
+        var valid = request with
+        {
+            EncryptedManifest = new string('m', 1000),
+            KeyEnvelope = new string('e', 80),
+            KeySalt = new string('s', 22)
+        };
+        var broken = field switch
+        {
+            "KeySalt" => valid with { KeySalt = value },
+            "KeyEnvelope" => valid with { KeyEnvelope = value },
+            _ => valid with { EncryptedManifest = value },
+        };
+
+        // Without any one of them, the share link would lead to a bundle nobody can open.
+        (await ConfirmAsync(broken)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(valid)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
     [Fact]
     public async Task ConfirmUpload_Returns400_WhenUnencryptedUploadCarriesKeyMaterial()
     {
@@ -1078,6 +1165,34 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
         (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task PresignAndConfirm_OfANameThatIsOnlyALongExtension_StoresAShortenedName()
+    {
+        // 255 characters passes validation, but used to be stored as "unnamed_file" plus all of them,
+        // overflowing the varchar(255) column with a 500.
+        var fileName = "." + new string('x', 254);
+
+        var request = await PresignAndUploadAsync("Long Extension", [new(fileName, "application/octet-stream", 1024)], maxDownloads: 5);
+        var confirm = await ConfirmAsync(request);
+
+        confirm.StatusCode.Should().Be(HttpStatusCode.OK);
+        var stored = await GetOnlySharedFileAsync((await confirm.Content.ReadFromJsonAsync<string>())!);
+        stored.OriginalFileName.Should().Be("unnamed_file." + new string('x', 63));
+    }
+
+    [Theory]
+    [InlineData("...")]
+    [InlineData("..")]
+    public async Task PresignAndConfirm_OfANameMadeOnlyOfDots_StoresTheFallbackName(string fileName)
+    {
+        var request = await PresignAndUploadAsync("Dots", [new(fileName, "application/octet-stream", 1024)], maxDownloads: 5);
+        var confirm = await ConfirmAsync(request);
+
+        confirm.StatusCode.Should().Be(HttpStatusCode.OK);
+        var stored = await GetOnlySharedFileAsync((await confirm.Content.ReadFromJsonAsync<string>())!);
+        stored.OriginalFileName.Should().Be("unnamed_file");
     }
 
     [Theory]

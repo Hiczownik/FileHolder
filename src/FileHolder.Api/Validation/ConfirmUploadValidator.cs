@@ -45,16 +45,13 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
             file.RuleFor(f => f.SizeBytes).MustBeValidFileSize();
         });
 
-        // Key material is only meaningful for encrypted bundles, and is bounded so a confirm can't store
-        // arbitrarily large blobs (KeySalt also has to fit its varchar(64) column).
+        // Key material is required for encrypted bundles and only allowed there. It is bounded so a confirm can't
+        // store arbitrarily large blobs (KeySalt also has to fit its varchar(64) column).
         When(x => x.IsEncrypted, () =>
         {
-            RuleFor(x => x.KeySalt)
-                .MaximumLength(MaxKeySaltLength).WithMessage($"Key salt cannot exceed {MaxKeySaltLength} characters.");
-            RuleFor(x => x.KeyEnvelope)
-                .MaximumLength(MaxKeyEnvelopeLength).WithMessage($"Key envelope cannot exceed {MaxKeyEnvelopeLength} characters.");
-            RuleFor(x => x.EncryptedManifest)
-                .MaximumLength(MaxEncryptedManifestLength).WithMessage($"Encrypted manifest cannot exceed {MaxEncryptedManifestLength} characters.");
+            RuleFor(x => x.KeySalt).MustBeKeyMaterial("Key salt", MaxKeySaltLength);
+            RuleFor(x => x.KeyEnvelope).MustBeKeyMaterial("Key envelope", MaxKeyEnvelopeLength);
+            RuleFor(x => x.EncryptedManifest).MustBeKeyMaterial("Encrypted manifest", MaxEncryptedManifestLength);
         }).Otherwise(() =>
         {
             RuleFor(x => x.KeySalt).Empty().WithMessage("Key salt is only allowed for encrypted uploads.");

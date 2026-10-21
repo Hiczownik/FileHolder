@@ -35,6 +35,14 @@ public class DownloadSessionService(
             return new OpenDownloadSessionResult(OpenDownloadSessionStatus.NotFound, null);
         }
 
+        // Checked before the password, as unlocking does: guesses at a dead bundle get "expired", without running
+        // bcrypt or counting towards a lockout.
+        var now = _dateTimeProvider.UtcNow;
+        if (group.IsExpired(now))
+        {
+            return new OpenDownloadSessionResult(OpenDownloadSessionStatus.Expired, null);
+        }
+
         var passwordCheck = await _passwordGuard.CheckAsync(group, password, ct);
         if (passwordCheck.Outcome == PasswordCheckOutcome.LockedOut)
         {
@@ -44,12 +52,6 @@ public class DownloadSessionService(
         if (passwordCheck.Outcome == PasswordCheckOutcome.Incorrect)
         {
             return new OpenDownloadSessionResult(OpenDownloadSessionStatus.InvalidPassword, null);
-        }
-
-        var now = _dateTimeProvider.UtcNow;
-        if (group.IsExpired(now))
-        {
-            return new OpenDownloadSessionResult(OpenDownloadSessionStatus.Expired, null);
         }
 
         await using var tx = await _dbContext.Database.BeginTransactionAsync(ct);

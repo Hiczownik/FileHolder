@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.RegularExpressions;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Security;
@@ -79,6 +79,17 @@ public static partial class BundleRules
     // "application/vnd.ms-excel" match; "application.pdf", "text/html\r\nX-Evil: 1" and "a/b c" don't.
     [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(?:[ \t]*;[ \t]*[A-Za-z0-9!#$&^_.+-]+=[A-Za-z0-9!#$&^_.+-]+)*$")]
     private static partial Regex ContentTypeRegex();
+
+    // Required for encrypted bundles: without any one of them no recipient can ever open the bundle.
+    public static IRuleBuilderOptions<T, string?> MustBeKeyMaterial<T>(this IRuleBuilder<T, string?> rule, string name, int maxLength) =>
+        rule.NotEmpty().WithMessage($"{name} is required for encrypted uploads.")
+            .MaximumLength(maxLength).WithMessage($"{name} cannot exceed {maxLength} characters.")
+            .Must(value => value is null || Base64UrlRegex().IsMatch(value))
+            .WithMessage($"{name} must be base64url-encoded.");
+
+    // Unpadded base64url, as the browser encodes key material: "q3-_Zx0" matches; "q3+/Zx0=" and "a b" don't.
+    [GeneratedRegex(@"^[A-Za-z0-9_-]+$")]
+    private static partial Regex Base64UrlRegex();
 
     public static IRuleBuilderOptions<T, string?> MustBeValidPassword<T>(this IRuleBuilder<T, string?> rule) =>
         // Whitespace-only is refused, not treated as "no password": CryptoUtils.HashPassword stores no hash for it,

@@ -36,6 +36,36 @@ describe('sanitizeFileName', () => {
     });
 });
 
+describe('sanitizeFileName length', () => {
+    const maxStoredLength = 255;
+
+    it('caps the extension at 64 characters, as the server does', () => {
+        const extensionLength = 254;
+        const cappedExtensionLength = 63;
+        expect(sanitizeFileName(`.${'a'.repeat(extensionLength)}`)).toBe(`unnamed_file.${'a'.repeat(cappedExtensionLength)}`);
+    });
+
+    // Each is exactly the 255 characters the server's validation lets through.
+    const overlongBodyLength = 200;
+    const restAfterBody = maxStoredLength - overlongBodyLength - 1;
+    const restAfterOneChar = maxStoredLength - 'a.'.length;
+
+    // Matches a name made only of dots, like "." or "..", but not "a.b" or ".env".
+    // https://regex101.com/?regex=%5E%5C.%2B%24&flags=gm&testString=.%0A..%0Aa.b%0A.env
+    const dotsOnly = /^\.+$/;
+
+    it.each([
+        `.${'a'.repeat(maxStoredLength - 1)}`,
+        `${'a'.repeat(overlongBodyLength)}.${'b'.repeat(restAfterBody)}`,
+        `a.${'b'.repeat(restAfterOneChar)}`,
+        '.'.repeat(maxStoredLength),
+    ])("keeps %j within the server's 255-character column", (input) => {
+        const sanitized = sanitizeFileName(input);
+        expect(sanitized.length).toBeLessThanOrEqual(maxStoredLength);
+        expect(sanitized).not.toMatch(dotsOnly);
+    });
+});
+
 describe('sanitizeFileName with trailing dots and spaces', () => {
     it.each([
         ['report.pdf.', 'report.pdf'],

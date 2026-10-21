@@ -12,6 +12,8 @@ const FORBIDDEN_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 const MAX_BODY_LENGTH = 190;
+// 190 + 64 = 254, which fits the server's varchar(255) FileName column.
+const MAX_EXTENSION_LENGTH = 64;
 const FALLBACK_NAME = 'unnamed_file';
 // The first duplicate becomes "name (2).ext": the original counts as copy 1.
 const FIRST_COPY_NUMBER = 2;
@@ -55,10 +57,10 @@ export function sanitizeFileName(fileName: string): string {
 
     const { body, extension } = splitExtension(baseName);
     const sanitizedBody = body.replace(INVALID_CHARS, '_').slice(0, MAX_BODY_LENGTH);
-    const sanitizedExtension = extension.replace(INVALID_CHARS, '');
+    const sanitizedExtension = extension.replace(INVALID_CHARS, '').slice(0, MAX_EXTENSION_LENGTH);
     const finalName = `${sanitizedBody}${sanitizedExtension}`;
 
-    // Unlike the server, also refuse names made only of dots: "." and ".." mean a folder to extractors.
+    // Names made only of dots, like "." and "..", mean a folder to extractors, so they fall back too.
     if (finalName.trim() === '' || finalName === sanitizedExtension || DOTS_ONLY.test(finalName)) {
         return `${FALLBACK_NAME}${DOTS_ONLY.test(sanitizedExtension) ? '' : sanitizedExtension}`;
     }

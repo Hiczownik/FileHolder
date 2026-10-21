@@ -1,4 +1,4 @@
-using FileHolder.Core.Security;
+﻿using FileHolder.Core.Security;
 using FluentAssertions;
 
 namespace FileHolder.Tests.Unit.Security;
@@ -36,6 +36,51 @@ public class FileSecurityUtilsTests
     {
         // The check and the stored name must agree, or the check can be sidestepped.
         FileSecurityUtils.SanitizeFileName("evil.exe ").Should().Be("evil.exe");
+    }
+
+    [Theory]
+    [InlineData(".", "unnamed_file")]
+    [InlineData("..", "unnamed_file")]
+    [InlineData("...", "unnamed_file")]
+    [InlineData("....", "unnamed_file")]
+    [InlineData(".env", "unnamed_file.env")]
+    [InlineData("report.pdf", "report.pdf")]
+    public void SanitizeFileName_FallsBackForNamesMadeOnlyOfDots(string fileName, string expected)
+    {
+        FileSecurityUtils.SanitizeFileName(fileName).Should().Be(expected);
+    }
+
+    public static TheoryData<string> AwkwardNames() => new()
+    {
+        "",
+        "   ",
+        ".",
+        "..",
+        "...",
+        "." + new string('a', 254),
+        new string('a', 255),
+        new string('a', 200) + "." + new string('b', 54),
+        new string('.', 255),
+        "a." + new string('b', 252),
+        new string(' ', 100) + "." + new string('c', 100),
+    };
+
+    [Theory]
+    [MemberData(nameof(AwkwardNames))]
+    public void SanitizeFileName_AlwaysFitsTheFileNameColumn_AndIsNeverEmptyOrDotsOnly(string fileName)
+    {
+        var sanitized = FileSecurityUtils.SanitizeFileName(fileName);
+
+        sanitized.Should().NotBeNullOrWhiteSpace();
+        sanitized.Length.Should().BeLessThanOrEqualTo(255);
+        sanitized.Should().NotMatchRegex(@"^\.+$");
+    }
+
+    [Fact]
+    public void SanitizeFileName_OfANameThatIsOnlyALongExtension_CapsTheExtension()
+    {
+        FileSecurityUtils.SanitizeFileName("." + new string('a', 254))
+            .Should().Be("unnamed_file." + new string('a', 63));
     }
 
     [Fact]

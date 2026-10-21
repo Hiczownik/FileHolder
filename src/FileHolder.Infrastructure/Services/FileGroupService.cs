@@ -1,4 +1,4 @@
-using FileHolder.Core.Configuration;
+﻿using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Exceptions;
@@ -64,71 +64,99 @@ public class FileGroupService
         var now = _dateTimeProvider.UtcNow;
         var pendingExpiresAt = now + UploadTimings.PendingUploadLifetime;
 
-        foreach (var file in dto.Files)
+        // Until SaveChangesAsync succeeds, no MultipartUploadSession row records these uploads, so the purge
+        // could never abort them: if a later file or the save fails, they are aborted here instead.
+        var startedUploads = new List<(string StorageKey, string UploadId)>();
+
+        try
         {
-            var storageKey = dto.IsEncrypted
-                ? $"uploads/{Guid.NewGuid():N}.enc"
-                : FileSecurityUtils.GenerateStorageKey(file.FileName);
-
-            // Confirm only accepts files recorded here, so the bundle's files are the ones this request approved.
-            _dbContext.PendingUploads.Add(new PendingUpload
+            foreach (var file in dto.Files)
             {
-                UploadToken = uploadToken,
-                StorageKey = storageKey,
-                FileName = FileSecurityUtils.SanitizeFileName(file.FileName),
-                ContentType = file.ContentType,
-                SizeBytes = file.SizeBytes,
-                IsEncrypted = dto.IsEncrypted,
-                CreatedAt = now,
-                ExpiresAt = pendingExpiresAt
-            });
+                var storageKey = dto.IsEncrypted
+                    ? $"uploads/{Guid.NewGuid():N}.enc"
+                    : FileSecurityUtils.GenerateStorageKey(file.FileName);
 
-            if (IsMultipart(file.SizeBytes))
-            {
-                var (partSizeBytes, totalParts) = CalculatePartSizing(file.SizeBytes, dto.IsEncrypted);
-
-                var uploadId = await _storageProvider.InitiateMultipartUploadAsync(storageKey, file.ContentType);
-
-                var session = new MultipartUploadSession
+                // Confirm only accepts files recorded here, so the bundle's files are the ones this request approved.
+                _dbContext.PendingUploads.Add(new PendingUpload
                 {
                     UploadToken = uploadToken,
-                    UploadId = uploadId,
                     StorageKey = storageKey,
                     FileName = FileSecurityUtils.SanitizeFileName(file.FileName),
                     ContentType = file.ContentType,
-                    PartSizeBytes = partSizeBytes,
-                    TotalSizeBytes = file.SizeBytes,
-                    TotalParts = totalParts,
-                    ExpiresAt = pendingExpiresAt,
+                    SizeBytes = file.SizeBytes,
+                    IsEncrypted = dto.IsEncrypted,
                     CreatedAt = now,
-                };
+                    ExpiresAt = pendingExpiresAt
+                });
 
-                _dbContext.MultipartUploadSessions.Add(session);
+                if (IsMultipart(file.SizeBytes))
+                {
+                    var (partSizeBytes, totalParts) = CalculatePartSizing(file.SizeBytes, dto.IsEncrypted);
 
-                items.Add(new PresignedItemDto(
-                    file.FileName,
-                    storageKey,
-                    UploadMode.Multipart,
-                    null,
-                    uploadId,
-                    partSizeBytes,
-                    totalParts
-                ));
+                    var uploadId = await _storageProvider.InitiateMultipartUploadAsync(storageKey, file.ContentType);
+                    startedUploads.Add((storageKey, uploadId));
+
+                    var session = new MultipartUploadSession
+                    {
+                        UploadToken = uploadToken,
+                        UploadId = uploadId,
+                        StorageKey = storageKey,
+                        FileName = FileSecurityUtils.SanitizeFileName(file.FileName),
+                        ContentType = file.ContentType,
+                        PartSizeBytes = partSizeBytes,
+                        TotalSizeBytes = file.SizeBytes,
+                        TotalParts = totalParts,
+                        ExpiresAt = pendingExpiresAt,
+                        CreatedAt = now,
+                    };
+
+                    _dbContext.MultipartUploadSessions.Add(session);
+
+                    items.Add(new PresignedItemDto(
+                        file.FileName,
+                        storageKey,
+                        UploadMode.Multipart,
+                        null,
+                        uploadId,
+                        partSizeBytes,
+                        totalParts
+                    ));
+                }
+                else
+                {
+                    var presignedUrl = _storageProvider.GeneratePresignedUploadUrl(
+                        storageKey,
+                        file.SizeBytes,
+                        now + UploadTimings.SinglePutUrlLifetime);
+
+                    items.Add(new PresignedItemDto(file.FileName, storageKey, UploadMode.Single, presignedUrl, null, null, null));
+                }
             }
-            else
-            {
-                var presignedUrl = _storageProvider.GeneratePresignedUploadUrl(
-                    storageKey,
-                    file.SizeBytes,
-                    now + UploadTimings.SinglePutUrlLifetime);
 
-                items.Add(new PresignedItemDto(file.FileName, storageKey, UploadMode.Single, presignedUrl, null, null, null));
-            }
+            await _dbContext.SaveChangesAsync();
+        }
+        catch
+        {
+            await AbortQuietlyAsync(startedUploads);
+            throw;
         }
 
-        await _dbContext.SaveChangesAsync();
-
         return new PresignedUrlResponseDto(uploadToken, items);
+    }
+
+    private async Task AbortQuietlyAsync(IEnumerable<(string StorageKey, string UploadId)> uploads)
+    {
+        foreach (var (storageKey, uploadId) in uploads)
+        {
+            try
+            {
+                await _storageProvider.AbortMultipartUploadAsync(storageKey, uploadId, CancellationToken.None);
+            }
+            catch
+            {
+                // Best effort: the error that failed the presign is the one worth reporting.
+            }
+        }
     }
 
     public async Task<string> ConfirmAndPersistFileGroupAsync(ConfirmUploadRequestDto dto)
