@@ -28,6 +28,12 @@ public class FileGroup
     public string? EncryptedTitle { get; set; }
 
     /// <summary>
+    /// How an encrypted bundle is unlocked. Null for plain bundles, and for encrypted bundles from before link keys,
+    /// which the browser no longer opens.
+    /// </summary>
+    public KeyMode? KeyMode { get; set; }
+
+    /// <summary>
     /// Wrong passwords since the last correct one. Past a few free attempts, each further one
     /// sets <see cref="PasswordLockedUntil"/>, during which every password is refused.
     /// </summary>

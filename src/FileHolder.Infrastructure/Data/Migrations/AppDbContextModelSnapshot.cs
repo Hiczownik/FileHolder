@@ -87,6 +87,10 @@ namespace FileHolder.Infrastructure.Data.Migrations
                     b.Property<string>("KeyEnvelope")
                         .HasColumnType("text");
 
+                    b.Property<string>("KeyMode")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
                     b.Property<string>("KeySalt")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");

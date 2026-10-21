@@ -242,7 +242,8 @@ public class FileGroupService
                 EncryptedManifest = dto.EncryptedManifest,
                 KeyEnvelope = dto.KeyEnvelope,
                 KeySalt = dto.KeySalt,
-                EncryptedTitle = string.IsNullOrEmpty(dto.EncryptedTitle) ? null : dto.EncryptedTitle
+                EncryptedTitle = string.IsNullOrEmpty(dto.EncryptedTitle) ? null : dto.EncryptedTitle,
+                KeyMode = dto.KeyMode
             };
 
             foreach (var item in dto.Files)
@@ -416,7 +417,8 @@ public class FileGroupService
                 group.ExpiresAt,
                 group.RemainingDownloads,
                 false,
-                new List<FileItemMetadataDto>()
+                new List<FileItemMetadataDto>(),
+                KeyMode: group.KeyMode
             );
         }
 
@@ -442,7 +444,8 @@ public class FileGroupService
             group.RemainingDownloads,
             group.IsExpired(now),
             fileItemDtos,
-            group.EncryptedTitle
+            group.EncryptedTitle,
+            group.KeyMode
         );
     }
 
@@ -502,7 +505,8 @@ public class FileGroupService
             group.RemainingDownloads,
             false,
             fileItemDtos,
-            group.EncryptedTitle
+            group.EncryptedTitle,
+            group.KeyMode
         );
 
         return new UnlockResult(true, false, false, unlockedMetadata);

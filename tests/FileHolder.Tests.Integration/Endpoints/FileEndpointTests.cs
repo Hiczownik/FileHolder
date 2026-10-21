@@ -378,7 +378,8 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         {
             EncryptedManifest = "encrypted_manifest_base64",
             KeyEnvelope = "key_envelope_base64",
-            KeySalt = "salt_base64"
+            KeySalt = "salt_base64",
+            KeyMode = KeyMode.LinkKeyAndPasskey
         };
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
@@ -396,6 +397,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         metadata.RequiresPassword.Should().BeTrue();
         metadata.IsUnlocked.Should().BeFalse();
         metadata.KeySalt.Should().Be("salt_base64");
+        metadata.KeyMode.Should().Be(KeyMode.LinkKeyAndPasskey);
         metadata.KeyEnvelope.Should().BeNull();
         metadata.EncryptedManifest.Should().BeNull();
         metadata.Files.Should().BeEmpty();
@@ -417,6 +419,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         unlockedMetadata!.IsUnlocked.Should().BeTrue();
         unlockedMetadata.KeyEnvelope.Should().Be("key_envelope_base64");
         unlockedMetadata.KeySalt.Should().Be("salt_base64");
+        unlockedMetadata.KeyMode.Should().Be(KeyMode.LinkKeyAndPasskey);
         unlockedMetadata.EncryptedManifest.Should().Be("encrypted_manifest_base64");
         unlockedMetadata.Files.Should().HaveCount(1);
     }
@@ -427,8 +430,48 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         {
             EncryptedManifest = "encrypted_manifest_base64",
             KeyEnvelope = "key_envelope_base64",
-            KeySalt = "salt_base64"
+            KeySalt = "salt_base64",
+            KeyMode = KeyMode.LinkKey
         };
+
+    [Theory]
+    [InlineData(KeyMode.LinkKey)]
+    [InlineData(KeyMode.LinkKeyAndPasskey)]
+    public async Task KeyMode_IsStored_AndReturnedBeforeAndAfterUnlocking(KeyMode keyMode)
+    {
+        var request = await PresignEncryptedAsync($"Key Mode {keyMode}") with { KeyMode = keyMode };
+        var shareToken = await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>();
+
+        // Sent as a name, not a number, so the UI can read it.
+        var lockedJson = await (await _client.GetAsync($"/api/v1/files/{shareToken}")).Content.ReadAsStringAsync();
+        lockedJson.Should().Contain($"\"keyMode\":\"{keyMode}\"");
+
+        var unlocked = await (await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("k_auth_derived_token_123"))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        unlocked!.KeyMode.Should().Be(keyMode);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenAnEncryptedUploadHasNoValidKeyMode()
+    {
+        var request = await PresignEncryptedAsync("No Key Mode");
+
+        (await ConfirmAsync(request with { KeyMode = null })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request with { KeyMode = (KeyMode)99 })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenAPlainUploadCarriesAKeyMode()
+    {
+        var request = await PresignAndUploadAsync("Plain Key Mode", [new("plain.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        (await ConfirmAsync(request with { KeyMode = KeyMode.LinkKey })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var shareToken = await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>();
+
+        var metadata = await _client.GetFromJsonAsync<FileGroupMetadataResponseDto>($"/api/v1/files/{shareToken}");
+        metadata!.KeyMode.Should().BeNull();
+    }
 
     [Fact]
     public async Task EncryptedTitle_IsNeverShownBeforeUnlocking_AndIsReturnedAfter()
@@ -1115,7 +1158,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         (await ConfirmAsync(request with { Files = [file with { SizeBytes = 512 }] }))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
         // With key material, so it is the mismatch with presign that refuses it, not the missing keys.
-        (await ConfirmAsync(request with { IsEncrypted = true, KeySalt = "salt", KeyEnvelope = "envelope", EncryptedManifest = "manifest" }))
+        (await ConfirmAsync(request with { IsEncrypted = true, KeySalt = "salt", KeyEnvelope = "envelope", EncryptedManifest = "manifest", KeyMode = KeyMode.LinkKey }))
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -1220,7 +1263,8 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         {
             EncryptedManifest = new string('m', 1000),
             KeyEnvelope = new string('e', 80),
-            KeySalt = new string('s', 22)
+            KeySalt = new string('s', 22),
+            KeyMode = KeyMode.LinkKey
         };
 
         // An oversized salt used to reach the varchar(64) column and fail as a 500.
@@ -1256,7 +1300,8 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         {
             EncryptedManifest = new string('m', 1000),
             KeyEnvelope = new string('e', 80),
-            KeySalt = new string('s', 22)
+            KeySalt = new string('s', 22),
+            KeyMode = KeyMode.LinkKey
         };
         var broken = field switch
         {
