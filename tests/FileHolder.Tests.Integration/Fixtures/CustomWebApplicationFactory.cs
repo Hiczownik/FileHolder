@@ -175,6 +175,16 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 services.Remove(cleanupWorkerDescriptor);
             }
 
+            // Storage is a mock here; the safety net's rule is tested against real storage (StorageLifecycleTests).
+            var lifecycleDescriptor = services.SingleOrDefault(d =>
+                d.ImplementationType == typeof(StorageLifecycleInitializer) ||
+                (d.ServiceType == typeof(IHostedService) && d.ImplementationFactory?.Method.ReturnType == typeof(StorageLifecycleInitializer)));
+
+            if (lifecycleDescriptor != null)
+            {
+                services.Remove(lifecycleDescriptor);
+            }
+
             if (!UseRealRateLimits)
             {
                 var rateLimiterDescriptors = services

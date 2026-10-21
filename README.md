@@ -33,6 +33,9 @@
 * **Self-destruction:**
   * A bundle closes when it expires (1–168 hours) or when its downloads are used up.
   * A background worker runs every 30 minutes. It deletes a closed bundle's files from storage once no download session is still running (plus a 10-minute grace for links already handed out).
+  * **Storage safety net:** in case that worker is stuck, crashes or has a bug, storage itself deletes **any object older than 10 days**, and **multipart uploads left incomplete for 48 hours**. No legitimate file gets that old: at most about 8 days (24 h to confirm an upload, 7 days of bundle life, then the grace and the worker's next run).
+    * The API sets the 10-day bucket lifecycle rule at startup, calculated from its own timings (`StorageSafetyNet`), and refuses to start if `Storage__LifecycleExpiryDays` is set lower. The `fileholder_storage_lifecycle_days` metric shows the rule's days once storage has confirmed it (0 until then).
+    * Silo ignores the abort-incomplete-uploads part of lifecycle rules, so abandoned uploads are removed by its own stale-upload clean-up instead: `MINIO_API_STALE_UPLOADS_EXPIRY=48h` in `docker-compose.yml` (Silo's default, 24 h, could cut off a slow upload before it is confirmed).
   * **The bundle's database rows are currently kept after that** (file names, title, key material). Fixing this is tracked in [#77](https://github.com/Hiczownik/FileHolder/issues/77).
 * **End-to-end encryption (optional):**
   * **The key is in the link:** the browser creates a random 256-bit *link key* and puts it in the share link's fragment (`/f/<token>#k=<key>`). Browsers never send the fragment to a server, not even in the `Referer` header, so the API and nginx never see it.
@@ -171,6 +174,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Storage__BucketName` | `fileholder-bucket` | Bucket for all files |
 | `UploadLimits__MaxBundleSizeBytes` | 5 GB (default) | Largest bundle. Keep in sync with the UI |
 | `RateLimits__*PermitLimit` | see *Rate limits* (defaults) | Requests per client address per minute, per endpoint group. Raise only for single-address test stacks |
+| `Storage__LifecycleExpiryDays` | unset (10, calculated) | Days after which storage deletes any object. Only for a longer safety net; lower than the calculated value refuses to start |
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |

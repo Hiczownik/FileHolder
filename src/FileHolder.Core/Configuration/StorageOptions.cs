@@ -20,4 +20,14 @@ public class StorageOptions
 
     [Required(ErrorMessage = "Storage:BucketName is required.")]
     public string BucketName { get; set; } = "fileholder-bucket";
+
+    /// <summary>
+    /// Days after which storage deletes any object (the safety net's lifecycle rule). Leave unset to use
+    /// <see cref="StorageSafetyNet.LifecycleExpiryDays"/>, calculated from the app's timings. A value below that would
+    /// let storage delete files of bundles that are still live, so the API refuses to start with one.
+    /// </summary>
+    public int? LifecycleExpiryDays { get; set; }
+
+    /// <summary>The lifecycle expiry in effect: the configured one, or the calculated one.</summary>
+    public int EffectiveLifecycleExpiryDays => LifecycleExpiryDays ?? StorageSafetyNet.LifecycleExpiryDays;
 }

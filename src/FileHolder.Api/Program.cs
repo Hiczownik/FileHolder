@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using Amazon.S3;
+using FileHolder.Api.Configuration;
 using FileHolder.Api.Endpoints;
 using FileHolder.Api.ExceptionHandling;
 using FileHolder.Api.Middleware;
@@ -22,12 +23,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Host.UseSerilog((ctx, lc) => lc.WriteTo.Console(formatProvider: System.Globalization.CultureInfo.InvariantCulture));
 
-builder.Services.AddOptions<StorageOptions>()
-    .Bind(builder.Configuration.GetSection(StorageOptions.SectionName))
-    .ValidateDataAnnotations()
-    .Validate(o => S3ClientFactory.IsHttpOrHttps(o.ServiceUrl) && S3ClientFactory.IsHttpOrHttps(o.PublicBaseUrl),
-        "Storage:ServiceUrl and Storage:PublicBaseUrl must be absolute http:// or https:// URLs.")
-    .ValidateOnStart();
+builder.Services.AddFileHolderStorageOptions(builder.Configuration);
 
 builder.Services.AddOptions<UploadLimitsOptions>()
     .Bind(builder.Configuration.GetSection(UploadLimitsOptions.SectionName))
@@ -82,11 +78,15 @@ builder.Services.AddOpenTelemetry()
         metrics
             .AddAspNetCoreInstrumentation()
             .AddRuntimeInstrumentation()
+            .AddMeter(StorageLifecycleStatus.MeterName)
             .AddPrometheusExporter();
     });
 
 builder.Services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
 builder.Services.AddHostedService<FileCleanupWorker>();
+// The storage-level backstop behind the purge (StorageSafetyNet).
+builder.Services.AddSingleton<StorageLifecycleStatus>();
+builder.Services.AddHostedService<StorageLifecycleInitializer>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 

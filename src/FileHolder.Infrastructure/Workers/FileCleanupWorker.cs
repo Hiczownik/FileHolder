@@ -1,4 +1,5 @@
-﻿using FileHolder.Core.Interfaces;
+﻿using FileHolder.Core.Configuration;
+using FileHolder.Core.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -8,7 +9,7 @@ namespace FileHolder.Infrastructure.Workers;
 public class FileCleanupWorker(IServiceProvider serviceProvider, ILogger<FileCleanupWorker> logger)
     : BackgroundService
 {
-    private readonly TimeSpan _checkInterval = TimeSpan.FromMinutes(30);
+    private readonly TimeSpan _checkInterval = PurgeTimings.CheckInterval;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

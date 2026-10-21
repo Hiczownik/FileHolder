@@ -71,8 +71,9 @@ public static partial class BundleRules
     // so a bundle with neither limit would keep its files forever.
     public static IRuleBuilderOptions<T, int?> MustBeValidExpiry<T>(this IRuleBuilder<T, int?> rule) =>
         rule.NotNull().WithMessage("Expiration time is required.")
-            .InclusiveBetween(1, 168)
-            .WithMessage("Expiration time must be between 1 hour and 168 hours (7 days).");
+            .InclusiveBetween(BundleLimits.MinExpiryHours, BundleLimits.MaxExpiryHours)
+            .WithMessage(string.Create(CultureInfo.InvariantCulture,
+                $"Expiration time must be between {BundleLimits.MinExpiryHours} hour and {BundleLimits.MaxExpiryHours} hours ({BundleLimits.MaxExpiry.TotalDays:0.#} days)."));
 
     public static IRuleBuilderOptions<T, int?> MustBeValidMaxDownloads<T>(this IRuleBuilder<T, int?> rule) =>
         rule.InclusiveBetween(1, 1000)
