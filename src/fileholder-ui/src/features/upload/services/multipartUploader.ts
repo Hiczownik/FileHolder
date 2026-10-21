@@ -116,7 +116,7 @@ export async function executeMultipartUpload(
         throwIfAborted();
 
         try {
-            return await uploadApi.uploadMultipartChunkDirectToS3(await getPartUrl(partNumber), chunk);
+            return await uploadApi.uploadMultipartChunkDirectToS3(await getPartUrl(partNumber), chunk, options?.signal);
         } catch (err) {
             if (options?.signal?.aborted) {
                 throw abortError();
@@ -135,7 +135,7 @@ export async function executeMultipartUpload(
     const partNumbers = Array.from({ length: totalParts }, (_, i) => i + 1);
 
     let currentIndex = 0;
-    let activeError: Error | null = null;
+    let activeError: Error | DOMException | null = null;
 
     const runLimited = <T,>(task: () => Promise<T>): Promise<T> => (options?.limiter ? options.limiter.run(task) : task());
 
@@ -150,6 +150,8 @@ export async function executeMultipartUpload(
 
         try {
             await runLimited(async () => {
+                // A part can wait a while for a slot; if the upload was cancelled meanwhile, it isn't read or encrypted.
+                throwIfAborted();
                 const chunk = await source.read(start, end);
                 // Each part URL is signed for exactly this many bytes, so storage would refuse anything else.
                 if (chunk.size !== end - start) {
@@ -161,7 +163,8 @@ export async function executeMultipartUpload(
                 options?.onChunkUploaded?.(chunk.size);
             });
         } catch (err) {
-            activeError = err instanceof Error ? err : new Error(`Failed to upload part ${partNumber}`);
+            // DOMException isn't an Error everywhere, and replacing it would turn a cancelled upload into a failed one.
+            activeError = err instanceof Error || err instanceof DOMException ? err : new Error(`Failed to upload part ${partNumber}`);
             throw activeError;
         }
 
