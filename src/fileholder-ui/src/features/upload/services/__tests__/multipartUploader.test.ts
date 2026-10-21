@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { AxiosError, AxiosHeaders } from 'axios';
 import { executeMultipartUpload, fileSource, PART_URL_MAX_AGE_MS, type UploadSource } from '../multipartUploader';
 import { uploadApi } from '../../api/uploadApi';
 import { createConcurrencyLimiter } from '../../../../shared/utils/concurrencyLimiter';
@@ -10,6 +11,7 @@ const ONE_MINUTE_MS = 60_000;
 const CONCURRENCY = 4;
 const TWO_PARTS = 2;
 const PRESIGN_CALLS_WITH_ONE_RETRY = 2;
+const COMPLETE_CALLS_WITH_ONE_RETRY = 2;
 const MAX_ATTEMPTS_PER_PART = 3;
 const SHARED_LIMIT = 2;
 const TWO_UPLOADS = 2;
@@ -25,7 +27,19 @@ const createItem = (totalParts: number): PresignedItem => ({
     totalParts,
 });
 
-const createFile = (totalParts: number): UploadSource => fileSource(new File(['x'.repeat(PART_SIZE_BYTES * totalParts)], 'big.bin'));
+const HTTP_TOO_MANY_REQUESTS = 429;
+
+// Retry-After 0, so the test doesn't have to wait.
+const tooManyRequests = (): AxiosError =>
+    new AxiosError('Too Many Requests', 'ERR_BAD_REQUEST', undefined, undefined, {
+        status: HTTP_TOO_MANY_REQUESTS,
+        statusText: '',
+        data: null,
+        headers: { 'retry-after': '0' },
+        config: { headers: new AxiosHeaders() },
+    });
+
+const createFile =(totalParts: number): UploadSource => fileSource(new File(['x'.repeat(PART_SIZE_BYTES * totalParts)], 'big.bin'));
 
 /** Signs URLs that say which batch signed them: "part_3_sig1" is part 3 from the first presign call. */
 const mockPresign = () => {
@@ -126,5 +140,22 @@ describe('executeMultipartUpload', () => {
 
         expect(maxInFlight).toBe(SHARED_LIMIT);
         expect(uploadApi.uploadMultipartChunkDirectToS3).toHaveBeenCalledTimes(PARTS_PER_FILE * TWO_UPLOADS);
+    });
+
+    it('waits out rate limiting on signing and completing, without spending any of the part\'s attempts', async () => {
+        const presignSpy = mockPresign();
+        // More 429s in a row than a part has attempts: before, the part failed after the third.
+        const rateLimitedSignings = MAX_ATTEMPTS_PER_PART + 1;
+        Array.from({ length: rateLimitedSignings }).forEach(() => presignSpy.mockRejectedValueOnce(tooManyRequests()));
+        const uploadSpy = vi.spyOn(uploadApi, 'uploadMultipartChunkDirectToS3').mockResolvedValue('etag');
+        const completeSpy = vi.spyOn(uploadApi, 'completeMultipartUpload')
+            .mockRejectedValueOnce(tooManyRequests())
+            .mockResolvedValue(true);
+
+        await executeMultipartUpload(createFile(1), createItem(1), UPLOAD_TOKEN, { concurrency: 1 });
+
+        expect(presignSpy).toHaveBeenCalledTimes(rateLimitedSignings + 1);
+        expect(uploadSpy).toHaveBeenCalledTimes(1);
+        expect(completeSpy).toHaveBeenCalledTimes(COMPLETE_CALLS_WITH_ONE_RETRY);
     });
 });

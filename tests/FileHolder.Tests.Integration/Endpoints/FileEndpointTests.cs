@@ -992,7 +992,12 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         responses.Count(r => r.StatusCode == HttpStatusCode.OK).Should().Be(1);
         responses.Where(r => r.StatusCode != HttpStatusCode.OK)
-            .Should().OnlyContain(r => r.StatusCode == HttpStatusCode.NotFound || r.StatusCode == HttpStatusCode.BadRequest);
+            .Should().OnlyContain(r => r.StatusCode == HttpStatusCode.NotFound || r.StatusCode == HttpStatusCode.Conflict);
+
+        // Only the confirm that claimed the token did the expensive work: the others were refused before it.
+        factory.MockS3Client.ReceivedCalls()
+            .Count(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.CopyObjectAsync))
+            .Should().Be(1);
 
         using var scope = factory.Services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -1057,6 +1062,53 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         factory.SeedS3Object(request.Files[0].StorageKey, 10L * 1024 * 1024 * 1024);
 
         (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_ThatFails_ReleasesItsClaim_SoARetrySucceedsStraightAway()
+    {
+        var request = await PresignAndUploadAsync("Retried", [new("retried.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        var storageKey = request.Files[0].StorageKey;
+
+        // The upload hadn't finished yet: storage holds fewer bytes than presign approved.
+        factory.SeedS3Object(storageKey, 512);
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        factory.SeedS3Object(storageKey, 1024);
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    private async Task SetClaimAsync(string uploadToken, DateTime claimedUntil)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await dbContext.PendingUploads
+            .Where(p => p.UploadToken == uploadToken)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(p => p.ClaimId, Guid.NewGuid())
+                .SetProperty(p => p.ClaimedUntil, claimedUntil));
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns409_WithoutTouchingStorage_WhileAnotherConfirmHoldsTheToken()
+    {
+        var request = await PresignAndUploadAsync("Held", [new("held.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        await SetClaimAsync(request.UploadToken, DateTime.UtcNow.AddMinutes(4));
+        factory.MockS3Client.ClearReceivedCalls();
+
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        factory.MockS3Client.ReceivedCalls().Should().BeEmpty("a refused confirm must not reach storage");
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_TakesOverAClaimThatRanOut()
+    {
+        // A confirm that crashed part way never released its claim; once it runs out, the upload can be confirmed.
+        var request = await PresignAndUploadAsync("Crashed", [new("crashed.pdf", "application/pdf", 1024)], maxDownloads: 5);
+        await SetClaimAsync(request.UploadToken, DateTime.UtcNow.AddSeconds(-1));
+
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]

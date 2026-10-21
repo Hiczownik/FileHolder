@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading.RateLimiting;
 using Amazon.S3;
 using Amazon.S3.Model;
+using FileHolder.Api.RateLimiting;
 using FileHolder.Infrastructure.Data;
 using FileHolder.Infrastructure.Workers;
 using Microsoft.AspNetCore.Hosting;
@@ -29,6 +30,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
     public IAmazonS3 MockS3Client { get; private set; } = Substitute.For<IAmazonS3>();
 
     public ConcurrentDictionary<string, long> S3ObjectRegistry { get; } = new();
+
+    /// <summary>
+    /// Most tests lift every rate limit so they can't trip over each other; the rate-limit tests keep the
+    /// API's own policies (see <see cref="RealRateLimitsFactory"/>).
+    /// </summary>
+    protected virtual bool UseRealRateLimits => false;
 
     public void SeedS3Object(string storageKey, long sizeBytes)
     {
@@ -162,24 +169,28 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 services.Remove(cleanupWorkerDescriptor);
             }
 
-            var rateLimiterDescriptors = services
-                .Where(d => d.ServiceType == typeof(IConfigureOptions<RateLimiterOptions>))
-                .ToList();
-
-            foreach (var descriptor in rateLimiterDescriptors)
+            if (!UseRealRateLimits)
             {
-                services.Remove(descriptor);
+                var rateLimiterDescriptors = services
+                    .Where(d => d.ServiceType == typeof(IConfigureOptions<RateLimiterOptions>))
+                    .ToList();
+
+                foreach (var descriptor in rateLimiterDescriptors)
+                {
+                    services.Remove(descriptor);
+                }
+
+                services.Configure<RateLimiterOptions>(options =>
+                {
+                    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+                    options.AddPolicy(RateLimitPolicies.UploadInitiate, _ => RateLimitPartition.GetNoLimiter("test"));
+                    options.AddPolicy(RateLimitPolicies.MultipartPipeline, _ => RateLimitPartition.GetNoLimiter("test"));
+                    options.AddPolicy(RateLimitPolicies.Confirm, _ => RateLimitPartition.GetNoLimiter("test"));
+                    options.AddPolicy(RateLimitPolicies.Download, _ => RateLimitPartition.GetNoLimiter("test"));
+                    options.AddPolicy(RateLimitPolicies.Metadata, _ => RateLimitPartition.GetNoLimiter("test"));
+                });
             }
-
-            services.Configure<RateLimiterOptions>(options =>
-            {
-                options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-
-                options.AddPolicy("UploadInitiatePolicy", _ => RateLimitPartition.GetNoLimiter("test"));
-                options.AddPolicy("MultipartPipelinePolicy", _ => RateLimitPartition.GetNoLimiter("test"));
-                options.AddPolicy("DownloadPolicy", _ => RateLimitPartition.GetNoLimiter("test"));
-                options.AddPolicy("MetadataPolicy", _ => RateLimitPartition.GetNoLimiter("test"));
-            });
 
             var sp = services.BuildServiceProvider();
             using var scope = sp.CreateScope();
