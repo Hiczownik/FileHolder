@@ -19,13 +19,26 @@ export interface UploadFormValues {
     isEncrypted?: boolean;
     /** Encrypted bundles only: the files need the passkey as well as the link's key. */
     requirePasskey?: boolean;
+    /** Remove location, camera details and other metadata from photos, in the browser, before upload. */
+    stripImageMetadata?: boolean;
+}
+
+/** What removing photo metadata did to a bundle's files. */
+export interface MetadataSummary {
+    /** Photos that had metadata removed. */
+    readonly cleaned: number;
+    /** Files that may carry metadata but couldn't be cleaned (HEIC, video, unreadable photos), uploaded as they were. */
+    readonly notCleaned: readonly string[];
+    /** Motion Photos whose video was removed, leaving a still photo. */
+    readonly motionPhotos: number;
 }
 
 export type UploadState =
     | { status: 'idle' }
-    | { status: 'uploading'; progress: number }
-    /** `keyMode` is set for encrypted bundles only. */
-    | { status: 'success'; shareLink: string; keyMode?: KeyMode }
+    /** `preparing`: photo metadata is being removed, before anything is uploaded. */
+    | { status: 'uploading'; progress: number; preparing?: boolean }
+    /** `keyMode` is set for encrypted bundles only; `metadataSummary` when photo metadata removal was on. */
+    | { status: 'success'; shareLink: string; keyMode?: KeyMode; metadataSummary?: MetadataSummary }
     | { status: 'error'; message: string };
 
 /** How a bundle uploaded with these values is unlocked; undefined for a plain bundle. */

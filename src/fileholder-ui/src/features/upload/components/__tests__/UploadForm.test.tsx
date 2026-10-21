@@ -101,6 +101,20 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
         expect(submitButton).toBeEnabled();
     });
 
+    it('removes photo metadata by default, and lets the uploader turn that off', async () => {
+        const user = userEvent.setup();
+        const { onUpload, submitButton } = renderWithFiles();
+        const stripCheckbox = screen.getByRole('checkbox', { name: 'Remove photo metadata' });
+
+        expect(stripCheckbox).toBeChecked();
+        await user.click(submitButton);
+        expect(onUpload).toHaveBeenLastCalledWith(expect.objectContaining({ stripImageMetadata: true }), expect.any(Array));
+
+        await user.click(stripCheckbox);
+        await user.click(submitButton);
+        expect(onUpload).toHaveBeenLastCalledWith(expect.objectContaining({ stripImageMetadata: false }), expect.any(Array));
+    });
+
     it('allows multi-file payloads exceeding 200 MB without warnings under streaming E2EE', async () => {
         const user = userEvent.setup();
         const { submitButton } = renderWithFiles([createMockFile('file1.pdf', LARGE_FILE_BYTES), createMockFile('file2.pdf', LARGE_FILE_BYTES)]);

@@ -15,7 +15,7 @@ describe('FileDropzone Component', () => {
             <FileDropzone
                 selectedFiles={[]}
                 onFilesSelect={vi.fn()}
-                onRemoveFile={vi.fn()}
+                onRemoveFile={vi.fn()} stripMetadata
             />
         );
 
@@ -34,7 +34,7 @@ describe('FileDropzone Component', () => {
             <FileDropzone
                 selectedFiles={files}
                 onFilesSelect={vi.fn()}
-                onRemoveFile={vi.fn()}
+                onRemoveFile={vi.fn()} stripMetadata
             />
         );
 
@@ -54,7 +54,7 @@ describe('FileDropzone Component', () => {
             <FileDropzone
                 selectedFiles={files}
                 onFilesSelect={vi.fn()}
-                onRemoveFile={handleRemove}
+                onRemoveFile={handleRemove} stripMetadata
             />
         )
 
@@ -71,7 +71,7 @@ describe('FileDropzone Component', () => {
     it('keeps the browser from opening a dropped file, and selects it instead', () => {
         const onFilesSelect = vi.fn();
         const dropped = new File(['%PDF'], 'contract.pdf', { type: 'application/pdf' });
-        render(<FileDropzone selectedFiles={[]} onFilesSelect={onFilesSelect} onRemoveFile={vi.fn()} />);
+        render(<FileDropzone selectedFiles={[]} onFilesSelect={onFilesSelect} onRemoveFile={vi.fn()} stripMetadata />);
 
         // fireEvent returns false when the handler called preventDefault.
         const browserDefaultRan = fireEvent.drop(screen.getByText('browse'), { dataTransfer: { files: [dropped] } });

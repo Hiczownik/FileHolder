@@ -1,15 +1,20 @@
 import { FileText, Upload, X } from "lucide-react";
 import { useRef } from "react";
 import { formatSize } from "../../../shared/utils/formatSize";
+import { usePhotoMetadataReports } from "../hooks/usePhotoMetadataReports";
+import { MetadataLabels } from "./MetadataLabels";
 
 interface Props {
     selectedFiles: File[];
     onFilesSelect: (files: File[]) => void;
     onRemoveFile: (index: number) => void;
+    /** Whether "Remove photo metadata" is on, for the files' labels. */
+    stripMetadata: boolean;
 }
 
-export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, onRemoveFile }) => {
+export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, onRemoveFile, stripMetadata }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const metadataReports = usePhotoMetadataReports(selectedFiles);
 
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
@@ -27,7 +32,8 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0){
             onFilesSelect(Array.from(e.target.files));
-            e.target.value = '';
+            // Cleared so picking the same file again still fires a change.
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
 
@@ -69,16 +75,19 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
                         <span>Total: {formatSize(totalBytes)}</span>
                     </div>
 
-                    <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                    <ul className="max-h-48 overflow-y-auto space-y-2 pr-1">
                         {selectedFiles.map((file, index) => (
-                            <div
+                            <li
                                 key={`${file.name}-${file.size}-${index}`}
                                 className="flex items-center justify-between bg-slate-900 p-2.5 rounded-lg border border-l-slate-800/80 text-xs"
                             >
-                                <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
-                                    <FileText className="w-4 h-4 text-indigo-400 shrink-0"/>
-                                    <span className="text-slate-200 truncate">{file.name}</span>
-                                    <span className="text-slate-500 shrink-0">({formatSize(file.size)})</span>
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2.5 min-w-0 flex-1 pr-2">
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                        <FileText className="w-4 h-4 text-indigo-400 shrink-0"/>
+                                        <span className="text-slate-200 truncate">{file.name}</span>
+                                        <span className="text-slate-500 shrink-0">({formatSize(file.size)})</span>
+                                    </div>
+                                    <MetadataLabels report={metadataReports.get(file)} stripMetadata={stripMetadata} />
                                 </div>
                                 <button
                                     type="button"
@@ -91,9 +100,9 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
                                 >
                                     <X className="w-4 h-4" />
                                 </button>
-                            </div>
+                            </li>
                         ))}
-                    </div>
+                    </ul>
                 </div>
             )}
         </div>
