@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
 import type { FileGroupMetadataResponse } from "../types";
 import { downloadApi } from "../api/downloadApi";
-import { bundleDecryptionService } from "../services/bundleDecryptionService";
+import { bundleDecryptionService, OLD_FORMAT_MESSAGE } from "../services/bundleDecryptionService";
 import { downloadSessionStore } from "../services/downloadSessionStore";
+import { linkKeyStore } from "../services/linkKeyStore";
+import { readLinkKey } from "../../../shared/utils/shareLink";
+import { isWellFormedLinkKey } from "../../../shared/utils/crypto/cryptoUtils";
 import { triggerDirectDownload } from "../../../shared/utils/downloadUtils";
 import { describeSaveResult, DownloadCancelledError, memoryOnlyLimitProblem, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
 import { countingStream, type DownloadProgress } from "../../../shared/utils/download/progress";
@@ -12,6 +15,8 @@ import { isAxiosError } from "axios";
 import { makeZip, predictLength } from "client-zip";
 
 const HTTP_UNAUTHORIZED = 401;
+const HTTP_NOT_FOUND = 404;
+const HTTP_GONE = 410;
 // The server-side ZIP is a page navigation, which can't be retried on a 401 like an API call. A stored
 // session is only reused for it with at least this long left; otherwise a fresh one is opened.
 const ZIP_SESSION_MIN_REMAINING_MS = 60_000;
@@ -24,7 +29,46 @@ interface ZipEntry {
 // The download session that counted this download stays valid for hours (DownloadTimings.SessionLifetime), so
 // trying again soon reuses it instead of counting another download.
 const CONNECTION_LOST_MESSAGE = "The connection was lost while downloading. Click Download again: trying again within the next few hours doesn't use up another of this bundle's downloads.";
-const UNLOCK_AGAIN_MESSAGE = 'This encrypted bundle needs to be unlocked again before downloading. Please reload the page and enter the passkey.';
+const UNLOCK_AGAIN_MESSAGE = 'This encrypted bundle needs to be unlocked again before downloading. Please reload the page.';
+export const INCOMPLETE_LINK_MESSAGE = 'This link is incomplete, so the files can\'t be opened. Ask the sender for the full link, including the part after "#".';
+export const DAMAGED_LINK_MESSAGE = 'This link is damaged, so the files can\'t be opened. Ask the sender for the full link.';
+export const WRONG_PASSKEY_MESSAGE = 'Incorrect passkey. If you\'re sure it\'s right, the link may be damaged: ask the sender for the full link.';
+
+export type PromptKind = 'password' | 'passkey';
+
+/**
+ * Takes the link key out of the address bar, so it doesn't sit on screen, in screenshots or in the tab's history
+ * entry. The rest of the URL (such as ?diagnostics) stays. Undefined when the address has no key.
+ */
+function takeLinkKeyFromAddressBar(): string | undefined {
+    const key = readLinkKey(window.location.hash);
+    if (key !== undefined) {
+        // The router's own history state is kept, so back and forward still work.
+        window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}`);
+    }
+    return key;
+}
+
+/** Why this link can't open an encrypted bundle, before asking the server anything; null when it can try. */
+function encryptedLinkProblem(metadata: FileGroupMetadataResponse, linkKey: string | null): string | null {
+    if (!metadata.isEncrypted || metadata.isUnlocked || metadata.isExpired) return null;
+    // Encrypted bundles from before link keys have no key mode, and can no longer be opened.
+    if (!metadata.keyMode) return OLD_FORMAT_MESSAGE;
+    // No /unlock call is made for these, so a cut-off link never uses up the bundle's password attempts.
+    if (!linkKey || !isWellFormedLinkKey(linkKey)) return INCOMPLETE_LINK_MESSAGE;
+    return null;
+}
+
+/**
+ * What the recipient has to type, if anything. Link-only bundles unlock on their own, and a link that can't open
+ * the bundle gets an explanation instead of a prompt that could never succeed.
+ */
+function promptKindFor(metadata: FileGroupMetadataResponse | null, linkKey: string | null): PromptKind | null {
+    if (!metadata?.requiresPassword || metadata.isUnlocked) return null;
+    if (!metadata.isEncrypted) return 'password';
+    if (metadata.keyMode !== 'LinkKeyAndPasskey' || encryptedLinkProblem(metadata, linkKey)) return null;
+    return 'passkey';
+}
 
 export const useFileDownload = (shareToken?: string) => {
     const [metadata, setMetadata] = useState<FileGroupMetadataResponse | null>(null);
@@ -49,21 +93,95 @@ export const useFileDownload = (shareToken?: string) => {
     };
     const [error, setError] = useState<string | null>(null);
 
+    // This tab's copy of the bundle's link key, read from the address bar on load (see takeLinkKeyFromAddressBar).
+    const [linkKey, setLinkKey] = useState<string | null>(null);
+
+    /**
+     * Unlocks an encrypted bundle with the keys derived from its link key (and passkey), then decrypts its manifest
+     * and title. A refused kAuth means a wrong passkey or a damaged link key: the server can't tell them apart.
+     */
+    const unlockEncrypted = async (token: string, locked: FileGroupMetadataResponse, key: string, passkey?: string): Promise<void> => {
+        setIsUnlocking(true);
+        setError(null);
+
+        try {
+            if (!locked.keySalt) {
+                throw new Error('Cryptographic salt is missing from file vault.');
+            }
+
+            const { kAuth, kWrap } = await bundleDecryptionService.deriveKeys(key, locked.keySalt, token, passkey);
+
+            const unlockedRaw = await downloadApi.unlockGroup(token, kAuth);
+
+            if (!unlockedRaw.keyEnvelope || !unlockedRaw.encryptedManifest) {
+                throw new Error('Encrypted envelope or manifest missing in unlocked response.');
+            }
+
+            const masterKey = await bundleDecryptionService.unwrapMasterKey(unlockedRaw.keyEnvelope, kWrap);
+            const manifestItems = await bundleDecryptionService.decryptManifest(unlockedRaw.encryptedManifest, masterKey);
+
+            const mappedFiles = bundleDecryptionService.mapManifestToServerFiles(manifestItems, unlockedRaw.files);
+            // The server only ever has the encrypted title; from here on the page uses the decrypted one.
+            const title = unlockedRaw.encryptedTitle
+                ? await bundleDecryptionService.decryptTitle(unlockedRaw.encryptedTitle, masterKey)
+                : undefined;
+
+            setMetadata({
+                ...unlockedRaw,
+                title,
+                isUnlocked: true,
+                files: mappedFiles,
+                fileCount: mappedFiles.length,
+                totalSizeBytes: mappedFiles.reduce((acc, f) => acc + f.sizeBytes, 0),
+            });
+        } catch (err: unknown) {
+            if (isAxiosError(err) && err.response?.status === HTTP_UNAUTHORIZED) {
+                setError(passkey === undefined ? DAMAGED_LINK_MESSAGE : WRONG_PASSKEY_MESSAGE);
+            } else {
+                setError(parseApiError(err));
+            }
+        } finally {
+            setIsUnlocking(false);
+        }
+    };
+
     useEffect(() => {
         if (!shareToken) return;
 
         let isCancelled = false;
 
+        // A key in the address bar wins over a stored one: it is the link the recipient just opened.
+        const fromAddressBar = takeLinkKeyFromAddressBar();
+        if (fromAddressBar !== undefined) {
+            linkKeyStore.save(shareToken, fromAddressBar);
+        }
+        const key = linkKeyStore.get(shareToken);
+
         const fetchMetadata = async () => {
             try {
                 const raw = await downloadApi.getGroupMetadata(shareToken);
-                if (!isCancelled) {
-                    setMetadata(raw);
+                if (isCancelled) return;
+
+                setLinkKey(key);
+                setMetadata(raw);
+                if (raw.isExpired) {
+                    linkKeyStore.clear(shareToken);
+                    return;
+                }
+
+                const problem = encryptedLinkProblem(raw, key);
+                if (problem) {
+                    setError(problem);
+                } else if (raw.isEncrypted && !raw.isUnlocked && raw.keyMode === 'LinkKey' && key) {
+                    // The link alone opens these, so there is nothing to ask the recipient.
+                    await unlockEncrypted(shareToken, raw, key);
                 }
             } catch (err: unknown) {
-                if (!isCancelled) {
-                    setError(parseApiError(err));
+                if (isCancelled) return;
+                if (isAxiosError(err) && (err.response?.status === HTTP_NOT_FOUND || err.response?.status === HTTP_GONE)) {
+                    linkKeyStore.clear(shareToken);
                 }
+                setError(parseApiError(err));
             } finally {
                 if (!isCancelled) {
                     setIsLoading(false);
@@ -82,50 +200,28 @@ export const useFileDownload = (shareToken?: string) => {
         e.preventDefault();
         if (!shareToken || !password || !metadata) return;
 
+        if (metadata.isEncrypted) {
+            const problem = encryptedLinkProblem(metadata, linkKey);
+            if (problem || !linkKey) {
+                setError(problem ?? INCOMPLETE_LINK_MESSAGE);
+                return;
+            }
+            await unlockEncrypted(shareToken, metadata, linkKey, password);
+            return;
+        }
+
         setIsUnlocking(true);
         setError(null);
-
         try {
-            if (metadata.isEncrypted) {
-                if (!metadata.keySalt) {
-                    throw new Error('Cryptographic salt is missing from file vault.');
-                }
-
-                const { kAuth, kWrap } = await bundleDecryptionService.deriveKAuth(password, metadata.keySalt, shareToken);
-
-                const unlockedRaw = await downloadApi.unlockGroup(shareToken, kAuth);
-
-                if (!unlockedRaw.keyEnvelope || !unlockedRaw.encryptedManifest) {
-                    throw new Error('Encrypted envelope or manifest missing in unlocked response.');
-                }
-
-                const masterKey = await bundleDecryptionService.unwrapMasterKey(unlockedRaw.keyEnvelope, kWrap);
-                const manifestItems = await bundleDecryptionService.decryptManifest(unlockedRaw.encryptedManifest, masterKey);
-
-                const mappedFiles = bundleDecryptionService.mapManifestToServerFiles(manifestItems, unlockedRaw.files);
-                // The server only ever has the encrypted title; from here on the page uses the decrypted one.
-                const title = unlockedRaw.encryptedTitle
-                    ? await bundleDecryptionService.decryptTitle(unlockedRaw.encryptedTitle, masterKey)
-                    : undefined;
-
-                setMetadata({
-                    ...unlockedRaw,
-                    title,
-                    isUnlocked: true,
-                    files: mappedFiles,
-                    fileCount: mappedFiles.length,
-                    totalSizeBytes: mappedFiles.reduce((acc, f) => acc + f.sizeBytes, 0),
-                });
-            } else {
-                const unlocked = await downloadApi.unlockGroup(shareToken, password);
-                setMetadata(unlocked);
-            }
+            setMetadata(await downloadApi.unlockGroup(shareToken, password));
         } catch (err: unknown) {
             setError(parseApiError(err));
         } finally {
             setIsUnlocking(false);
         }
     };
+
+    const promptFor = promptKindFor(metadata, linkKey);
 
     /**
      * For an encrypted bundle the server only ever gets kAuth, derived for this bundle at unlock. Never the
@@ -306,6 +402,7 @@ export const useFileDownload = (shareToken?: string) => {
         error,
         lastSaveReport,
         downloadProgress,
+        promptFor,
         setPassword,
         handleUnlock,
         handleDownloadFile,

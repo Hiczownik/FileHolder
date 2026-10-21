@@ -199,16 +199,17 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
 
     await downloaderPage.goto(shareUrl);
 
-    // Initial state: locked password prompt visible, files hidden
-    await expect(downloaderPage.getByText(/Password Protected Transfer/i)).toBeVisible();
+    // Initial state: the link's key is taken out of the address bar, the passkey prompt shows, files are hidden
+    await expect(downloaderPage.getByText('Passkey Required')).toBeVisible();
+    expect(new URL(downloaderPage.url()).hash).toBe('');
     await expect(downloaderPage.getByText(testFile1.name)).not.toBeVisible();
     await expect(downloaderPage.getByText(testFile2.name)).not.toBeVisible();
 
-    // Wrong password challenge rejection
+    // Wrong passkey challenge rejection
     const vaultPasswordInput = downloaderPage.locator('input[type="password"]');
     await vaultPasswordInput.fill('WrongPassphrase!');
     await downloaderPage.getByRole('button', { name: /Unlock Files/i }).click();
-    await expect(downloaderPage.getByText(/Incorrect password|unauthorized/i)).toBeVisible();
+    await expect(downloaderPage.getByText('Incorrect passkey', { exact: false })).toBeVisible();
 
     // Correct password unlocks manifest
     await vaultPasswordInput.fill('ClassifiedPass123!');

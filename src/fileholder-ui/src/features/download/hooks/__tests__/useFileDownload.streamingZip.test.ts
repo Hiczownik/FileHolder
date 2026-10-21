@@ -8,6 +8,7 @@ import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
 import { chunkCount, createStreamParams, encryptChunkRange, MIN_STREAM_CHUNK_SIZE, serializeStreamParams, STREAM_TAG_BYTES } from '../../../../shared/utils/crypto/streamCipher';
 import { MAX_IN_MEMORY_BYTES, saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
 import type { FileGroupMetadataResponse } from '../../types';
+import { openShareLinkWithNewKey } from './linkKeyFixture';
 
 vi.mock('../../../../shared/utils/downloadUtils', () => ({
     saveBlobAsFile: vi.fn(),
@@ -49,7 +50,7 @@ const FILES: readonly PlainFile[] = [
 /** `claimedSizeOf` is what the manifest states for each file; by default its real size. */
 const buildBundle = async (files: readonly PlainFile[], claimedSizeOf: (file: PlainFile) => number = (file) => file.bytes.byteLength) => {
     const salt = cryptoEngine.generateSalt();
-    const { kWrap } = await cryptoEngine.deriveDualKeys(PASSWORD, salt);
+    const { kWrap } = await openShareLinkWithNewKey(salt, PASSWORD);
     const masterKey = await cryptoEngine.generateKey();
     const encrypted = await Promise.all(files.map(async (file) => {
         const params = createStreamParams(CHUNK);
@@ -67,6 +68,7 @@ const buildBundle = async (files: readonly PlainFile[], claimedSizeOf: (file: Pl
         isUnlocked: false,
         isEncrypted: true,
         keySalt: cryptoEngine.base64Url.encode(salt),
+        keyMode: 'LinkKeyAndPasskey',
         isExpired: false,
         files: [],
     };

@@ -26,6 +26,7 @@ export const DownloadPage: React.FC = () => {
         error,
         lastSaveReport,
         downloadProgress,
+        promptFor,
         setPassword,
         handleUnlock,
         handleDownloadFile,
@@ -53,6 +54,11 @@ export const DownloadPage: React.FC = () => {
     }
 
     const isLocked = metadata?.requiresPassword && !metadata?.isUnlocked;
+    // A link-only bundle unlocks with the key in its link, so there is nothing to type; a link that can't open the
+    // bundle shows only the error explaining why.
+    const lockedView = promptFor
+        ? <PasswordPrompt kind={promptFor} password={password} isUnlocking={isUnlocking} onPasswordChange={setPassword} onUnlock={handleUnlock} />
+        : isUnlocking && <p className="text-center text-sm text-slate-400">Unlocking encrypted files...</p>;
     // Encrypted downloads report decrypted bytes; without it a long one looks as if it has stopped.
     const progressText = downloadProgress ? describeDownloadProgress(downloadProgress) : undefined;
 
@@ -75,14 +81,7 @@ export const DownloadPage: React.FC = () => {
 
                 {error && <StatusAlert variant="error" message={error} />}
 
-                {isLocked ? (
-                    <PasswordPrompt
-                        password={password}
-                        isUnlocking={isUnlocking}
-                        onPasswordChange={setPassword}
-                        onUnlock={handleUnlock}
-                    />
-                ) : (
+                {isLocked ? lockedView : (
                     <>
                         {/* Model B Adaptive Primary Action: Single File Download vs. ZIP Bundle */}
                         {metadata && metadata.fileCount === 1 && metadata.files[0] && (

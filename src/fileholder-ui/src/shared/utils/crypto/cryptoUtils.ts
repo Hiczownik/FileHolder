@@ -65,15 +65,15 @@ async function stretchPasskey(passkey: string, salt: Uint8Array): Promise<Uint8A
 
 /**
  * HKDF from the key material into kAuth (sent to the server as the bundle's password) and kWrap (wraps the master
- * key). Each format version has its own labels, so keys of one version never match those of another.
+ * key). The "-v2" labels keep these keys apart from those of the old passkey-only format ("-v1").
  */
-async function splitKeys(ikm: Uint8Array, hkdfSalt: Uint8Array, version: 'v1' | 'v2'): Promise<KeyDerivationResult> {
+async function splitKeys(ikm: Uint8Array, salt: Uint8Array): Promise<KeyDerivationResult> {
   const prk = await window.crypto.subtle.importKey('raw', ikm as BufferSource, 'HKDF', false, ['deriveKey', 'deriveBits']);
   const hkdf = (label: string): HkdfParams => ({
     name: 'HKDF',
     hash: 'SHA-256',
-    salt: hkdfSalt as BufferSource,
-    info: new TextEncoder().encode(`fileholder-${label}-${version}`),
+    salt: salt as BufferSource,
+    info: new TextEncoder().encode(`fileholder-${label}-v2`),
   });
 
   const kAuthBits = await window.crypto.subtle.deriveBits(hkdf('auth'), prk, KEY_LENGTH);
@@ -118,10 +118,6 @@ export const cryptoEngine = {
     );
   },
 
-  async deriveDualKeys(password: string, salt: Uint8Array): Promise<KeyDerivationResult> {
-    return splitKeys(await stretchPasskey(password, salt), new Uint8Array(0), 'v1');
-  },
-
   /** A new random link key, as it goes in the share link's fragment. */
   generateLinkKey(): string {
     return base64Url.encode(window.crypto.getRandomValues(new Uint8Array(LINK_KEY_BYTES)));
@@ -137,7 +133,7 @@ export const cryptoEngine = {
     const ikm = passkey === undefined
       ? linkKeyBytes
       : concatBytes(linkKeyBytes, await stretchPasskey(passkey, salt));
-    return splitKeys(ikm, salt, 'v2');
+    return splitKeys(ikm, salt);
   },
 
   async wrapMasterKey(masterKey: CryptoKey, kWrap: CryptoKey): Promise<string> {

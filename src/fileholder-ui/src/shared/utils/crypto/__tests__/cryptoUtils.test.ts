@@ -49,7 +49,7 @@ describe('link keys (#61)', () => {
     expect(await unwraps(withPasskey[0].kWrap, withPasskey[1].kWrap)).toBe(true);
   });
 
-  it('derives different keys per mode, link key, salt and passkey, and none matching the v1 format', async () => {
+  it('derives different keys per mode, link key, salt and passkey', async () => {
     const linkKey = cryptoEngine.generateLinkKey();
     const salt = cryptoEngine.generateSalt();
     const base = await cryptoEngine.deriveLinkKeys(linkKey, salt, 'pass');
@@ -59,8 +59,6 @@ describe('link keys (#61)', () => {
       await cryptoEngine.deriveLinkKeys(linkKey, salt, 'Pass'),
       await cryptoEngine.deriveLinkKeys(cryptoEngine.generateLinkKey(), salt, 'pass'),
       await cryptoEngine.deriveLinkKeys(linkKey, cryptoEngine.generateSalt(), 'pass'),
-      // The v1 labels and HKDF salt differ, so even the same passkey and salt give other keys.
-      await cryptoEngine.deriveDualKeys('pass', salt),
     ];
 
     const kAuths = new Set([base.kAuth, ...others.map((keys) => keys.kAuth)]);
@@ -87,7 +85,7 @@ describe('Zero-Knowledge Password Envelope Encryption Engine', () => {
 
     expect(salt).toHaveLength(SALT_BYTES);
 
-    const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
+    const { kAuth, kWrap } = await cryptoEngine.deriveLinkKeys(cryptoEngine.generateLinkKey(), salt, password);
     expect(typeof kAuth).toBe('string');
     expect(kAuth).toHaveLength(KEY_BASE64URL_LENGTH);
     expect(kWrap.algorithm.name).toBe('AES-GCM');
@@ -108,8 +106,9 @@ describe('Zero-Knowledge Password Envelope Encryption Engine', () => {
 
   it('2. Rejects master key unwrapping when wrong wrap key is used', async () => {
     const salt = cryptoEngine.generateSalt();
-    const { kWrap: kWrap1 } = await cryptoEngine.deriveDualKeys('PasswordA', salt);
-    const { kWrap: kWrap2 } = await cryptoEngine.deriveDualKeys('PasswordB', salt);
+    const linkKey = cryptoEngine.generateLinkKey();
+    const { kWrap: kWrap1 } = await cryptoEngine.deriveLinkKeys(linkKey, salt, 'PasswordA');
+    const { kWrap: kWrap2 } = await cryptoEngine.deriveLinkKeys(linkKey, salt, 'PasswordB');
 
     const masterKey = await cryptoEngine.generateKey();
     const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap1);

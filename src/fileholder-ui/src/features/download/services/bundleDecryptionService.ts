@@ -1,11 +1,11 @@
-import { cryptoEngine, base64Url } from "../../../shared/utils/crypto/cryptoUtils";
+import { cryptoEngine, base64Url, type KeyDerivationResult } from "../../../shared/utils/crypto/cryptoUtils";
 import type { FileItemMetadata } from "../types";
 import { createDecryptionStream, parseStreamParams, type StreamParams } from "../../../shared/utils/crypto/streamCipher";
 import { isExtensionForbidden, makeFileNamesUnique, sanitizeFileName } from "../../../shared/utils/fileNameSafety";
 
 const ENCRYPTED_FILE_SUFFIX = '.enc';
 const MANIFEST_MISMATCH_MESSAGE = 'This encrypted bundle is inconsistent: its stored files do not match the encrypted manifest.';
-const OLD_FORMAT_MESSAGE = 'This bundle was created with an older version of FileHolder and can no longer be opened. Ask the sender to share it again.';
+export const OLD_FORMAT_MESSAGE ='This bundle was created with an older version of FileHolder and can no longer be opened. Ask the sender to share it again.';
 const INVALID_STREAM_MESSAGE = 'This encrypted bundle has invalid encryption settings, so it cannot be opened.';
 const BLOCKED_FILES_MESSAGE = 'This encrypted bundle contains executable files or scripts, which FileHolder does not allow, so it cannot be opened.';
 
@@ -111,11 +111,11 @@ export class BundleDecryptionService {
         return mappedFiles;
     }
 
-    public async deriveKAuth(password: string, saltBase64Url: string, shareToken: string): Promise<{ kAuth: string; kWrap: CryptoKey }> {
-        const salt = base64Url.decode(saltBase64Url);
-        const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
-        this.setKAuth(shareToken, kAuth);
-        return { kAuth, kWrap };
+    /** The bundle's keys from its link key, and its passkey when it needs one; kAuth is kept for later requests. */
+    public async deriveKeys(linkKey: string, saltBase64Url: string, shareToken: string, passkey?: string): Promise<KeyDerivationResult> {
+        const keys = await cryptoEngine.deriveLinkKeys(linkKey, base64Url.decode(saltBase64Url), passkey);
+        this.setKAuth(shareToken, keys.kAuth);
+        return keys;
     }
 
     public async unwrapMasterKey(envelopeBase64Url: string, kWrap: CryptoKey): Promise<CryptoKey> {
