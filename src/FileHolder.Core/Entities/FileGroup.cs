@@ -6,6 +6,7 @@ public class FileGroup
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string ShareToken { get; set; } = string.Empty;
+    /// <summary>The title of a plain bundle. Encrypted bundles never have one; see <see cref="EncryptedTitle"/>.</summary>
     public string? Title { get; set; }
     public string? PasswordHash { get; set; }
     public int? MaxDownloads { get; set; }
@@ -19,6 +20,12 @@ public class FileGroup
     public string? EncryptedManifest { get; set; }
     public string? KeyEnvelope { get; set; }
     public string? KeySalt { get; set; }
+
+    /// <summary>
+    /// An encrypted bundle's title, encrypted in the browser with the bundle's master key like the manifest, so
+    /// the server (and anyone with the link but not the passkey) never sees it. Only returned once unlocked.
+    /// </summary>
+    public string? EncryptedTitle { get; set; }
 
     /// <summary>
     /// Wrong passwords since the last correct one. Past a few free attempts, each further one

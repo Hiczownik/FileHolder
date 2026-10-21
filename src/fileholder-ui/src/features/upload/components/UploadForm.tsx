@@ -81,6 +81,11 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                     {...register('title')}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
                 />
+                {isEncrypted && (
+                    <p className="text-[11px] text-slate-500 mt-1.5">
+                        Encrypted with your files; recipients see it after unlocking.
+                    </p>
+                )}
             </div>
 
             <FileDropzone

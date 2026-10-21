@@ -10,6 +10,8 @@ public class CreatePresignedUrlValidator : AbstractValidator<CreatePresignedUrlR
     public CreatePresignedUrlValidator(IOptions<UploadLimitsOptions> uploadLimits)
     {
         RuleFor(x => x.Title).MustBeValidTitle();
+        // Presign doesn't store the title, but an encrypted upload shouldn't send it at all.
+        When(x => x.IsEncrypted, () => RuleFor(x => x.Title).MustBeEmptyForEncryptedBundles());
 
         RuleFor(x => x.Files)
             .NotEmpty().WithMessage("At least one file is required.")

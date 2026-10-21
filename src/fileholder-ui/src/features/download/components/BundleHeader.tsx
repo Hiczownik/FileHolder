@@ -6,6 +6,12 @@ interface Props {
     metadata: FileGroupMetadataResponse;
 }
 
+/** An encrypted bundle's title is only known once it is unlocked, so until then the heading says what it is. */
+const headingOf = (metadata: FileGroupMetadataResponse): string => {
+    if (metadata.title) return metadata.title;
+    return metadata.isEncrypted && !metadata.isUnlocked ? 'Encrypted bundle' : 'Shared File Group';
+};
+
 export const BundleHeader: React.FC<Props> = ({ metadata }) => {
     return (
         <div className="space-y-4 border-b border-slate-800 pb-6">
@@ -15,7 +21,7 @@ export const BundleHeader: React.FC<Props> = ({ metadata }) => {
                 </div>
                 <div className="flex-1 min-w-0">
                     <h1 className="text-lg font-bold text-white line-clamp-1">
-                        {metadata.title || 'Shared File Group'}
+                        {headingOf(metadata)}
                     </h1>
                     <p className="text-xs text-slate-400 mt-0.5">
                         {metadata.fileCount} {metadata.fileCount === 1 ? 'file' : 'files'} • {formatSize(metadata.totalSizeBytes)}

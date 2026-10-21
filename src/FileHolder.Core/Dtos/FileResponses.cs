@@ -56,7 +56,9 @@ public record FileGroupMetadataResponseDto(
     [property: JsonPropertyName("expiresAt")] DateTime? ExpiresAt,
     [property: JsonPropertyName("remainingDownloads")] int? RemainingDownloads,
     [property: JsonPropertyName("isExpired")] bool IsExpired,
-    [property: JsonPropertyName("files")] List<FileItemMetadataDto> Files
+    [property: JsonPropertyName("files")] List<FileItemMetadataDto> Files,
+    // Like the manifest, only returned once the bundle is unlocked.
+    [property: JsonPropertyName("encryptedTitle")] string? EncryptedTitle = null
 );
 
 public record UnlockResult(

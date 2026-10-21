@@ -103,9 +103,14 @@ export const useFileDownload = (shareToken?: string) => {
                 const manifestItems = await bundleDecryptionService.decryptManifest(unlockedRaw.encryptedManifest, masterKey);
 
                 const mappedFiles = bundleDecryptionService.mapManifestToServerFiles(manifestItems, unlockedRaw.files);
+                // The server only ever has the encrypted title; from here on the page uses the decrypted one.
+                const title = unlockedRaw.encryptedTitle
+                    ? await bundleDecryptionService.decryptTitle(unlockedRaw.encryptedTitle, masterKey)
+                    : undefined;
 
                 setMetadata({
                     ...unlockedRaw,
+                    title,
                     isUnlocked: true,
                     files: mappedFiles,
                     fileCount: mappedFiles.length,

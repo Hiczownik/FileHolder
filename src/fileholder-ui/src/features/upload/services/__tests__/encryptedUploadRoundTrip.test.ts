@@ -143,6 +143,32 @@ describe('encrypted upload round trip', () => {
         expect(await Promise.all(decrypted.map((bytes) => sha256Hex(bytes)))).toEqual(expectedDigests);
     });
 
+    // Issue #65: an encrypted bundle's title is as private as its files, so the server only ever gets it encrypted.
+    it('never sends the title in plain text, and the recipient decrypts it back after unlocking', async () => {
+        const backend = createFakeBackend(PART_SIZE);
+
+        await executeEncryptedUploadWorkflow({ ...FORM_VALUES, title: '  Tax return 2026  ' }, [patternFile('small.pdf', SMALL_FILE_BYTES, SMALL_SEED)], vi.fn());
+
+        const presignRequest = vi.mocked(uploadApi.getPresignedUrl).mock.calls[0][0];
+        const confirm = backend.confirmed[0];
+        expect(presignRequest.title).toBeUndefined();
+        expect(confirm.title).toBeUndefined();
+        expect(JSON.stringify([presignRequest, confirm])).not.toContain('Tax return');
+
+        const recipient = new BundleDecryptionService();
+        const { kWrap } = await recipient.deriveKAuth(PASSWORD, confirm.keySalt!, SHARE_TOKEN);
+        const masterKey = await recipient.unwrapMasterKey(confirm.keyEnvelope!, kWrap);
+        expect(await recipient.decryptTitle(confirm.encryptedTitle!, masterKey)).toBe('Tax return 2026');
+    });
+
+    it('sends no encrypted title when the bundle has none', async () => {
+        const backend = createFakeBackend(PART_SIZE);
+
+        await executeEncryptedUploadWorkflow({ ...FORM_VALUES, title: '   ' }, [patternFile('small.pdf', SMALL_FILE_BYTES, SMALL_SEED)], vi.fn());
+
+        expect(backend.confirmed[0].encryptedTitle).toBeUndefined();
+    });
+
     it('refuses to upload anything when the server sizes parts for a different chunk size', async () => {
         const backend = createFakeBackend(PART_SIZE + 1);
 

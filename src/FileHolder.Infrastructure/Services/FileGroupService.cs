@@ -241,7 +241,8 @@ public class FileGroupService
                 IsEncrypted = dto.IsEncrypted,
                 EncryptedManifest = dto.EncryptedManifest,
                 KeyEnvelope = dto.KeyEnvelope,
-                KeySalt = dto.KeySalt
+                KeySalt = dto.KeySalt,
+                EncryptedTitle = string.IsNullOrEmpty(dto.EncryptedTitle) ? null : dto.EncryptedTitle
             };
 
             foreach (var item in dto.Files)
@@ -440,7 +441,8 @@ public class FileGroupService
             group.ExpiresAt,
             group.RemainingDownloads,
             group.IsExpired(now),
-            fileItemDtos
+            fileItemDtos,
+            group.EncryptedTitle
         );
     }
 
@@ -499,7 +501,8 @@ public class FileGroupService
             group.ExpiresAt,
             group.RemainingDownloads,
             false,
-            fileItemDtos
+            fileItemDtos,
+            group.EncryptedTitle
         );
 
         return new UnlockResult(true, false, false, unlockedMetadata);
