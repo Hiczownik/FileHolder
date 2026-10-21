@@ -85,14 +85,20 @@ const readAll = async (reader: ReadableStreamDefaultReader<Uint8Array>, parts: U
     return readAll(reader, parts);
 };
 
-const unlockAndDownload = async (bundle: Awaited<ReturnType<typeof buildStreamBundle>>, ciphertext: Uint8Array) => {
+const unlockAndDownload = async (
+    bundle: Awaited<ReturnType<typeof buildStreamBundle>>,
+    ciphertext: Uint8Array,
+    firstStream: ReadableStream<Uint8Array> = asNetworkStream(ciphertext)
+) => {
     vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(bundle.locked);
     vi.spyOn(downloadApi, 'unlockGroup').mockResolvedValue(bundle.unlocked);
-    vi.spyOn(downloadApi, 'openDownloadSession').mockResolvedValue({
-        downloadSessionId: 'session', expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(), remainingDownloads: null,
-    });
+    if (!vi.isMockFunction(downloadApi.openDownloadSession)) {
+        vi.spyOn(downloadApi, 'openDownloadSession').mockResolvedValue({
+            downloadSessionId: 'session', expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(), remainingDownloads: null,
+        });
+    }
     vi.spyOn(downloadApi, 'getDownloadUrl').mockResolvedValue('storage://stream');
-    vi.spyOn(downloadApi, 'openCiphertextStream').mockResolvedValue(asNetworkStream(ciphertext));
+    vi.spyOn(downloadApi, 'openCiphertextStream').mockResolvedValue(firstStream);
 
     const { result } = renderHook(() => useFileDownload(bundle.locked.shareToken));
     await waitFor(() => expect(result.current.isLoading).toBe(false));
@@ -168,6 +174,36 @@ describe('useFileDownload streaming decryption', () => {
         });
         expect(result.current.downloadProgress).toBeNull();
         expect(result.current.error).toBeNull();
+    });
+
+    it('says the connection was lost, and lets a retry reuse the same session instead of counting another download', async () => {
+        const bundle = await buildStreamBundle();
+        const openSessionSpy = vi.spyOn(downloadApi, 'openDownloadSession').mockResolvedValue({
+            downloadSessionId: 'session', expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(), remainingDownloads: null,
+        });
+        // The first attempt's connection drops after part of the file; the retry gets all of it.
+        const dropsPartWay = new ReadableStream<Uint8Array>({
+            start: (controller) => {
+                controller.enqueue(bundle.ciphertext.slice(0, PIECE_SIZE));
+                controller.error(new TypeError('network error'));
+            },
+        });
+        vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
+            await readAll(stream.getReader(), []);
+            return { method: 'opfs', skipped: [] };
+        });
+
+        const result = await unlockAndDownload(bundle, bundle.ciphertext, dropsPartWay);
+
+        expect(result.current.error).toContain('The connection was lost while downloading');
+
+        vi.spyOn(downloadApi, 'openCiphertextStream').mockResolvedValue(asNetworkStream(bundle.ciphertext));
+        await act(async () => {
+            await result.current.handleDownloadFile(SERVER_ID);
+        });
+
+        expect(result.current.error).toBeNull();
+        expect(openSessionSpy).toHaveBeenCalledTimes(1);
     });
 
     it('shows an error when the downloaded file was tampered with', async () => {

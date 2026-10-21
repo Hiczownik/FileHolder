@@ -531,6 +531,35 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     #region 4b. Per-Bundle Download Session Tests
 
     [Fact]
+    public async Task OpenDownloadSession_LastsSixHours_SoLongDownloadsAndRetriesDontCountAgain()
+    {
+        var (shareToken, _) = await CreateBundleAsync(1, maxDownloads: 5);
+
+        var session = (await (await OpenSessionAsync(shareToken)).Content.ReadFromJsonAsync<DownloadSessionResponseDto>())!;
+
+        session.ExpiresAt.Should().BeCloseTo(DateTime.UtcNow + DownloadTimings.SessionLifetime, TimeSpan.FromMinutes(1));
+        DownloadTimings.SessionLifetime.Should().Be(TimeSpan.FromHours(6));
+    }
+
+    [Fact]
+    public async Task OpenDownloadSession_NeverOutlivesTheBundlesExpiry()
+    {
+        var (shareToken, _) = await CreateBundleAsync(1, maxDownloads: 5);
+        var bundleExpiresAt = DateTime.UtcNow.AddHours(1);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.FileGroups
+                .Where(g => g.ShareToken == shareToken)
+                .ExecuteUpdateAsync(s => s.SetProperty(g => g.ExpiresAt, bundleExpiresAt));
+        }
+
+        var session = (await (await OpenSessionAsync(shareToken)).Content.ReadFromJsonAsync<DownloadSessionResponseDto>())!;
+
+        session.ExpiresAt.Should().BeCloseTo(bundleExpiresAt, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
     public async Task DownloadSession_FetchesEveryFileOfBundle_AndCountsAsOneDownload()
     {
         var (shareToken, fileIds) = await CreateBundleAsync(fileCount: 3, maxDownloads: 1);

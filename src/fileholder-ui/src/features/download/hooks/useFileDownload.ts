@@ -7,6 +7,7 @@ import { triggerDirectDownload } from "../../../shared/utils/downloadUtils";
 import { describeSaveResult, DownloadCancelledError, memoryOnlyLimitProblem, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
 import { countingStream, type DownloadProgress } from "../../../shared/utils/download/progress";
 import { parseApiError } from "../../../shared/utils/parseApiError";
+import { isConnectionLost } from "../../../shared/utils/connectionErrors";
 import { isAxiosError } from "axios";
 import { makeZip } from "client-zip";
 
@@ -19,6 +20,9 @@ interface ZipEntry {
     readonly input: ReadableStream<Uint8Array>;
 }
 
+// The download session that counted this download stays valid for hours (DownloadTimings.SessionLifetime), so
+// trying again soon reuses it instead of counting another download.
+const CONNECTION_LOST_MESSAGE = "The connection was lost while downloading. Click Download again: trying again within the next few hours doesn't use up another of this bundle's downloads.";
 const UNLOCK_AGAIN_MESSAGE = 'This encrypted bundle needs to be unlocked again before downloading. Please reload the page and enter the passkey.';
 
 export const useFileDownload = (shareToken?: string) => {
@@ -214,7 +218,7 @@ export const useFileDownload = (shareToken?: string) => {
         } catch (err: unknown) {
             // Cancelling in the browser's download bar or the save dialog is the user's choice, not an error.
             if (!(err instanceof DownloadCancelledError)) {
-                setError(parseApiError(err));
+                setError(isConnectionLost(err) ? CONNECTION_LOST_MESSAGE : parseApiError(err));
             }
         } finally {
             setDownloadingFileId(null);
@@ -270,7 +274,7 @@ export const useFileDownload = (shareToken?: string) => {
             downloadApi.downloadAllZip(shareToken, sessionId);
         } catch (err: unknown) {
             if (!(err instanceof DownloadCancelledError)) {
-                setError(parseApiError(err));
+                setError(isConnectionLost(err) ? CONNECTION_LOST_MESSAGE : parseApiError(err));
             }
         } finally {
             setIsDownloadingAll(false);

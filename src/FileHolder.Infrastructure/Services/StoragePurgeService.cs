@@ -48,7 +48,8 @@ public class StoragePurgeService(
 
         await PurgeAbandonedUploadsAsync(now, ct);
 
-        // Groups closed within the grace period may still have an active download session or presigned URL.
+        // A closed group's last download may still be running: its session can last hours after the group closed,
+        // and a URL issued near either end stays valid a little longer. Storage waits for all of that.
         var graceCutoff = now - DeletionGracePeriod;
 
         var expiredGroups = await _dbContext.FileGroups
@@ -58,6 +59,7 @@ public class StoragePurgeService(
                 ((g.IsDeleted || (g.MaxDownloads != null && g.DownloadCount >= g.MaxDownloads)) &&
                  (g.DeletedAt == null || g.DeletedAt <= graceCutoff))
             ))
+            .Where(g => !_dbContext.DownloadSessions.Any(s => s.FileGroupId == g.Id && s.ExpiresAt > graceCutoff))
             .OrderBy(g => g.CreatedAt)
             .Take(100)
             .ToListAsync(ct);
