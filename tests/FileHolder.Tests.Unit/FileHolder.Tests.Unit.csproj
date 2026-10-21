@@ -21,6 +21,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Shared with the UI's tests: both copies of the file-name rules must give these answers. -->
+    <None Include="..\vectors\file-names.json" Link="vectors\file-names.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\FileHolder.Core\FileHolder.Core.csproj" />
     <ProjectReference Include="..\..\src\FileHolder.Api\FileHolder.Api.csproj" />
   </ItemGroup>

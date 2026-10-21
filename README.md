@@ -112,7 +112,7 @@ A written threat model (what each party can see and do, and the known gaps) is p
 | **Background work** | `BackgroundService` | Storage purge every 30 minutes |
 | **Frontend** | **React 19**, Vite 8, TypeScript 6, Tailwind CSS 4 | axios, react-hook-form, client-zip (ZIPs in the browser), qrcode.react |
 | **Observability** | OpenTelemetry metrics → Prometheus → Grafana; Serilog console logs | |
-| **Tests** | xUnit, FluentAssertions, NSubstitute, Testcontainers (PostgreSQL); Vitest + Testing Library; Playwright (Chromium, Firefox, WebKit) | |
+| **Tests** | xUnit, FluentAssertions, NSubstitute, FsCheck, Testcontainers (PostgreSQL); Vitest + Testing Library, fast-check; Playwright (Chromium, Firefox, WebKit) | |
 | **Containers** | Docker Compose, multi-stage builds | |
 
 ---
@@ -193,7 +193,8 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `src/FileHolder.Core` | Entities, request/response types, timing and format constants, file-name and crypto helpers |
 | `src/FileHolder.Infrastructure` | EF Core context and migrations, storage access, services, the purge worker |
 | `src/fileholder-ui` | React app (`src/features/upload`, `src/features/download`, `src/shared`), nginx config, the download service worker (`public/download-sw.js`), Playwright tests (`e2e/`) |
-| `tests/FileHolder.Tests.Unit` | Unit tests for `FileHolder.Core` |
+| `tests/FileHolder.Tests.Unit` | Unit and property tests for `FileHolder.Core` (and the API's bundle rules) |
+| `tests/vectors` | Examples both test suites check, so the server's and browser's file-name rules agree |
 | `tests/FileHolder.Tests.Integration` | API and service tests (Testcontainers PostgreSQL) |
 | `docker/` | Prometheus and Grafana provisioning |
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
@@ -219,7 +220,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 ```bash
 dotnet test FileHolder.sln
 ```
-This runs both the unit tests (`tests/FileHolder.Tests.Unit`) and the integration tests (`tests/FileHolder.Tests.Integration`). The integration tests start PostgreSQL with Testcontainers, so **Docker must be running**. *(CI currently runs only the integration tests; adding the unit tests is part of [#70](https://github.com/Hiczownik/FileHolder/issues/70).)*
+This runs both the unit tests (`tests/FileHolder.Tests.Unit`) and the integration tests (`tests/FileHolder.Tests.Integration`). The integration tests start PostgreSQL with Testcontainers, so **Docker must be running**. CI runs both.
 
 ### 2. Frontend unit tests (Vitest)
 ```bash
@@ -228,7 +229,33 @@ npm test            # once
 npm run test:watch  # re-run on changes
 ```
 
-### 3. End-to-end browser tests (Playwright)
+### 3. Property tests (FsCheck and fast-check)
+Besides examples, the rules that must hold for *any* input are tested with generated inputs. These cover file names, Content-Disposition, the stream cipher's format and tamper checks, bundle limits, password lockout and the passkey and token generators. They are the `*Properties.cs` classes in `tests/FileHolder.Tests.Unit` and the `*.properties.test.ts` files in the UI. Both suites run as part of the commands above.
+
+* **Fixed seed in CI.** Every run, locally and on a PR, tries the same inputs (500 per property in C#, 200 in TS), so a failure always reproduces.
+* **Random seed nightly.** `.github/workflows/nightly-properties.yml` runs them every night on a fresh seed, with 20,000 (C#) and 10,000 (TS) inputs per property. It can also be started from the Actions tab.
+* **Shared file-name examples.** The server (`FileSecurityUtils`) and the browser (`fileNameSafety.ts`) each have a copy of the file-name rules, and both must give the same answers. `tests/vectors/file-names.json` lists names with their expected results, and both test suites check them (`FileNameVectorTests`, `fileNameVectors.test.ts`). After changing the rules in **both** copies, regenerate the file and commit it:
+  ```powershell
+  cd src/fileholder-ui
+  $env:UPDATE_VECTORS='1'; npx vitest run fileNameVectors; Remove-Item Env:UPDATE_VECTORS
+  ```
+
+**Replaying a failure** (for example from the nightly run). Each failure prints how to rerun it:
+
+* **C# (FsCheck):** the message says `Replay directly at failing step with (a,b,c)`. Run just that test with the triple:
+  ```powershell
+  $env:FSCHECK_REPLAY='(a,b,c)'; dotnet test tests/FileHolder.Tests.Unit --filter "FullyQualifiedName~<TestName>"; Remove-Item Env:FSCHECK_REPLAY
+  ```
+* **TypeScript (fast-check):** the test name ends `(with seed=N)`. Rerun with that seed and the same number of runs:
+  ```powershell
+  cd src/fileholder-ui
+  $env:FC_SEED='N'; $env:FC_NUM_RUNS='10000'; npx vitest run <file> -t "<test name>" --testTimeout=600000
+  Remove-Item Env:FC_SEED, Env:FC_NUM_RUNS
+  ```
+
+Once it reproduces, add the shrunk input as a plain example test next to the fix, so it stays covered whatever the seed.
+
+### 4. End-to-end browser tests (Playwright)
 The tests run against the app at `http://localhost:3000`, so start the stack first:
 ```bash
 docker compose up -d --build
@@ -242,7 +269,7 @@ npx playwright test      # Chromium, Firefox and WebKit
 npx playwright test --ui
 ```
 
-### 4. Testing from a Phone (e.g. Safari on iPhone)
+### 5. Testing from a Phone (e.g. Safari on iPhone)
 Encrypted downloads are saved differently per browser (see *Encrypted Downloads*), and CI can't run real Safari. To check a phone by hand, it has to reach your local stack **over HTTPS**: Safari only enables service workers and its private file storage (OPFS) on HTTPS, so a plain `http://<your-PC-IP>:3000` test would silently fall back to saving in memory and prove nothing.
 
 1. **Run the current stack.** Older builds don't route the API through the UI: `docker compose up -d --build --force-recreate`. `--force-recreate` matters when upgrading a stack created before the compose network was pinned: otherwise compose recreates the network but only restarts the old containers on it, without their service names (`minio`, `postgres`), and `minio-init` fails with `lookup minio … no such host`. Data is kept in Docker volumes.

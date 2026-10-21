@@ -25,12 +25,6 @@ public static class ContentDispositionUtils
             : $"{value}; filename*=UTF-8''{Uri.EscapeDataString(fileName)}";
     }
 
-    /// <summary>
-    /// Strips diacritics, then replaces anything that is not printable ASCII, or that would break the quoted
-    /// string, with "_". "zażółć.txt" becomes "zazo_c.txt": "ł" is a separate letter, not "l" plus a mark.
-    /// Stripping needs ICU; under invariant globalization (the Alpine runtime image) Normalize leaves accented
-    /// letters whole, so they become "_" too ("za____.txt"). Browsers use filename* and never see the fallback.
-    /// </summary>
     /// <summary>The name with each lone surrogate replaced by "_", as SanitizeFileName does; surrogate pairs stay.</summary>
     private static string WithWholeCharacters(string fileName)
     {
@@ -59,6 +53,12 @@ public static class ContentDispositionUtils
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Strips diacritics, then replaces anything that is not printable ASCII, or that would break the quoted
+    /// string, with "_". "zażółć.txt" becomes "zazo_c.txt": "ł" is a separate letter, not "l" plus a mark.
+    /// Stripping needs ICU; under invariant globalization (the Alpine runtime image) Normalize leaves accented
+    /// letters whole, so they become "_" too ("za____.txt"). Browsers use filename* and never see the fallback.
+    /// </summary>
     private static string ToAsciiFallback(string fileName)
     {
         var decomposed = fileName.Normalize(NormalizationForm.FormD);
