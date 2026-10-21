@@ -1,0 +1,12 @@
+# CI only, layered on docker-compose.yml: docker compose -f docker-compose.yml -f docker-compose.ci.yml up ...
+# The end-to-end tests send every request from the runner's one address, many uploads a minute, so the production
+# per-address limits (RateLimitOptions.cs) would refuse some of them with 429s. Real clients each have their own
+# address; never use these limits for a deployment.
+services:
+  api:
+    environment:
+      RateLimits__UploadInitiatePermitLimit: "10000"
+      RateLimits__MultipartPipelinePermitLimit: "10000"
+      RateLimits__ConfirmPermitLimit: "10000"
+      RateLimits__DownloadPermitLimit: "10000"
+      RateLimits__MetadataPermitLimit: "10000"

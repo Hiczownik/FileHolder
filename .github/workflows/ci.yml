@@ -82,7 +82,8 @@ jobs:
               run: |
                 # Compose requires a Grafana password; CI never logs in, so a throwaway one is enough.
                 # Only api and ui (plus their dependencies) are started: the tests don't use Prometheus or Grafana.
-                GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose up -d --no-build api ui
+                # docker-compose.ci.yml raises the per-address rate limits: every test request comes from this runner.
+                GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build api ui
             - name: Wait for API Healthcheck Readiness
               run: |
                 echo "Waiting for .NET 10 API to become healthy..."

@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -134,8 +135,13 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
             });
     }
 
+    /// <summary>Configuration settings for the test API, on top of its own (e.g. "RateLimits:ConfirmPermitLimit").</summary>
+    protected virtual IReadOnlyDictionary<string, string?> Settings => new Dictionary<string, string?>();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.ConfigureAppConfiguration(config => config.AddInMemoryCollection(Settings));
+
         builder.ConfigureServices(services =>
         {
             var dbContextDescriptor =

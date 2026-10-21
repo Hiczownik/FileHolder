@@ -42,7 +42,7 @@ public class RateLimitTests(RealRateLimitsFactory factory) : IClassFixture<RealR
 
         // 50 multipart files need a presign-batch and a complete each: 100 requests, which the old limit of
         // 100 a minute refused as soon as anything was retried.
-        var statuses = await PostManyAsync(path, RateLimitPolicies.MultipartPipelinePermitLimit);
+        var statuses = await PostManyAsync(path, RateLimitOptions.DefaultMultipartPipelinePermitLimit);
         statuses.Should().NotContain(HttpStatusCode.TooManyRequests);
 
         var refused = await PostEmptyAsync(path);
@@ -61,7 +61,7 @@ public class RateLimitTests(RealRateLimitsFactory factory) : IClassFixture<RealR
     {
         const string path = "/api/v1/files/confirm";
 
-        var statuses = await PostManyAsync(path, RateLimitPolicies.ConfirmPermitLimit);
+        var statuses = await PostManyAsync(path, RateLimitOptions.DefaultConfirmPermitLimit);
         statuses.Should().NotContain(HttpStatusCode.TooManyRequests);
 
         var refused = await PostEmptyAsync(path);

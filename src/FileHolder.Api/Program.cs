@@ -109,7 +109,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     }
 });
 
-builder.Services.AddRateLimiter(RateLimitPolicies.Configure);
+builder.Services.AddFileHolderRateLimits(builder.Configuration);
 
 builder.Services.AddCors(options =>
 {

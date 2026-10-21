@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 
 namespace FileHolder.Api.RateLimiting;
 
@@ -16,35 +17,38 @@ public static class RateLimitPolicies
     public const string Download = "DownloadPolicy";
     public const string Metadata = "MetadataPolicy";
 
-    public const int UploadInitiatePermitLimit = 10;
-
-    // A valid bundle needs a presign-batch (50 parts each) and a complete call per multipart file: 50 files
-    // take about 100 requests, and a 5 GB bundle at most 7 more batches. This leaves room for re-signing
-    // expired or failed part URLs, and the browser waits out a 429's Retry-After instead of failing.
-    public const int MultipartPipelinePermitLimit = 300;
-
-    // Each upload confirms once, plus a retry or two. Confirm does the expensive work (copies, size
-    // checks, bcrypt), so it is bounded like presign.
-    public const int ConfirmPermitLimit = 10;
-
-    public const int DownloadPermitLimit = 30;
-    public const int MetadataPermitLimit = 60;
-
     private static readonly TimeSpan Window = TimeSpan.FromMinutes(1);
 
-    public static void Configure(RateLimiterOptions options)
+    /// <summary>
+    /// Registers the rate limiter with the limits from the "RateLimits" section (<see cref="RateLimitOptions"/>),
+    /// which default to the production limits. Invalid limits stop the API from starting.
+    /// </summary>
+    public static IServiceCollection AddFileHolderRateLimits(this IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddOptions<RateLimitOptions>()
+            .Bind(configuration.GetSection(RateLimitOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        services.AddRateLimiter(_ => { });
+        services.AddOptions<RateLimiterOptions>()
+            .Configure<IOptions<RateLimitOptions>>((options, limits) => Configure(options, limits.Value));
+        return services;
+    }
+
+    public static void Configure(RateLimiterOptions options, RateLimitOptions limits)
     {
         options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
         options.OnRejected = WriteRetryAfterAsync;
 
-        AddPerClientPolicy(options, UploadInitiate, UploadInitiatePermitLimit);
-        AddPerClientPolicy(options, MultipartPipeline, MultipartPipelinePermitLimit);
-        AddPerClientPolicy(options, Confirm, ConfirmPermitLimit);
-        AddPerClientPolicy(options, Download, DownloadPermitLimit);
+        AddPerClientPolicy(options, UploadInitiate, limits.UploadInitiatePermitLimit);
+        AddPerClientPolicy(options, MultipartPipeline, limits.MultipartPipelinePermitLimit);
+        AddPerClientPolicy(options, Confirm, limits.ConfirmPermitLimit);
+        AddPerClientPolicy(options, Download, limits.DownloadPermitLimit);
 
         // Kept apart from the download policy so page loads don't eat into the unlock and download budget,
         // but bounded so share tokens can't be guessed at will.
-        AddPerClientPolicy(options, Metadata, MetadataPermitLimit);
+        AddPerClientPolicy(options, Metadata, limits.MetadataPermitLimit);
     }
 
     /// <summary>

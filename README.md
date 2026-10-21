@@ -57,13 +57,15 @@
 * **Passwords:** stored as bcrypt hashes. 5 wrong passwords are free (typos happen); each further one locks the bundle for 1, 2, 4, … minutes, up to 1 hour.
 * **Rate limits per client address** (fixed one-minute windows; a `429` carries `Retry-After`):
 
-  | Endpoint | Limit |
-  | :--- | :--- |
-  | `presign` | 10 / min |
-  | Multipart steps (`multipart/presign-batch`, `complete`, `abort`) | 300 / min |
-  | `confirm` | 10 / min |
-  | Unlock, download sessions, file links, *Download All* | 30 / min |
-  | Bundle info (`GET /{token}`) | 60 / min |
+  | Endpoint | Limit | Setting |
+  | :--- | :--- | :--- |
+  | `presign` | 10 / min | `RateLimits__UploadInitiatePermitLimit` |
+  | Multipart steps (`multipart/presign-batch`, `complete`, `abort`) | 300 / min | `RateLimits__MultipartPipelinePermitLimit` |
+  | `confirm` | 10 / min | `RateLimits__ConfirmPermitLimit` |
+  | Unlock, download sessions, file links, *Download All* | 30 / min | `RateLimits__DownloadPermitLimit` |
+  | Bundle info (`GET /{token}`) | 60 / min | `RateLimits__MetadataPermitLimit` |
+
+  These are the defaults; each can be set (1–100,000) with the setting next to it. Only raise them for a test stack where every request comes from one address, as CI's end-to-end tests do (`docker-compose.ci.yml`).
 * **Download counting** is a single conditional database update, so a bundle limited to N downloads can never be downloaded more than N times, however many recipients try at once.
 * **API responses** carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` and a Content-Security-Policy.
   * **The UI pages, served by nginx, don't send these headers yet.** Tracked in [#81](https://github.com/Hiczownik/FileHolder/issues/81) and [#82](https://github.com/Hiczownik/FileHolder/issues/82).
@@ -163,6 +165,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Storage__AccessKey`, `Storage__SecretKey` | `minioadmin` | Storage credentials (local defaults) |
 | `Storage__BucketName` | `fileholder-bucket` | Bucket for all files |
 | `UploadLimits__MaxBundleSizeBytes` | 5 GB (default) | Largest bundle. Keep in sync with the UI |
+| `RateLimits__*PermitLimit` | see *Rate limits* (defaults) | Requests per client address per minute, per endpoint group. Raise only for single-address test stacks |
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
