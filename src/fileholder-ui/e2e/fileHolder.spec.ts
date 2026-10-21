@@ -438,4 +438,61 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
   });
+
+  test('7. Link-key E2EE (#61): the link alone opens the files, and a link without its key is refused without asking the server @cross-browser', async ({ page, browser }) => {
+    const UPLOAD_TIMEOUT_MS = 30_000;
+    const LINK_KEY_PREFIX = '#k=';
+
+    await page.goto('/');
+    await page.locator('input[type="file"]').setInputFiles([testFile1]);
+    await expect(page.getByText('Selected Files (1)')).toBeVisible();
+    await page.getByRole('checkbox', { name: 'End-to-end encryption' }).click();
+
+    // No passkey by default: the field isn't even shown, and the link is said to be the secret.
+    await expect(page.getByRole('checkbox', { name: 'Also require a passkey' })).not.toBeChecked();
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await expect(page.getByText('The link is the secret', { exact: false })).toBeVisible();
+
+    const confirmRequestPromise = page.waitForRequest((req) => req.url().includes('/api/v1/files/confirm') && req.method() === 'POST');
+    await page.getByRole('button', { name: 'Generate Shareable Link' }).click();
+    const confirmRequest = await confirmRequestPromise;
+    expect(confirmRequest.postDataJSON().keyMode).toBe('LinkKey');
+
+    const shareLinkInput = page.locator('input[readonly]');
+    await expect(shareLinkInput).toBeVisible({ timeout: UPLOAD_TIMEOUT_MS });
+    await expect(page.getByText('Anyone with this link or QR code can open the files.')).toBeVisible();
+    const shareUrl = await shareLinkInput.inputValue();
+    const linkKey = new URL(shareUrl).hash.slice(LINK_KEY_PREFIX.length);
+    expect(new URL(shareUrl).hash.startsWith(LINK_KEY_PREFIX)).toBe(true);
+    expect(confirmRequest.postData() ?? '').not.toContain(linkKey);
+
+    // A fresh browser with only the link: no prompt, the files are listed, and the key leaves the address bar.
+    const recipientContext = await browser.newContext();
+    const recipientPage = await recipientContext.newPage();
+    await recipientPage.goto(shareUrl);
+    await expect(recipientPage.getByText(testFile1.name)).toBeVisible();
+    await expect(recipientPage.locator('input[type="password"]')).toHaveCount(0);
+    expect(new URL(recipientPage.url()).hash).toBe('');
+
+    const downloadPromise = recipientPage.waitForEvent('download');
+    await recipientPage.getByRole('button', { name: 'Download File' }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe(testFile1.name);
+    expect(fs.readFileSync((await download.path())!).toString()).toBe(testFile1.buffer.toString());
+    await recipientContext.close();
+
+    // The same link without its key (e.g. cut off when copied): explained, and no unlock attempt is used up.
+    const cutOffContext = await browser.newContext();
+    const cutOffPage = await cutOffContext.newPage();
+    const unlockRequests: string[] = [];
+    cutOffPage.on('request', (req) => {
+      if (req.url().includes('/unlock')) unlockRequests.push(req.url());
+    });
+    await cutOffPage.goto(shareUrl.slice(0, shareUrl.indexOf('#')));
+    await expect(cutOffPage.getByText('This link is incomplete', { exact: false })).toBeVisible();
+    await expect(cutOffPage.locator('input[type="password"]')).toHaveCount(0);
+    await expect(cutOffPage.getByText(testFile1.name)).not.toBeVisible();
+    expect(unlockRequests).toEqual([]);
+    await cutOffContext.close();
+  });
 });
