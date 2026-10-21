@@ -7,25 +7,15 @@ import { UploadProgress } from "./UploadProgress";
 import { Button } from "../../../shared/components/Button";
 import { StatusAlert } from "../../../shared/components/StatusAlert";
 import { mergeSelectedFiles } from "../services/selectedFiles";
+import { generateReadablePasskey } from "../services/passkey";
 
 interface Props {
     uploadState: UploadState;
     onUpload: (formValues: UploadFormValues, files: File[]) => void;
 }
 
-const PASSKEY_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789";
-const PASSKEY_SEGMENT_LENGTH = 4;
-const PASSKEY_SEGMENT_COUNT = 3;
 const DEFAULT_EXPIRE_IN_HOURS = 24;
 const DEFAULT_MAX_DOWNLOADS = 10;
-
-function generateReadablePasskey(): string {
-    const getRandomSegment = (): string =>
-        Array.from(window.crypto.getRandomValues(new Uint8Array(PASSKEY_SEGMENT_LENGTH)))
-            .map((byte) => PASSKEY_CHARSET[byte % PASSKEY_CHARSET.length])
-            .join('');
-    return Array.from({ length: PASSKEY_SEGMENT_COUNT }, getRandomSegment).join('-');
-}
 
 export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
     const [files, setFiles] = useState<File[]>([]);
