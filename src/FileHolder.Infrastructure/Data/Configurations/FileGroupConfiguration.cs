@@ -42,6 +42,11 @@ public class FileGroupConfiguration : IEntityTypeConfiguration<FileGroup>
             .HasMaxLength(2048)
             .IsRequired(false);
 
+        builder.Property(g => g.KeyMode)
+            .HasConversion<string>()
+            .HasMaxLength(32)
+            .IsRequired(false);
+
         builder.Property(g => g.FailedPasswordAttempts)
             .IsRequired()
             .HasDefaultValue(0);

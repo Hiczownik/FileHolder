@@ -60,8 +60,12 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
             // Optional, as titles are.
             RuleFor(x => x.EncryptedTitle).MustBeKeyMaterial("Encrypted title", MaxEncryptedTitleLength)
                 .When(x => !string.IsNullOrEmpty(x.EncryptedTitle));
+            RuleFor(x => x.KeyMode)
+                .NotNull().WithMessage("Key mode is required for encrypted uploads.")
+                .IsInEnum().WithMessage("Key mode is not valid.");
         }).Otherwise(() =>
         {
+            RuleFor(x => x.KeyMode).Null().WithMessage("Key mode is only allowed for encrypted uploads.");
             RuleFor(x => x.EncryptedTitle).Empty().WithMessage("Encrypted title is only allowed for encrypted uploads.");
             RuleFor(x => x.KeySalt).Empty().WithMessage("Key salt is only allowed for encrypted uploads.");
             RuleFor(x => x.KeyEnvelope).Empty().WithMessage("Key envelope is only allowed for encrypted uploads.");

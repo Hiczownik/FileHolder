@@ -87,7 +87,15 @@ export interface ConfirmUploadRequest {
     keySalt?: string;
     /** An encrypted bundle's title, encrypted like the manifest; such bundles never send `title`. */
     encryptedTitle?: string;
+    /** Required for encrypted bundles, and only allowed there. */
+    keyMode?: KeyMode;
 }
+
+/**
+ * What a recipient needs to open an encrypted bundle: the key in the share link's fragment (`#k=…`) alone, or
+ * that key and a passkey sent separately.
+ */
+export type KeyMode = 'LinkKey' | 'LinkKeyAndPasskey';
 
 export interface FileItemMetadata {
     id: string;
@@ -118,6 +126,8 @@ export interface FileGroupMetadataResponse {
     files: FileItemMetadata[];
     /** Only once an encrypted bundle is unlocked; the page decrypts it into `title`. */
     encryptedTitle?: string | null;
+    /** Returned while locked too. Null for plain bundles and for encrypted ones from before link keys. */
+    keyMode?: KeyMode | null;
 }
 
 export interface DownloadUrlResponse {

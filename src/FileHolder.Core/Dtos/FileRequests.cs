@@ -1,4 +1,6 @@
-﻿namespace FileHolder.Core.Dtos;
+﻿using FileHolder.Core.Entities;
+
+namespace FileHolder.Core.Dtos;
 
 public record FileItemInputDto(
     string FileName,
@@ -33,7 +35,8 @@ public record ConfirmUploadRequestDto(
     string? EncryptedManifest = null,
     string? KeyEnvelope = null,
     string? KeySalt = null,
-    string? EncryptedTitle = null
+    string? EncryptedTitle = null,
+    KeyMode? KeyMode = null
 );
 
 public record DownloadRequestDto(

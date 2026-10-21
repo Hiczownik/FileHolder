@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
+using FileHolder.Core.Entities;
 
 namespace FileHolder.Core.Dtos;
 
@@ -58,7 +59,9 @@ public record FileGroupMetadataResponseDto(
     [property: JsonPropertyName("isExpired")] bool IsExpired,
     [property: JsonPropertyName("files")] List<FileItemMetadataDto> Files,
     // Like the manifest, only returned once the bundle is unlocked.
-    [property: JsonPropertyName("encryptedTitle")] string? EncryptedTitle = null
+    [property: JsonPropertyName("encryptedTitle")] string? EncryptedTitle = null,
+    // Returned while locked too: the download page needs it to know how to unlock.
+    [property: JsonPropertyName("keyMode")] KeyMode? KeyMode = null
 );
 
 public record UnlockResult(
