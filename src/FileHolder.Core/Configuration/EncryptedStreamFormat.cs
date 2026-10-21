@@ -22,9 +22,19 @@ public static class EncryptedStreamFormat
     /// </summary>
     public static long EncryptedSize(long plaintextBytes)
     {
-        long chunks = Math.Max(1, (plaintextBytes + ChunkPlaintextBytes - 1) / ChunkPlaintextBytes);
-        return plaintextBytes + chunks * TagBytes;
+        long chunks = Math.Max(1, ChunksFor(plaintextBytes));
+        return SaturatingAdd(plaintextBytes, chunks * TagBytes);
     }
+
+    /// <summary>ceil(bytes / chunk), without the overflow "bytes + chunk - 1" has near long.MaxValue.</summary>
+    private static long ChunksFor(long bytes) =>
+        bytes / ChunkPlaintextBytes + (bytes % ChunkPlaintextBytes == 0 ? 0 : 1);
+
+    /// <summary>
+    /// a + b for non-negative values, or long.MaxValue when that doesn't fit: these sizes are only compared against
+    /// limits, and wrapping around to a negative number would let any size through (or none).
+    /// </summary>
+    private static long SaturatingAdd(long a, long b) => a > long.MaxValue - b ? long.MaxValue : a + b;
 
     /// <summary>
     /// The most ciphertext <paramref name="fileCount"/> files holding at most <paramref name="maxPlaintextBytes"/>
@@ -34,7 +44,8 @@ public static class EncryptedStreamFormat
     /// </summary>
     public static long MaxEncryptedTotal(long maxPlaintextBytes, int fileCount)
     {
-        long fullChunks = (maxPlaintextBytes + ChunkPlaintextBytes - 1) / ChunkPlaintextBytes;
-        return maxPlaintextBytes + (fullChunks + fileCount) * TagBytes;
+        // At most long.MaxValue / 4 MiB chunks plus 50 files, times 16 bytes: far from overflowing on its own.
+        long tags = (ChunksFor(maxPlaintextBytes) + fileCount) * TagBytes;
+        return SaturatingAdd(maxPlaintextBytes, tags);
     }
 }

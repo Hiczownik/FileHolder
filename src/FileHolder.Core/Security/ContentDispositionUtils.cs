@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 
@@ -12,6 +13,9 @@ public static class ContentDispositionUtils
     /// </summary>
     public static string Attachment(string fileName)
     {
+        // Half a character (a lone surrogate) can't be normalized or encoded as UTF-8, and would throw below.
+        // Sanitized names never hold one; this keeps a bad name from turning a download into a 500.
+        fileName = WithWholeCharacters(fileName);
         var fallback = ToAsciiFallback(fileName);
         var value = $"attachment; filename=\"{fallback}\"";
 
@@ -27,6 +31,34 @@ public static class ContentDispositionUtils
     /// Stripping needs ICU; under invariant globalization (the Alpine runtime image) Normalize leaves accented
     /// letters whole, so they become "_" too ("za____.txt"). Browsers use filename* and never see the fallback.
     /// </summary>
+    /// <summary>The name with each lone surrogate replaced by "_", as SanitizeFileName does; surrogate pairs stay.</summary>
+    private static string WithWholeCharacters(string fileName)
+    {
+        if (!fileName.Any(char.IsSurrogate))
+        {
+            return fileName;
+        }
+
+        var builder = new StringBuilder(fileName.Length);
+        var remaining = fileName.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            var decoded = Rune.DecodeFromUtf16(remaining, out _, out var consumed);
+            if (decoded == OperationStatus.Done)
+            {
+                builder.Append(remaining[..consumed]);
+            }
+            else
+            {
+                builder.Append('_');
+            }
+
+            remaining = remaining[consumed..];
+        }
+
+        return builder.ToString();
+    }
+
     private static string ToAsciiFallback(string fileName)
     {
         var decomposed = fileName.Normalize(NormalizationForm.FormD);

@@ -9,6 +9,9 @@ public class PasswordLockoutTests
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(5)]
+    [InlineData(-1)]
+    // Found by the property tests (#70): int.MinValue - 5 wrapped around, so this used to lock for an hour.
+    [InlineData(int.MinValue)]
     public void LockoutAfter_FreeAttempts_DoesNotLock(int failedAttempts)
     {
         PasswordLockout.LockoutAfter(failedAttempts).Should().BeNull();

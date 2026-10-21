@@ -47,4 +47,18 @@ public class EncryptedStreamFormatTests
     {
         EncryptedStreamFormat.MaxEncryptedTotal(5 * Chunk, 2).Should().Be(5 * Chunk + (5 + 2) * 16);
     }
+
+    // Found by the property tests (#70): near long.MaxValue the chunk count overflowed, so the encrypted size came out
+    // as n + 16, and the bundle limit wrapped below the plaintext limit itself.
+    [Fact]
+    public void EncryptedSize_NearLongMaxValue_SaturatesInsteadOfWrapping()
+    {
+        EncryptedStreamFormat.EncryptedSize(long.MaxValue - 1000).Should().Be(long.MaxValue);
+    }
+
+    [Fact]
+    public void MaxEncryptedTotal_OfAHugeConfiguredLimit_IsNeverBelowTheLimit()
+    {
+        EncryptedStreamFormat.MaxEncryptedTotal(long.MaxValue - 1000, 23).Should().Be(long.MaxValue);
+    }
 }
