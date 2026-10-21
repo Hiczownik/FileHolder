@@ -4,7 +4,10 @@ using FileHolder.Core.Exceptions;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -114,6 +117,48 @@ public class GlobalExceptionHandlerTests
         handled.Should().BeTrue();
         lifetime.Aborted.Should().BeTrue("a ZIP cut off midway must not look like a complete download");
         context.Response.Body.Length.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(typeof(InvalidRequestException))]
+    [InlineData(typeof(InvalidOperationException))]
+    public async Task Logs_NameTheRoute_NotTheShareToken_NorTheFileName(Type exceptionType)
+    {
+        var logger = new RecordingLogger();
+        var environment = Substitute.For<IHostEnvironment>();
+        environment.EnvironmentName.Returns("Production");
+        var handler = new GlobalExceptionHandler(logger, environment);
+
+        var context = CreateContext();
+        context.Request.Path = "/api/v1/files/AbCd1234/unlock";
+        context.SetEndpoint(new RouteEndpoint(
+            _ => Task.CompletedTask, RoutePatternFactory.Parse("/api/v1/files/{shareToken}/unlock"), 0, null, null));
+        var exception = (Exception)Activator.CreateInstance(exceptionType, "File size mismatch for passport.pdf")!;
+
+        await handler.TryHandleAsync(context, exception, CancellationToken.None);
+
+        var logged = logger.Entries.Where(e => e.Level >= LogLevel.Information).ToList();
+        logged.Should().NotBeEmpty();
+        logged.Should().AllSatisfy(e =>
+        {
+            e.Message.Should().Contain("/api/v1/files/{shareToken}/unlock");
+            e.Message.Should().NotContain("AbCd1234");
+            e.Message.Should().NotContain("passport.pdf");
+        });
+    }
+
+    private sealed class RecordingLogger : ILogger<GlobalExceptionHandler>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        // The exception itself is left out: a 500's stack trace goes to the log on purpose, and its message is
+        // whatever the failing code wrote.
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Entries.Add((logLevel, formatter(state, null)));
     }
 
     private sealed class StartedResponseFeature : HttpResponseFeature

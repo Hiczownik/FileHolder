@@ -76,6 +76,7 @@ public class MultipartUploadService(
         await _storageProvider.CompleteMultipartUploadAsync(session.StorageKey, session.UploadId, parts);
 
         session.IsCompleted = true;
+        session.FinishedAt = _dateTimeProvider.UtcNow;
         await _dbContext.SaveChangesAsync();
 
         return true;
@@ -95,6 +96,7 @@ public class MultipartUploadService(
         await _storageProvider.AbortMultipartUploadAsync(session.StorageKey, session.UploadId);
 
         session.IsAborted = true;
+        session.FinishedAt = _dateTimeProvider.UtcNow;
         await _dbContext.SaveChangesAsync();
 
         return true;

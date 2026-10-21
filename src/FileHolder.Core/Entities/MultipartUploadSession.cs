@@ -13,6 +13,8 @@ public class MultipartUploadSession
     public int TotalParts { get; set; }
     public bool IsCompleted { get; set; }
     public bool IsAborted { get; set; }
+    /// <summary>When the session was completed or aborted; the purge deletes the row a while after.</summary>
+    public DateTime? FinishedAt { get; set; }
     public DateTime ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

@@ -155,6 +155,9 @@ namespace FileHolder.Infrastructure.Data.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
 
+                    b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("IsAborted")
                         .HasColumnType("boolean");
 
