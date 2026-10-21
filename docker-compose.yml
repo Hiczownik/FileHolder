@@ -25,6 +25,11 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
       MINIO_API_CORS_ALLOW_ORIGINS: "*"
+      # Storage aborts multipart uploads left incomplete this long (default 24h). It must stay above the longest an
+      # upload may legitimately wait for confirm, plus the purge's grace and interval: about 25.5h (UploadTimings,
+      # StorageSafetyNet.CurrentMaxUnconfirmedUploadAge). This, not the lifecycle rule, is what removes abandoned
+      # uploads: Silo drops the rule's AbortIncompleteMultipartUpload part.
+      MINIO_API_STALE_UPLOADS_EXPIRY: "48h"
     # Bound to loopback only: browsers reach presigned URLs via localhost, nothing else needs the network.
     ports:
       - "127.0.0.1:9000:9000"

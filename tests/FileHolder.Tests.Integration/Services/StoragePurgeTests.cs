@@ -280,6 +280,26 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
     }
 
     [Fact]
+    public async Task PurgeExpiredFilesAsync_WhenTheSafetyNetAlreadyDeletedTheObjects_StillRecordsThePurgeOnce()
+    {
+        // The storage lifecycle rule (StorageSafetyNet) may delete a bundle's objects before the purge gets to them.
+        // DeleteObjects reports missing keys as deleted, so the group must still be marked purged and not retried.
+        var storageKey = "uploads/lifecycle_gone_" + Guid.NewGuid().ToString("N") + ".pdf";
+        var group = await SeedGroupAsync("gone_", storageKey, maxDownloads: 1, downloadCount: 1,
+            deletedAt: DateTime.UtcNow - StoragePurgeService.DeletionGracePeriod - TimeSpan.FromMinutes(1));
+        factory.S3ObjectRegistry.ContainsKey(storageKey).Should().BeFalse();
+
+        await RunPurgeAsync();
+
+        (await LoadGroupAsync(group.Id)).StoragePurgedAt.Should().NotBeNull();
+        factory.MockS3Client.ClearReceivedCalls();
+        await RunPurgeAsync();
+        await factory.MockS3Client.DidNotReceive().DeleteObjectsAsync(
+            Arg.Is<DeleteObjectsRequest>(req => req != null && req.Objects.Any(o => o.Key == storageKey)),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task PurgeExpiredFilesAsync_WhenDeletedGroupIsPastGracePeriod_DeletesObjectsAndRecordsPurge()
     {
         var storageKey = "uploads/orphan_" + Guid.NewGuid().ToString("N") + ".pdf";

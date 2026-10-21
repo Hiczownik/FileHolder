@@ -26,6 +26,9 @@ jobs:
             - name: Build Solution in Release Mode
               run: dotnet build FileHolder.sln --no-restore -c Release
 
+            - name: Run Backend Unit Tests
+              run: dotnet test tests/FileHolder.Tests.Unit/FileHolder.Tests.Unit.csproj -c Release --no-build --verbosity normal
+
             - name: Run Backend Integration Tests
               run: dotnet test tests/FileHolder.Tests.Integration/FileHolder.Tests.Integration.csproj -c Release --no-build --verbosity normal
     e2e-tests: 
@@ -97,6 +100,27 @@ jobs:
                 echo "Anonymous list: HTTP $list_status, anonymous get: HTTP $get_status"
                 if [ "$list_status" != "403" ] || [ "$get_status" != "403" ]; then
                   echo "::error::Storage bucket allows anonymous access"
+                  exit 1
+                fi
+            - name: Verify Storage Safety Net
+              run: |
+                # The API puts the lifecycle rule in place in the background just after it starts, so allow it a moment.
+                mc() { docker exec fileholder-minio mc "$@"; }
+                mc alias set local http://localhost:9000 minioadmin minioadmin > /dev/null
+                for attempt in $(seq 1 30); do
+                  rules=$(mc ilm export local/fileholder-bucket 2>/dev/null || true)
+                  echo "$rules" | grep -q '"ID":"fileholder-safety-net"' && echo "$rules" | grep -q '"Expiration":{"Days":' && break
+                  sleep 2
+                done
+                echo "Lifecycle rules: $rules"
+                if ! echo "$rules" | grep -q '"ID":"fileholder-safety-net"'; then
+                  echo "::error::The storage lifecycle safety net rule is missing"
+                  exit 1
+                fi
+                # Silo drops the rule's abort part, so its own stale-upload clean-up must be set to cover uploads.
+                stale=$(mc admin config get local api --json)
+                if ! echo "$stale" | grep -q '"name":"MINIO_API_STALE_UPLOADS_EXPIRY","value":"48h"'; then
+                  echo "::error::MINIO_API_STALE_UPLOADS_EXPIRY is not 48h: $stale"
                   exit 1
                 fi
             - name: Run Playwright E2E Tests
