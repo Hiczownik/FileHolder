@@ -26,6 +26,7 @@ export const UploadPage: React.FC = () => {
                 <UploadSuccessCard
                     shareLink={uploadState.shareLink}
                     keyMode={uploadState.keyMode}
+                    metadataSummary={uploadState.metadataSummary}
                     onReset={reset}
                 />
             ) : (

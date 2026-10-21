@@ -32,6 +32,18 @@ describe('UploadSuccessCard Component', () => {
         expect(screen.getByDisplayValue(encryptedLink)).toBeInTheDocument();
     });
 
+    it('says what removing photo metadata did', () => {
+        render(<UploadSuccessCard shareLink={shareLink} metadataSummary={{ cleaned: 1, notCleaned: ['IMG_0002.HEIC'], motionPhotos: 0 }} onReset={vi.fn()} />);
+
+        expect(screen.getByText('Removed metadata from 1 photo. 1 file couldn\'t be cleaned and keeps its metadata: IMG_0002.HEIC.')).toBeInTheDocument();
+    });
+
+    it('says nothing about metadata when removal was off or touched nothing', () => {
+        render(<UploadSuccessCard shareLink={shareLink} metadataSummary={{ cleaned: 0, notCleaned: [], motionPhotos: 0 }} onReset={vi.fn()} />);
+
+        expect(screen.queryByText('Removed metadata', { exact: false })).not.toBeInTheDocument();
+    });
+
     it('reminds the uploader to send the passkey separately when the bundle needs one', () => {
         render(<UploadSuccessCard shareLink={encryptedLink} keyMode="LinkKeyAndPasskey" onReset={vi.fn()} />);
 

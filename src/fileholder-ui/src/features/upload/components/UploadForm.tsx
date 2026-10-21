@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { UploadFormValues, UploadState } from "../types";
 import { useForm, useWatch } from "react-hook-form";
-import { Clock, Download, Folder, KeyRound, Lock, ShieldCheck } from "lucide-react";
+import { Clock, Download, Folder, KeyRound, Lock, MapPinOff, ShieldCheck } from "lucide-react";
 import { FileDropzone } from "./FileDropzone";
 import { UploadProgress } from "./UploadProgress";
 import { Button } from "../../../shared/components/Button";
@@ -41,12 +41,15 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
             password: '',
             isEncrypted: false,
             requirePasskey: false,
+            // On by default: few senders know their photos carry where and when they were taken.
+            stripImageMetadata: true,
         },
     });
 
     const isEncrypted = useWatch({ control, name: 'isEncrypted' }) ?? false;
     const requirePasskey = useWatch({ control, name: 'requirePasskey' }) ?? false;
     const passwordValue = useWatch({ control, name: 'password' }) ?? '';
+    const stripImageMetadata = useWatch({ control, name: 'stripImageMetadata' }) ?? true;
 
     // An encrypted bundle's link carries its key, so it needs a passkey only when the uploader asks for one.
     const isPasskeyRequired = isEncrypted && requirePasskey;
@@ -97,6 +100,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 selectedFiles={files}
                 onFilesSelect={handleFilesSelect}
                 onRemoveFile={handleRemoveFile}
+                stripMetadata={stripImageMetadata}
             />
 
             {skippedNames.length > 0 && (
@@ -105,6 +109,24 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                     message={`Skipped ${skippedNames.length === 1 ? '1 file' : `${skippedNames.length} files`} already in the list: ${skippedNames.join(', ')}.`}
                 />
             )}
+
+            <label className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between gap-3 cursor-pointer">
+                <span className="flex items-center gap-3">
+                    <MapPinOff className="w-5 h-5 text-indigo-400 shrink-0" />
+                    <span>
+                        <span className="block text-xs font-semibold text-slate-200">Remove photo metadata (location, camera details)</span>
+                        <span className="block text-[11px] text-slate-500">
+                            Done in your browser before upload, without changing the photos. HEIC photos and videos aren&apos;t cleaned.
+                        </span>
+                    </span>
+                </span>
+                <input
+                    type="checkbox"
+                    aria-label="Remove photo metadata"
+                    {...register('stripImageMetadata')}
+                    className="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
+                />
+            </label>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 <div>
@@ -208,7 +230,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 />
             </div>}
 
-            {isUploading && <UploadProgress progress={uploadState.progress} />}
+            {isUploading && <UploadProgress progress={uploadState.progress} preparing={uploadState.preparing} />}
 
             <Button
                 type="submit"

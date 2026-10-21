@@ -1,5 +1,6 @@
 import { useReducer, useRef } from "react";
-import { keyModeOf, type UploadFormValues, type UploadState } from "../types";
+import { keyModeOf, type MetadataSummary, type UploadFormValues, type UploadState } from "../types";
+import { cleanPhotos } from "../services/photoCleaning";
 import type { KeyMode } from "../../download/types";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import {
@@ -9,9 +10,9 @@ import {
 } from "../services/uploadWorkflow";
 
 type UploadAction =
-    | { type: 'START_UPLOAD' }
+    | { type: 'START_UPLOAD'; payload: { preparing: boolean } }
     | { type: 'SET_PROGRESS'; payload: number }
-    | { type: 'UPLOAD_SUCCESS'; payload: { shareLink: string; keyMode?: KeyMode } }
+    | { type: 'UPLOAD_SUCCESS'; payload: { shareLink: string; keyMode?: KeyMode; metadataSummary?: MetadataSummary } }
     | { type: 'UPLOAD_ERROR'; payload: string }
     | { type: 'RESET' };
 
@@ -20,7 +21,7 @@ type UploadActionHandlers = {
 };
 
 const uploadActionHandlers: UploadActionHandlers = {
-    START_UPLOAD: () => ({ status: 'uploading', progress: 0 }),
+    START_UPLOAD: (action) => ({ status: 'uploading', progress: 0, preparing: action.payload.preparing }),
     SET_PROGRESS: (action) => ({ status: 'uploading', progress: action.payload }),
     UPLOAD_SUCCESS: (action) => ({ status: 'success', ...action.payload }),
     UPLOAD_ERROR: (action) => ({ status: 'error', message: action.payload }),
@@ -48,26 +49,34 @@ export const useFileUpload = () => {
             return;
         }
 
-        dispatch({ type: 'START_UPLOAD' });
+        const signal = abortControllerRef.current.signal;
+        const stripMetadata = Boolean(formValues.stripImageMetadata);
+        dispatch({ type: 'START_UPLOAD', payload: { preparing: stripMetadata } });
 
         try {
+            // Before presign: upload links are signed for each file's exact size, and cleaning changes it.
+            const cleaned = stripMetadata ? await cleanPhotos(files, signal) : undefined;
+            const toUpload = cleaned?.files ?? files;
+            // Ends the "Preparing files" phase; the upload itself starts at 0%.
+            if (cleaned) dispatch({ type: 'SET_PROGRESS', payload: 0 });
+
             const shareLink = formValues.isEncrypted
                 ? await executeEncryptedUploadWorkflow(
                     formValues,
-                    files,
+                    toUpload,
                     (progress) => dispatch({ type: 'SET_PROGRESS', payload: progress }),
-                    abortControllerRef.current.signal
+                    signal
                 )
                 : await executeStandardUploadWorkflow(
                     formValues,
-                    files,
+                    toUpload,
                     (progress) => dispatch({ type: 'SET_PROGRESS', payload: progress }),
-                    abortControllerRef.current.signal
+                    signal
                 );
 
             dispatch({
                 type: 'UPLOAD_SUCCESS',
-                payload: { shareLink, keyMode },
+                payload: { shareLink, keyMode, metadataSummary: cleaned?.summary },
             });
         } catch (err: unknown) {
             dispatch({ type: 'UPLOAD_ERROR', payload: parseApiError(err) });
