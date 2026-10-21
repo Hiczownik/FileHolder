@@ -139,6 +139,7 @@ The default credentials (`minioadmin`, the Postgres password in `appsettings.jso
 * **Opening the link:**
   * The page reads the key from the address and then removes it, so it doesn't stay on screen or in screenshots. Anything else in the address, such as `?diagnostics`, stays.
   * The key is kept for that browser tab (`sessionStorage`), so a reload still works. It's forgotten once the bundle has expired or been deleted.
+  * The passkey is never stored, so after a reload a bundle with a passkey asks for it again. The link key is still remembered, so only the passkey is needed.
   * Link-only bundles open without a prompt. Bundles with a passkey ask for the passkey only.
 * **Incomplete or damaged links:**
   * A link whose key is missing or cut short says *"This link is incomplete"*. The server isn't asked to unlock, so none of the bundle's unlock attempts are used up.
@@ -248,7 +249,7 @@ Encrypted downloads are saved differently per browser (see *Encrypted Downloads*
      - A link-only bundle opens on the phone without a prompt, both from a pasted link and by scanning the success card's QR code with the camera.
      - A bundle with *Also require a passkey* asks for the passkey only.
      - After opening, the address bar shows no `#k=…`.
-     - Reloading the page still opens the bundle.
+     - After a reload, a link-only bundle opens again without a prompt, and a bundle with a passkey asks for the passkey again (never *"This link is incomplete"*).
    - A tampered file must fail with an error, not save. Tamper with the stored copy (Git Bash on Windows): `scripts/tamper-stored-file.sh <share-token> [file-number] [byte-offset]`. It flips one byte (by default in the middle of the file) and prints the command that restores it.
 6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the storage console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api`.
 
