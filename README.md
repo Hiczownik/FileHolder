@@ -21,6 +21,11 @@
   * Files up to 50 MB go in a single `PUT`. Larger files go as a multipart upload in parts of at least 16 MiB, 4 at a time, retried with backoff.
   * On confirm, the API checks every stored file's size against what it approved. It serves single-file uploads from a copy, so the original upload link can't overwrite them.
   * The sender gets a share link (`/f/<token>`, plus `#k=<key>` for encrypted bundles) and a QR code for it.
+* **Photo metadata (on by default):** before presign, the browser removes what photos record about where, when and with what they were taken. It happens in the browser because the files go straight to storage (and encrypted ones are encrypted first), so the server never could.
+  * **Removed** from JPEG, PNG and WebP: EXIF (GPS location, camera make, model and serial numbers, date and time, the embedded thumbnail), XMP, IPTC, comments and text chunks. An Android Motion Photo's short video is removed too, leaving a still photo.
+  * **Kept:** the image data, byte for byte (nothing is re-encoded), colour profiles, animation, HDR gain maps, and the orientation, so rotated photos still show the right way up.
+  * **Not cleaned**, and labelled as such in the file list: HEIC/HEIF, AVIF, TIFF/RAW and videos, and photos too damaged to read. These upload as they are.
+  * The file list marks photos that contain a location with 📍, even with the option off. The option can be turned off on the upload form, for photographers who want to keep their EXIF.
 * **Downloading:** the recipient opens the link, unlocks it with the password if there is one, and starts a **download session**:
   * The session counts as one download and lasts up to 6 hours, never past the bundle's expiry. Within it, the recipient can fetch the files (or retry) without using up another download.
   * Each file link is valid for 5 minutes and points straight at storage.
@@ -250,6 +255,9 @@ Encrypted downloads are saved differently per browser (see *Encrypted Downloads*
      - A bundle with *Also require a passkey* asks for the passkey only.
      - After opening, the address bar shows no `#k=…`.
      - After a reload, a link-only bundle opens again without a prompt, and a bundle with a passkey asks for the passkey again (never *"This link is incomplete"*).
+   - **Photo metadata:**
+     - Pick a photo from the iPhone's library in Safari. The file list shows whether iOS handed over a JPEG copy (labelled *Metadata will be removed*, and 📍 if it has a location) or the HEIC original (*Metadata can't be removed (HEIC)*).
+     - After downloading, the photo shows no location in Photos or Files (swipe up or *Get Info*), and displays the right way up.
    - A tampered file must fail with an error, not save. Tamper with the stored copy (Git Bash on Windows): `scripts/tamper-stored-file.sh <share-token> [file-number] [byte-offset]`. It flips one byte (by default in the middle of the file) and prints the command that restores it.
 6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the storage console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api`.
 
