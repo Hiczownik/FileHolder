@@ -1,42 +1,97 @@
 const ALGORITHM = 'AES-GCM';
 const KEY_LENGTH = 256;
 const IV_LENGTH_BYTES = 12;
+const GCM_TAG_BYTES = 16;
+const SALT_BYTES = 16;
+const BASE64_BLOCK_CHARS = 4;
+const PBKDF2_ITERATIONS = 300_000;
+const LINK_KEY_BYTES = 32;
 
 export interface KeyDerivationResult {
   kAuth: string;
   kWrap: CryptoKey;
 }
 
+// Base64 padding at the end of a string: matches the "==" in "QQ==", nothing in "QUJD".
+// https://regex101.com/?regex=%3D%2B%24&testString=QQ%3D%3D%0AQUJD
+const TRAILING_PADDING = /=+$/;
+
 export const base64Url = {
   encode: (bytes: Uint8Array): string => {
-    let binary = '';
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-
-    return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
+    return window.btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(TRAILING_PADDING, '');
   },
 
   decode: (str: string): Uint8Array => {
-    let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
-    while (base64.length % 4) {
-      base64 += '=';
-    }
-    const binary = window.atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
+    const base64 = str.replaceAll('-', '+').replaceAll('_', '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / BASE64_BLOCK_CHARS) * BASE64_BLOCK_CHARS, '=');
+    return Uint8Array.from(window.atob(padded), (char) => char.charCodeAt(0));
   },
 };
+
+// A link key: 32 bytes as unpadded base64url, always 43 characters. Matches "q3-_" followed by 39 more such
+// characters; rejects anything shorter (a truncated link), padded with "=", or containing "+" or "/".
+// https://regex101.com/?regex=%5E%5BA-Za-z0-9_-%5D%7B43%7D%24&testString=q3-_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%0Aq3-_AAAA
+const LINK_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+/** Whether `value` has the shape of a link key. Says nothing about whether it is the right key. */
+export function isWellFormedLinkKey(value: string): boolean {
+  return LINK_KEY_PATTERN.test(value);
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const joined = new Uint8Array(a.byteLength + b.byteLength);
+  joined.set(a, 0);
+  joined.set(b, a.byteLength);
+  return joined;
+}
+
+/** PBKDF2-SHA-256 over a passkey: slow on purpose, so passkeys are expensive to guess. */
+async function stretchPasskey(passkey: string, salt: Uint8Array): Promise<Uint8Array> {
+  const baseKey = await window.crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(passkey),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const bits = await window.crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
+    baseKey,
+    KEY_LENGTH
+  );
+  return new Uint8Array(bits);
+}
+
+/**
+ * HKDF from the key material into kAuth (sent to the server as the bundle's password) and kWrap (wraps the master
+ * key). Each format version has its own labels, so keys of one version never match those of another.
+ */
+async function splitKeys(ikm: Uint8Array, hkdfSalt: Uint8Array, version: 'v1' | 'v2'): Promise<KeyDerivationResult> {
+  const prk = await window.crypto.subtle.importKey('raw', ikm as BufferSource, 'HKDF', false, ['deriveKey', 'deriveBits']);
+  const hkdf = (label: string): HkdfParams => ({
+    name: 'HKDF',
+    hash: 'SHA-256',
+    salt: hkdfSalt as BufferSource,
+    info: new TextEncoder().encode(`fileholder-${label}-${version}`),
+  });
+
+  const kAuthBits = await window.crypto.subtle.deriveBits(hkdf('auth'), prk, KEY_LENGTH);
+  const kWrap = await window.crypto.subtle.deriveKey(
+    hkdf('wrap'),
+    prk,
+    { name: ALGORITHM, length: KEY_LENGTH },
+    false,
+    ['encrypt', 'decrypt']
+  );
+  return { kAuth: base64Url.encode(new Uint8Array(kAuthBits)), kWrap };
+}
 
 export const cryptoEngine = {
   base64Url,
 
   generateSalt(): Uint8Array {
-    return window.crypto.getRandomValues(new Uint8Array(16));
+    return window.crypto.getRandomValues(new Uint8Array(SALT_BYTES));
   },
 
   generateKey: async (): Promise<CryptoKey> => {
@@ -64,60 +119,25 @@ export const cryptoEngine = {
   },
 
   async deriveDualKeys(password: string, salt: Uint8Array): Promise<KeyDerivationResult> {
-    const passwordBytes = new TextEncoder().encode(password);
-    const baseKey = await window.crypto.subtle.importKey(
-      'raw',
-      passwordBytes,
-      'PBKDF2',
-      false,
-      ['deriveBits']
-    );
+    return splitKeys(await stretchPasskey(password, salt), new Uint8Array(0), 'v1');
+  },
 
-    const derivedBits = await window.crypto.subtle.deriveBits(
-      {
-        name: 'PBKDF2',
-        salt: salt as BufferSource,
-        iterations: 300_000,
-        hash: 'SHA-256',
-      },
-      baseKey,
-      256
-    );
+  /** A new random link key, as it goes in the share link's fragment. */
+  generateLinkKey(): string {
+    return base64Url.encode(window.crypto.getRandomValues(new Uint8Array(LINK_KEY_BYTES)));
+  },
 
-    const prk = await window.crypto.subtle.importKey(
-      'raw',
-      derivedBits,
-      'HKDF',
-      false,
-      ['deriveKey', 'deriveBits']
-    );
-
-    const kAuthBits = await window.crypto.subtle.deriveBits(
-      {
-        name: 'HKDF',
-        hash: 'SHA-256',
-        salt: new Uint8Array(0),
-        info: new TextEncoder().encode('fileholder-auth-v1'),
-      },
-      prk,
-      256
-    );
-    const kAuth = base64Url.encode(new Uint8Array(kAuthBits));
-
-    const kWrap = await window.crypto.subtle.deriveKey(
-      {
-        name: 'HKDF',
-        hash: 'SHA-256',
-        salt: new Uint8Array(0),
-        info: new TextEncoder().encode('fileholder-wrap-v1'),
-      },
-      prk,
-      { name: ALGORITHM, length: KEY_LENGTH },
-      false,
-      ['encrypt', 'decrypt']
-    );
-
-    return { kAuth, kWrap };
+  /**
+   * The bundle's keys from the link key, and the passkey when the bundle needs one. The link key is random, so it
+   * isn't stretched; the passkey is, since it is what someone holding the link would have to guess.
+   */
+  async deriveLinkKeys(linkKey: string, salt: Uint8Array, passkey?: string): Promise<KeyDerivationResult> {
+    if (!isWellFormedLinkKey(linkKey)) throw new Error('Malformed link key.');
+    const linkKeyBytes = base64Url.decode(linkKey);
+    const ikm = passkey === undefined
+      ? linkKeyBytes
+      : concatBytes(linkKeyBytes, await stretchPasskey(passkey, salt));
+    return splitKeys(ikm, salt, 'v2');
   },
 
   async wrapMasterKey(masterKey: CryptoKey, kWrap: CryptoKey): Promise<string> {
@@ -137,7 +157,7 @@ export const cryptoEngine = {
 
   async unwrapMasterKey(envelopeBase64Url: string, kWrap: CryptoKey): Promise<CryptoKey> {
     const envelope = base64Url.decode(envelopeBase64Url);
-    if (envelope.byteLength < 28) throw new Error('Malformed key envelope.');
+    if (envelope.byteLength < IV_LENGTH_BYTES + GCM_TAG_BYTES) throw new Error('Malformed key envelope.');
     const iv = envelope.slice(0, IV_LENGTH_BYTES);
     const ciphertext = envelope.slice(IV_LENGTH_BYTES);
 
@@ -188,7 +208,7 @@ export const cryptoEngine = {
   },
 
   decryptBytes: async (key: CryptoKey, packedBytes: Uint8Array): Promise<Uint8Array> => {
-    if (packedBytes.byteLength < IV_LENGTH_BYTES + 16) {
+    if (packedBytes.byteLength < IV_LENGTH_BYTES + GCM_TAG_BYTES) {
       throw new Error('Encrypted payload is corrupted or truncated.');
     }
     const iv = packedBytes.slice(0, IV_LENGTH_BYTES);

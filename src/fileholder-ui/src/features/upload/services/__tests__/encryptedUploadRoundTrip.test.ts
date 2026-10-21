@@ -3,6 +3,8 @@ import { executeEncryptedUploadWorkflow } from '../uploadWorkflow';
 import { uploadApi } from '../../api/uploadApi';
 import { BundleDecryptionService } from '../../../download/services/bundleDecryptionService';
 import { STREAM_CHUNK_SIZE, STREAM_TAG_BYTES } from '../../../../shared/utils/crypto/streamCipher';
+import { base64Url, cryptoEngine, type KeyDerivationResult } from '../../../../shared/utils/crypto/cryptoUtils';
+import { LINK_KEY_PARAM } from '../../../../shared/utils/shareLink';
 import type { ConfirmUploadRequest, PresignedItem } from '../../../download/types';
 
 const PASSWORD = 'VaultPassword123!';
@@ -25,7 +27,18 @@ const EXPIRE_IN_HOURS = 24;
 const MAX_DOWNLOADS = 5;
 const SMALL_SEED = 1;
 const LARGE_SEED = 2;
-const FORM_VALUES = { title: 'Round Trip', expireInHours: EXPIRE_IN_HOURS, maxDownloads: MAX_DOWNLOADS, isEncrypted: true, password: PASSWORD } as const;
+const FORM_VALUES = { title: 'Round Trip', expireInHours: EXPIRE_IN_HOURS, maxDownloads: MAX_DOWNLOADS, isEncrypted: true, requirePasskey: true, password: PASSWORD } as const;
+// A share link ending in its link key: matches "/f/token#k=" plus 43 base64url characters; rejects "/f/token".
+// https://regex101.com/?regex=%23k%3D%5BA-Za-z0-9_-%5D%7B43%7D%24&testString=%2Ff%2Ftoken%23k%3Dq3-_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+const LINK_KEY_FRAGMENT = new RegExp(`#${LINK_KEY_PARAM}=[A-Za-z0-9_-]{43}$`);
+
+/** The link key, read from the share link's fragment as the recipient's browser does. */
+const linkKeyOf = (shareLink: string): string =>
+    new URLSearchParams(new URL(shareLink).hash.slice(1)).get(LINK_KEY_PARAM) ?? '';
+
+/** The keys a recipient derives from the share link (and the passkey), plus what the server holds. */
+const recipientKeys = (shareLink: string, confirm: ConfirmUploadRequest, passkey?: string): Promise<KeyDerivationResult> =>
+    cryptoEngine.deriveLinkKeys(linkKeyOf(shareLink), base64Url.decode(confirm.keySalt ?? ''), passkey);
 
 const patternFile = (name: string, size: number, seed: number): File =>
     new File([new Uint8Array(size).map((_, i) => (i + seed) % PATTERN_MODULUS)], name, { type: 'application/pdf' });
@@ -115,7 +128,7 @@ describe('encrypted upload round trip', () => {
         const backend = createFakeBackend(PART_SIZE);
         const originals = [patternFile('small.pdf', SMALL_FILE_BYTES, SMALL_SEED), patternFile('large.pdf', LARGE_FILE_BYTES, LARGE_SEED)];
 
-        await executeEncryptedUploadWorkflow(FORM_VALUES, originals, vi.fn());
+        const shareLink = await executeEncryptedUploadWorkflow(FORM_VALUES, originals, vi.fn());
 
         // What was sent must be exactly what was presigned: the upload URLs are signed for those sizes.
         const confirm = backend.confirmed[0];
@@ -126,8 +139,10 @@ describe('encrypted upload round trip', () => {
         expect(backend.partsByUpload.get('uploads/1.enc')!.size).toBe(EXPECTED_PARTS);
 
         // Now open the bundle the way a recipient does, from only what the server would hold.
+        expect(confirm.keyMode).toBe('LinkKeyAndPasskey');
+        expect(shareLink).toMatch(LINK_KEY_FRAGMENT);
         const recipient = new BundleDecryptionService();
-        const { kAuth, kWrap } = await recipient.deriveKAuth(PASSWORD, confirm.keySalt!, SHARE_TOKEN);
+        const { kAuth, kWrap } = await recipientKeys(shareLink, confirm, PASSWORD);
         expect(kAuth).toBe(confirm.password);
         const masterKey = await recipient.unwrapMasterKey(confirm.keyEnvelope!, kWrap);
         const manifest = await recipient.decryptManifest(confirm.encryptedManifest!, masterKey);
@@ -147,7 +162,7 @@ describe('encrypted upload round trip', () => {
     it('never sends the title in plain text, and the recipient decrypts it back after unlocking', async () => {
         const backend = createFakeBackend(PART_SIZE);
 
-        await executeEncryptedUploadWorkflow({ ...FORM_VALUES, title: '  Tax return 2026  ' }, [patternFile('small.pdf', SMALL_FILE_BYTES, SMALL_SEED)], vi.fn());
+        const shareLink = await executeEncryptedUploadWorkflow({ ...FORM_VALUES, title: '  Tax return 2026  ' }, [patternFile('small.pdf', SMALL_FILE_BYTES, SMALL_SEED)], vi.fn());
 
         const presignRequest = vi.mocked(uploadApi.getPresignedUrl).mock.calls[0][0];
         const confirm = backend.confirmed[0];
@@ -156,9 +171,57 @@ describe('encrypted upload round trip', () => {
         expect(JSON.stringify([presignRequest, confirm])).not.toContain('Tax return');
 
         const recipient = new BundleDecryptionService();
-        const { kWrap } = await recipient.deriveKAuth(PASSWORD, confirm.keySalt!, SHARE_TOKEN);
+        const { kWrap } = await recipientKeys(shareLink, confirm, PASSWORD);
         const masterKey = await recipient.unwrapMasterKey(confirm.keyEnvelope!, kWrap);
         expect(await recipient.decryptTitle(confirm.encryptedTitle!, masterKey)).toBe('Tax return 2026');
+    });
+
+    // Issue #61: by default the link alone opens the bundle, and its key never reaches the server.
+    it('opens a link-only bundle with just the share link, which carries a key the server never receives', async () => {
+        const backend = createFakeBackend(PART_SIZE);
+        const original = patternFile('small.pdf', SMALL_FILE_BYTES, SMALL_SEED);
+
+        // A password typed before the passkey was turned off must not end up protecting the bundle.
+        const shareLink = await executeEncryptedUploadWorkflow({ ...FORM_VALUES, requirePasskey: false }, [original], vi.fn());
+
+        const confirm = backend.confirmed[0];
+        expect(confirm.keyMode).toBe('LinkKey');
+        expect(shareLink).toContain(`/f/${SHARE_TOKEN}#`);
+        expect(shareLink).toMatch(LINK_KEY_FRAGMENT);
+        const presignRequest = vi.mocked(uploadApi.getPresignedUrl).mock.calls[0][0];
+        expect(JSON.stringify([presignRequest, confirm])).not.toContain(linkKeyOf(shareLink));
+
+        const recipient = new BundleDecryptionService();
+        const { kAuth, kWrap } = await recipientKeys(shareLink, confirm);
+        expect(kAuth).toBe(confirm.password);
+        const masterKey = await recipient.unwrapMasterKey(confirm.keyEnvelope!, kWrap);
+        const serverFiles = confirm.files.map((file) => ({ id: file.storageKey, fileName: file.fileName, sizeBytes: file.sizeBytes, contentType: file.contentType }));
+        const [file] = recipient.mapManifestToServerFiles(await recipient.decryptManifest(confirm.encryptedManifest!, masterKey), serverFiles);
+        const decryption = await recipient.createDecryptionTransform(recipient.getManifestIdForServerFile(file.id));
+        const decrypted = await readAll(streamOf(backend.stored.get(file.id)!).pipeThrough(decryption).getReader(), []);
+        expect(await sha256Hex(decrypted)).toBe(await sha256Hex(await original.arrayBuffer()));
+    });
+
+    it('needs the passkey as well as the link when the bundle requires one', async () => {
+        const backend = createFakeBackend(PART_SIZE);
+
+        const shareLink = await executeEncryptedUploadWorkflow(FORM_VALUES, [patternFile('small.pdf', SMALL_FILE_BYTES, SMALL_SEED)], vi.fn());
+
+        const confirm = backend.confirmed[0];
+        const withoutPasskey = await recipientKeys(shareLink, confirm);
+        const wrongPasskey = await recipientKeys(shareLink, confirm, `${PASSWORD}x`);
+        expect([withoutPasskey.kAuth, wrongPasskey.kAuth]).not.toContain(confirm.password);
+        await expect(cryptoEngine.unwrapMasterKey(confirm.keyEnvelope!, withoutPasskey.kWrap)).rejects.toThrow();
+        await expect(cryptoEngine.unwrapMasterKey(confirm.keyEnvelope!, wrongPasskey.kWrap)).rejects.toThrow();
+    });
+
+    it('refuses to start when a passkey is required but missing', async () => {
+        const backend = createFakeBackend(PART_SIZE);
+
+        await expect(executeEncryptedUploadWorkflow({ ...FORM_VALUES, password: '' }, [patternFile('small.pdf', SMALL_FILE_BYTES, SMALL_SEED)], vi.fn()))
+            .rejects.toThrow('Enter a passkey');
+        expect(uploadApi.getPresignedUrl).not.toHaveBeenCalled();
+        expect(backend.confirmed).toHaveLength(0);
     });
 
     it('sends no encrypted title when the bundle has none', async () => {

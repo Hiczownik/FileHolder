@@ -12,6 +12,9 @@ import { isExtensionForbidden } from "../../../shared/utils/fileNameSafety";
 import { formatSize } from "../../../shared/utils/formatSize";
 import { createConcurrencyLimiter } from "../../../shared/utils/concurrencyLimiter";
 import { abortError } from "./rateLimitRetry";
+import { buildShareLink } from "../../../shared/utils/shareLink";
+
+export const PASSKEY_REQUIRED_MESSAGE = 'Enter a passkey, or turn off "Also require a passkey".';
 
 const PERCENT_COMPLETE = 100;
 // Progress stops short of 100% until every file has finished uploading.
@@ -166,7 +169,7 @@ export async function executeStandardUploadWorkflow(
         isEncrypted: false,
     });
 
-    return `${window.location.origin}/f/${shareToken}`;
+    return buildShareLink(shareToken);
 }
 
 export async function executeEncryptedUploadWorkflow(
@@ -175,8 +178,8 @@ export async function executeEncryptedUploadWorkflow(
     onProgress: (percent: number) => void,
     signal?: AbortSignal
 ): Promise<string> {
-    if (!formValues.password) {
-        throw new Error('A passkey is required for Zero-Knowledge End-to-End Encryption.');
+    if (formValues.requirePasskey && !formValues.password) {
+        throw new Error(PASSKEY_REQUIRED_MESSAGE);
     }
 
     // The server only sees "{uuid}.enc" here, so it can't reject these; recipients would refuse the bundle.
@@ -189,8 +192,10 @@ export async function executeEncryptedUploadWorkflow(
 
     // Nothing is encrypted yet: each file is encrypted part by part as it uploads, so memory doesn't grow
     // with file size. The encrypted sizes are known up front, so the upload URLs can be signed for them.
-    // The title is encrypted with the files: the server never receives it in plain text.
-    const prepared = await prepareEncryptedBundle(files, formValues.password, formValues.title);
+    // The title is encrypted with the files: the server never receives it in plain text. A password typed before
+    // the passkey was turned off is ignored: the field is hidden then, so the uploader no longer sees it.
+    const passkey = formValues.requirePasskey ? formValues.password : undefined;
+    const prepared = await prepareEncryptedBundle(files, passkey, formValues.title);
 
     const presign = await uploadApi.getPresignedUrl({
         files: prepared.files.map((item) => ({
@@ -279,7 +284,8 @@ export async function executeEncryptedUploadWorkflow(
         encryptedManifest: prepared.encryptedManifest,
         keyEnvelope: prepared.keyEnvelope,
         keySalt: prepared.keySalt,
+        keyMode: prepared.keyMode,
     });
 
-    return `${window.location.origin}/f/${shareToken}`;
+    return buildShareLink(shareToken, prepared.linkKey);
 }

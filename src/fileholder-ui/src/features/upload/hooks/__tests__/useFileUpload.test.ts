@@ -6,6 +6,9 @@ import { STANDARD_MAX_TOTAL_BYTES } from '../../types';
 import { encryptedSize } from '../../../../shared/utils/crypto/streamCipher';
 
 describe('useFileUpload Hook (Vertical Slice)', () => {
+  const EXPIRE_IN_HOURS = 24;
+  const MAX_DOWNLOADS = 5;
+  const SMALL_FILE_BYTES = 50;
   beforeEach(() => {
     vi.restoreAllMocks();
   });
@@ -43,7 +46,8 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     expect(result.current.uploadState.status).toBe('success');
     if (result.current.uploadState.status === 'success') {
       expect(result.current.uploadState.shareLink).toContain('/f/share_abc');
-      expect(result.current.uploadState.isEncrypted).toBe(false);
+      expect(result.current.uploadState.shareLink).not.toContain('#');
+      expect(result.current.uploadState.keyMode).toBeUndefined();
     }
   });
 
@@ -126,7 +130,7 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
 
     await act(async () => {
       await result.current.upload(
-        { title: 'Encrypted Vault', expireInHours: 24, maxDownloads: 5, isEncrypted: true, password: 'VaultPassword123!' },
+        { title: 'Encrypted Vault', expireInHours: 24, maxDownloads: 5, isEncrypted: true, requirePasskey: true, password: 'VaultPassword123!' },
         [file1, file2]
       );
     });
@@ -134,8 +138,10 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     expect(result.current.uploadState.status).toBe('success');
     if (result.current.uploadState.status === 'success') {
       expect(result.current.uploadState.shareLink).toContain('/f/share_enc_abc');
-      expect(result.current.uploadState.shareLink).not.toContain('#key=');
-      expect(result.current.uploadState.isEncrypted).toBe(true);
+      // The link carries the link key in its fragment; the passkey goes nowhere near it.
+      expect(result.current.uploadState.shareLink).toContain('/f/share_enc_abc#k=');
+      expect(result.current.uploadState.shareLink).not.toContain('VaultPassword123!');
+      expect(result.current.uploadState.keyMode).toBe('LinkKeyAndPasskey');
 
       expect(confirmUploadSpy).toHaveBeenCalledTimes(1);
       const confirmArg = confirmUploadSpy.mock.calls[0][0];
@@ -148,6 +154,42 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
       expect(typeof confirmArg.encryptedManifest).toBe('string');
       expect(confirmArg.password).not.toBe('VaultPassword123!'); // kAuth token is sent, not raw password
     }
+  });
+
+  it('uploads a link-only encrypted bundle without a passkey', async () => {
+    vi.spyOn(uploadApi, 'getPresignedUrl').mockResolvedValue({
+      uploadToken: 'token_link',
+      items: [{ fileName: 'mock.enc', uploadUrl: 'http://test.url/enc', storageKey: 'uploads/enc_key', uploadMode: 'Single' }],
+    });
+    vi.spyOn(uploadApi, 'uploadDirectToS3').mockResolvedValue();
+    const confirmUploadSpy = vi.spyOn(uploadApi, 'confirmUpload').mockResolvedValue('share_link_only');
+
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.upload(
+        { title: '', expireInHours: EXPIRE_IN_HOURS, maxDownloads: MAX_DOWNLOADS, isEncrypted: true, requirePasskey: false },
+        [createDummyFile('doc.txt', SMALL_FILE_BYTES)]
+      );
+    });
+
+    expect(result.current.uploadState).toMatchObject({ status: 'success', keyMode: 'LinkKey' });
+    expect(confirmUploadSpy.mock.calls[0][0].keyMode).toBe('LinkKey');
+  });
+
+  it('refuses to start when a passkey is required but empty', async () => {
+    const presignSpy = vi.spyOn(uploadApi, 'getPresignedUrl');
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.upload(
+        { title: '', expireInHours: EXPIRE_IN_HOURS, maxDownloads: MAX_DOWNLOADS, isEncrypted: true, requirePasskey: true, password: '' },
+        [createDummyFile('doc.txt', SMALL_FILE_BYTES)]
+      );
+    });
+
+    expect(presignSpy).not.toHaveBeenCalled();
+    expect(result.current.uploadState).toEqual({ status: 'error', message: 'Enter a passkey, or turn off "Also require a passkey".' });
   });
 
   it('refuses an encrypted upload of a blocked extension before encrypting or calling the server', async () => {
@@ -170,8 +212,6 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
 
   const FIVE_GB_IN_GB = 5;
   const TWO_GB_IN_GB = 2;
-  const EXPIRE_IN_HOURS = 24;
-  const MAX_DOWNLOADS = 5;
 
   // Only the reported size matters to the limit checks, so no real content is allocated.
   const createSizedFile = (name: string, size: number): File => {

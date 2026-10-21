@@ -5,6 +5,13 @@ import { UploadForm } from '../UploadForm';
 import type { UploadState } from '../../types';
 
 describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
+    const BYTES_PER_KB = 1024;
+    const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
+    const LARGE_FILE_MB = 110;
+    const SMALL_FILE_BYTES = BYTES_PER_KB;
+    const LARGE_FILE_BYTES = LARGE_FILE_MB * BYTES_PER_MB;
+    const PASSKEY_PLACEHOLDER = 'Enter or generate a secure passkey';
+
     const createMockFile = (name: string, size: number): File => {
         const file = new File(['dummy_content'], name, { type: 'application/octet-stream' });
         Object.defineProperty(file, 'size', { value: size, configurable: true });
@@ -13,85 +20,94 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
 
     const idleUploadState: UploadState = { status: 'idle' };
 
-    it('requires password and disables submit when E2EE is enabled without a passkey', async () => {
-        const user = userEvent.setup();
-        render(<UploadForm uploadState={idleUploadState} onUpload={vi.fn()} />);
-
+    const renderWithFiles = (files: readonly File[] = [createMockFile('document.pdf', SMALL_FILE_BYTES)]) => {
+        const onUpload = vi.fn();
+        render(<UploadForm uploadState={idleUploadState} onUpload={onUpload} />);
         const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-        const file = createMockFile('document.pdf', 1024);
-        fireEvent.change(fileInput, { target: { files: [file] } });
+        fireEvent.change(fileInput, { target: { files } });
+        return { onUpload, submitButton: screen.getByRole('button', { name: 'Generate Shareable Link' }) };
+    };
 
-        const submitButton = screen.getByRole('button', { name: /Generate Shareable Link/i });
+    const e2eeCheckbox = (): HTMLElement => screen.getByRole('checkbox', { name: 'End-to-end encryption' });
+    const passkeyCheckbox = (): HTMLElement => screen.getByRole('checkbox', { name: 'Also require a passkey' });
+
+    it('needs no passkey for an encrypted bundle by default: the link carries the key', async () => {
+        const user = userEvent.setup();
+        const { onUpload, submitButton } = renderWithFiles();
+
+        await user.click(e2eeCheckbox());
+
+        expect(passkeyCheckbox()).not.toBeChecked();
+        expect(screen.queryByPlaceholderText(PASSKEY_PLACEHOLDER)).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Generate Secure Passkey' })).not.toBeInTheDocument();
+        expect(screen.getByText('The link is the secret', { exact: false })).toBeInTheDocument();
         expect(submitButton).toBeEnabled();
 
-        // Enable E2EE
-        const checkbox = screen.getByRole('checkbox');
-        await user.click(checkbox);
-
-        // Password is now required for E2EE; submit button must be disabled
-        expect(submitButton).toBeDisabled();
-        expect(screen.getByText(/Vault Passkey \(Required for E2EE\)/i)).toBeInTheDocument();
+        await user.click(submitButton);
+        expect(onUpload).toHaveBeenCalledWith(expect.objectContaining({ isEncrypted: true, requirePasskey: false }), expect.any(Array));
     });
 
-    it('enables submit button when passkey is entered for E2EE', async () => {
+    it('offers the passkey option only for encrypted bundles', async () => {
         const user = userEvent.setup();
-        render(<UploadForm uploadState={idleUploadState} onUpload={vi.fn()} />);
+        renderWithFiles();
 
-        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-        const file = createMockFile('document.pdf', 1024);
-        fireEvent.change(fileInput, { target: { files: [file] } });
+        expect(screen.queryByRole('checkbox', { name: 'Also require a passkey' })).not.toBeInTheDocument();
+        expect(screen.getByPlaceholderText('Leave empty for public link')).toBeInTheDocument();
 
-        const checkbox = screen.getByRole('checkbox');
-        await user.click(checkbox);
+        await user.click(e2eeCheckbox());
+        expect(passkeyCheckbox()).toBeInTheDocument();
+    });
 
-        const passwordInput = screen.getByPlaceholderText(/Enter or generate a secure passkey/i);
-        await user.type(passwordInput, 'MySecurePass123!');
-
-        const submitButton = screen.getByRole('button', { name: /Generate Shareable Link/i });
+    it('requires a passkey and disables submit when "Also require a passkey" is on without one', async () => {
+        const user = userEvent.setup();
+        const { submitButton } = renderWithFiles();
         expect(submitButton).toBeEnabled();
+
+        await user.click(e2eeCheckbox());
+        await user.click(passkeyCheckbox());
+
+        expect(submitButton).toBeDisabled();
+        expect(screen.getByText('Passkey (Required)')).toBeInTheDocument();
+        expect(screen.getByText("The link alone won't open the files", { exact: false })).toBeInTheDocument();
+    });
+
+    it('enables submit once the required passkey is entered', async () => {
+        const user = userEvent.setup();
+        const { onUpload, submitButton } = renderWithFiles();
+
+        await user.click(e2eeCheckbox());
+        await user.click(passkeyCheckbox());
+        await user.type(screen.getByPlaceholderText(PASSKEY_PLACEHOLDER), 'MySecurePass123!');
+
+        expect(submitButton).toBeEnabled();
+        await user.click(submitButton);
+        expect(onUpload).toHaveBeenCalledWith(
+            expect.objectContaining({ isEncrypted: true, requirePasskey: true, password: 'MySecurePass123!' }),
+            expect.any(Array));
     });
 
     it('generates and populates a secure passkey when clicking Generate Secure Passkey', async () => {
         const user = userEvent.setup();
-        render(<UploadForm uploadState={idleUploadState} onUpload={vi.fn()} />);
+        const { submitButton } = renderWithFiles();
 
-        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-        const file = createMockFile('document.pdf', 1024);
-        fireEvent.change(fileInput, { target: { files: [file] } });
+        await user.click(e2eeCheckbox());
+        await user.click(passkeyCheckbox());
+        await user.click(screen.getByRole('button', { name: 'Generate Secure Passkey' }));
 
-        const checkbox = screen.getByRole('checkbox');
-        await user.click(checkbox);
-
-        const generateBtn = screen.getByRole('button', { name: /Generate Secure Passkey/i });
-        await user.click(generateBtn);
-
-        const passwordInput = screen.getByPlaceholderText(/Enter or generate a secure passkey/i) as HTMLInputElement;
+        const passwordInput = screen.getByPlaceholderText(PASSKEY_PLACEHOLDER) as HTMLInputElement;
+        // Three dash-separated groups of four: matches "AB12-CD34-EF56"; rejects "ab12-cd34".
+        // https://regex101.com/?regex=%5E%5BA-Z0-9%5D%7B4%7D-%5BA-Z0-9%5D%7B4%7D-%5BA-Z0-9%5D%7B4%7D%24&testString=AB12-CD34-EF56%0Aab12-cd34
         expect(passwordInput.value).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/);
-
-        const submitButton = screen.getByRole('button', { name: /Generate Shareable Link/i });
         expect(submitButton).toBeEnabled();
     });
 
     it('allows multi-file payloads exceeding 200 MB without warnings under streaming E2EE', async () => {
         const user = userEvent.setup();
-        render(<UploadForm uploadState={idleUploadState} onUpload={vi.fn()} />);
+        const { submitButton } = renderWithFiles([createMockFile('file1.pdf', LARGE_FILE_BYTES), createMockFile('file2.pdf', LARGE_FILE_BYTES)]);
 
-        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-        const file1 = createMockFile('file1.pdf', 110 * 1024 * 1024);
-        const file2 = createMockFile('file2.pdf', 110 * 1024 * 1024);
-        fireEvent.change(fileInput, { target: { files: [file1, file2] } });
+        await user.click(e2eeCheckbox());
 
-        const checkbox = screen.getByRole('checkbox');
-        await user.click(checkbox);
-
-        // No 200 MB warning banner rendered
-        expect(screen.queryByText(/limits client-side bundling to 200 MB/i)).not.toBeInTheDocument();
-
-        // Provide password
-        const passwordInput = screen.getByPlaceholderText(/Enter or generate a secure passkey/i);
-        await user.type(passwordInput, 'Passkey123!');
-
-        const submitButton = screen.getByRole('button', { name: /Generate Shareable Link/i });
+        expect(screen.queryByText('limits client-side bundling to 200 MB', { exact: false })).not.toBeInTheDocument();
         expect(submitButton).toBeEnabled();
     });
 });
