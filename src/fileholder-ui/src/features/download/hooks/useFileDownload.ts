@@ -9,7 +9,7 @@ import { countingStream, type DownloadProgress } from "../../../shared/utils/dow
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import { isConnectionLost } from "../../../shared/utils/connectionErrors";
 import { isAxiosError } from "axios";
-import { makeZip } from "client-zip";
+import { makeZip, predictLength } from "client-zip";
 
 const HTTP_UNAUTHORIZED = 401;
 // The server-side ZIP is a page navigation, which can't be retried on a 401 like an API call. A stored
@@ -17,6 +17,7 @@ const HTTP_UNAUTHORIZED = 401;
 const ZIP_SESSION_MIN_REMAINING_MS = 60_000;
 interface ZipEntry {
     readonly name: string;
+    readonly size: number;
     readonly input: ReadableStream<Uint8Array>;
 }
 
@@ -201,10 +202,14 @@ export const useFileDownload = (shareToken?: string) => {
                 }
 
                 const counter = trackProgress(fileMeta?.sizeBytes ?? null);
-                const decrypted = (await openDecryptedFile(shareToken, fileId)).pipeThrough(counter());
+                const token = shareToken;
 
-                // Written to disk as it decrypts: memory stays at about one chunk.
-                const saved = await saveStreamToDisk(decrypted, { fileName, sizeBytes: fileMeta?.sizeBytes });
+                // Written to disk as it decrypts: memory stays at about one chunk. Only opened (and counted as a
+                // download) once a saving method is ready to write it.
+                const saved = await saveStreamToDisk(
+                    async () => (await openDecryptedFile(token, fileId)).pipeThrough(counter()),
+                    { fileName, sizeBytes: fileMeta?.sizeBytes }
+                );
                 // Says which saving method this browser used and why it skipped the others; handy on a new browser or device.
                 const report = `Saved "${fileName}" ${describeSaveResult(saved)}.`;
                 console.info(`[FileHolder] ${report}`);
@@ -237,22 +242,26 @@ export const useFileDownload = (shareToken?: string) => {
                 const token = shareToken;
                 const files = metadata.files;
 
-                // Before the session opens, as for single files; the ZIP is about the size of its files together.
-                const totalBytes = files.reduce((total, file) => total + file.sizeBytes, 0);
-                const tooLarge = memoryOnlyLimitProblem(totalBytes);
+                // The archive's exact size, headers and Zip64 records included, from the names and sizes alone.
+                // Checked before the session opens, as for single files, and handed to the saving method so the
+                // memory cap and storage quota are checked against what will really be written.
+                const zipBytes = Number(predictLength(files.map((file) => ({ name: file.fileName, size: file.sizeBytes }))));
+                const tooLarge = memoryOnlyLimitProblem(zipBytes);
                 if (tooLarge) {
                     setError(tooLarge);
                     return;
                 }
-                const counter = trackProgress(totalBytes);
+                // Progress counts the files' decrypted bytes, not the ZIP's own headers.
+                const counter = trackProgress(files.reduce((total, file) => total + file.sizeBytes, 0));
 
                 // client-zip pulls entries one at a time as it writes the archive, so each file is fetched and
                 // decrypted only when its turn comes. That keeps them strictly sequential too: the first file
-                // opens the download session and the rest reuse it, instead of each consuming a download.
+                // opens the download session and the rest reuse it, instead of each consuming a download. Each
+                // entry declares its size, as predictLength assumed.
                 async function* decryptedEntries(index: number): AsyncGenerator<ZipEntry> {
                     const file = files[index];
                     if (!file) return;
-                    yield { name: file.fileName, input: (await openDecryptedFile(token, file.id)).pipeThrough(counter()) };
+                    yield { name: file.fileName, size: file.sizeBytes, input: (await openDecryptedFile(token, file.id)).pipeThrough(counter()) };
                     yield* decryptedEntries(index + 1);
                 }
 
@@ -262,7 +271,7 @@ export const useFileDownload = (shareToken?: string) => {
                 const safeTitle = metadata.title ? metadata.title.replace(/[^\w.-]/g, '_') : 'bundle';
                 const zipName = `${safeTitle}_${shareToken}.zip`;
                 // Entries are stored uncompressed (encrypted content doesn't compress), with Zip64 past 4 GB.
-                const saved = await saveStreamToDisk(makeZip(decryptedEntries(0)), { fileName: zipName });
+                const saved = await saveStreamToDisk(async () => makeZip(decryptedEntries(0)), { fileName: zipName, sizeBytes: zipBytes });
                 const report = `Saved "${zipName}" ${describeSaveResult(saved)}.`;
                 console.info(`[FileHolder] ${report}`);
                 setLastSaveReport(report);

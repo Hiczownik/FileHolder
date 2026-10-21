@@ -1,5 +1,5 @@
 import { attachmentDisposition } from './contentDisposition';
-import { describeError, unavailable, type SaveOutcome, type StreamedFile } from './saveOutcome';
+import { describeError, unavailable, type SaveOutcome, type StreamedFile, type StreamSource } from './saveOutcome';
 
 /**
  * Page side of public/download-sw.js (the protocol is described there). The worker serves the stream as an
@@ -67,10 +67,17 @@ const registerWorker = async (): Promise<ServiceWorker | null> => {
     }
 };
 
-/** Registers the worker once per page load and reuses it. */
-export const getDownloadWorker = (): Promise<ServiceWorker | null> => {
+/**
+ * Registers the worker once per page load and reuses it. Only a worker is kept: after a failure or a slow
+ * activation, the next download asks again, by which time the worker may well be active.
+ */
+export const getDownloadWorker = async (): Promise<ServiceWorker | null> => {
     activeWorker ??= registerWorker();
-    return activeWorker;
+    const worker = await activeWorker;
+    if (!worker) {
+        activeWorker = null;
+    }
+    return worker;
 };
 
 /** Opens the download URL in a hidden iframe, so the page itself never navigates away. */
@@ -85,12 +92,12 @@ export const openInHiddenIframe = (url: string): void => {
 const defaultDeps: ServiceWorkerSavingDeps = { getWorker: getDownloadWorker, openUrl: openInHiddenIframe };
 
 /**
- * Steps aside (with a reason) without having read from the stream when the worker can't serve this download, so
- * the caller can still save the stream another way. Once the worker reports the browser has the response,
- * there is no turning back: errors reject (and fail the browser's download) instead.
+ * Steps aside (with a reason) without opening the stream when the worker can't serve this download, so the
+ * caller can still save it another way. The stream is only opened once the worker reports the browser has the
+ * response; from then on there is no turning back: errors reject (and fail the browser's download) instead.
  */
 export async function saveViaServiceWorker(
-    stream: ReadableStream<Uint8Array>,
+    open: StreamSource,
     file: StreamedFile,
     deps: ServiceWorkerSavingDeps = defaultDeps
 ): Promise<SaveOutcome> {
@@ -135,6 +142,12 @@ export async function saveViaServiceWorker(
         }
 
         handedOver = true;
+        const stream = await open().catch((err: unknown) => {
+            // The browser is already waiting on this download, so it is failed there too.
+            port.postMessage({ type: 'error', message: err instanceof Error ? err.message : 'The download failed.' });
+            port.close();
+            throw err;
+        });
         await pump(stream.getReader(), port, nextMessage);
         return 'saved';
     } finally {

@@ -8,7 +8,14 @@ export interface StreamedFile {
     readonly sizeBytes?: number;
 }
 
-/** A method stepped aside without reading from the stream, so the next one can still use it. */
+/**
+ * Opens the stream to save. A method calls it only once it is ready to write (the worker serves the download, a
+ * file was picked, a file was created, or the content fits in memory): for a download, opening the stream is
+ * what opens the download session and counts the download, so a method that can't save never costs one.
+ */
+export type StreamSource = () => Promise<ReadableStream<Uint8Array>>;
+
+/** A method stepped aside without opening the stream (or, if it did, without reading from it), so the next one can still use it. */
 export interface Unavailable {
     readonly unavailable: string;
 }

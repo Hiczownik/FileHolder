@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     describeSaveResult,
     isWebKitUserAgent,
     MAX_IN_MEMORY_BYTES,
     memoryOnlyLimitProblem,
     planSaveMethods,
+    removeStaleOpfsFiles,
     saveInMemory,
     saveStreamToDisk,
     unavailable,
@@ -39,6 +40,9 @@ const streamOf = (...chunks: readonly Uint8Array[]): ReadableStream<Uint8Array> 
             controller.close();
         },
     });
+
+/** A source that opens a fresh stream of the given chunks. */
+const sourceOf = (...chunks: readonly Uint8Array[]) => async (): Promise<ReadableStream<Uint8Array>> => streamOf(...chunks);
 
 const readAll = async (stream: ReadableStream<Uint8Array>): Promise<number[]> =>
     Array.from(new Uint8Array(await new Blob(await collect(stream.getReader(), []) as BlobPart[]).arrayBuffer()));
@@ -88,15 +92,15 @@ describe('saveStreamToDisk', () => {
         vi.mocked(saveBlobAsFile).mockClear();
     });
 
-    it('hands the untouched stream on when a method is unavailable', async () => {
+    it('hands the unopened stream on when a method is unavailable', async () => {
         const received: number[][] = [];
         const methods: SaveMethod[] = [
             { name: 'service-worker', save: async () => unavailable('the download worker did not accept the download') },
-            { name: 'opfs', save: async (stream) => { received.push(await readAll(stream)); return 'saved'; } },
+            { name: 'opfs', save: async (open) => { received.push(await readAll(await open())); return 'saved'; } },
         ];
         const plan = { methods, skipped: [{ method: 'file-system-access' as const, reason: 'no showSaveFilePicker' }] };
 
-        const result = await saveStreamToDisk(streamOf(BYTES), { fileName: 'a.bin' }, plan);
+        const result = await saveStreamToDisk(sourceOf(BYTES), { fileName: 'a.bin' }, plan);
 
         expect(received).toEqual([Array.from(BYTES)]);
         expect(result).toEqual({
@@ -110,6 +114,18 @@ describe('saveStreamToDisk', () => {
             'via opfs. Skipped: file-system-access (no showSaveFilePicker), service-worker (the download worker did not accept the download)');
     });
 
+    it('opens the stream only once, even when a method opened it and still stepped aside', async () => {
+        const source = vi.fn(async () => streamOf(BYTES));
+        const methods: SaveMethod[] = [
+            { name: 'service-worker', save: async (open) => { await open(); return unavailable('changed its mind'); } },
+            { name: 'memory', save: async (open) => { await readAll(await open()); return 'saved'; } },
+        ];
+
+        await saveStreamToDisk(source, { fileName: 'a.bin' }, { methods, skipped: [] });
+
+        expect(source).toHaveBeenCalledTimes(1);
+    });
+
     it('does not fall back once a method has failed part way, and cancels the stream', async () => {
         const cancel = vi.fn();
         const source = new ReadableStream<Uint8Array>({ pull: (controller) => controller.enqueue(BYTES), cancel });
@@ -117,8 +133,8 @@ describe('saveStreamToDisk', () => {
         const methods: SaveMethod[] = [
             {
                 name: 'service-worker',
-                save: async (stream) => {
-                    const reader = stream.getReader();
+                save: async (open) => {
+                    const reader = (await open()).getReader();
                     await reader.read();
                     reader.releaseLock();
                     throw new Error('disk full');
@@ -127,13 +143,29 @@ describe('saveStreamToDisk', () => {
             { name: 'memory', save: fallback },
         ];
 
-        await expect(saveStreamToDisk(source, { fileName: 'a.bin' }, { methods, skipped: [] })).rejects.toThrow('disk full');
+        await expect(saveStreamToDisk(async () => source, { fileName: 'a.bin' }, { methods, skipped: [] })).rejects.toThrow('disk full');
         expect(fallback).not.toHaveBeenCalled();
         expect(cancel).toHaveBeenCalled();
     });
 
-    it('fails when no method can save the file', async () => {
-        await expect(saveStreamToDisk(streamOf(BYTES), { fileName: 'a.bin' }, { methods: [], skipped: [] })).rejects.toThrow('no way to save');
+    it('fails without opening the stream when no method can save the file', async () => {
+        const source = vi.fn(sourceOf(BYTES));
+
+        await expect(saveStreamToDisk(source, { fileName: 'a.bin' }, { methods: [], skipped: [] })).rejects.toThrow('no way to save');
+        expect(source).not.toHaveBeenCalled();
+    });
+
+    // Issue #25: the service worker was planned, but failed when the download started, leaving only memory.
+    it('never opens (and so never counts) a download that turns out to be too large for the only method left', async () => {
+        const source = vi.fn(sourceOf(BYTES));
+        const methods: SaveMethod[] = [
+            { name: 'service-worker', save: async () => unavailable('the download worker could not be registered') },
+            { name: 'memory', save: (open, file) => saveInMemory(open, file) },
+        ];
+
+        await expect(saveStreamToDisk(source, { fileName: 'big.bin', sizeBytes: MAX_IN_MEMORY_BYTES + 1 }, { methods, skipped: [] }))
+            .rejects.toThrow('can only save up to');
+        expect(source).not.toHaveBeenCalled();
     });
 });
 
@@ -163,23 +195,76 @@ describe('saveInMemory', () => {
     });
 
     it('saves everything the stream delivers under the given name', async () => {
-        expect(await saveInMemory(streamOf(BYTES.subarray(0, SMALL_CAP), BYTES.subarray(SMALL_CAP)), { fileName: 'a.bin' })).toBe('saved');
+        expect(await saveInMemory(sourceOf(BYTES.subarray(0, SMALL_CAP), BYTES.subarray(SMALL_CAP)), { fileName: 'a.bin' })).toBe('saved');
 
         const [blob, name] = vi.mocked(saveBlobAsFile).mock.calls[0];
         expect(name).toBe('a.bin');
         expect(Array.from(new Uint8Array(await blob.arrayBuffer()))).toEqual(Array.from(BYTES));
     });
 
-    it('refuses a file declared larger than the cap before reading anything', async () => {
-        const cancel = vi.fn();
-        const source = new ReadableStream<Uint8Array>({ cancel });
+    it('refuses a file declared larger than the cap without opening the stream', async () => {
+        const source = vi.fn(sourceOf(BYTES));
 
         await expect(saveInMemory(source, { fileName: 'a.bin', sizeBytes: SMALL_CAP + 1 }, SMALL_CAP)).rejects.toThrow('can only save up to');
-        expect(cancel).toHaveBeenCalled();
+        expect(source).not.toHaveBeenCalled();
     });
 
     it('stops at the cap even when the declared size was too small', async () => {
-        await expect(saveInMemory(streamOf(BYTES), { fileName: 'a.bin', sizeBytes: 1 }, SMALL_CAP)).rejects.toThrow('can only save up to');
+        await expect(saveInMemory(sourceOf(BYTES), { fileName: 'a.bin', sizeBytes: 1 }, SMALL_CAP)).rejects.toThrow('can only save up to');
         expect(saveBlobAsFile).not.toHaveBeenCalled();
+    });
+});
+
+describe('removeStaleOpfsFiles', () => {
+    const PREFIX = 'fileholder-download-';
+    const NOW = Date.parse('2026-10-21T12:00:00Z');
+    const TWO_HOURS_MS = 7_200_000;
+    const TWO_DAYS_MS = 172_800_000;
+    const TWO_HOURS_AGO = NOW - TWO_HOURS_MS;
+    const TWO_DAYS_AGO = NOW - TWO_DAYS_MS;
+
+    const fakeRoot = (names: readonly string[]): { readonly root: FileSystemDirectoryHandle; readonly removed: string[] } => {
+        const removed: string[] = [];
+        const root = {
+            keys: async function* keys(): AsyncGenerator<string> {
+                yield* names;
+            },
+            removeEntry: async (name: string) => {
+                removed.push(name);
+            },
+        } as unknown as FileSystemDirectoryHandle;
+        return { root, removed };
+    };
+
+    const withLocks = (heldNames: readonly string[] | null): void => {
+        const locks = heldNames === null ? undefined : { query: async () => ({ held: heldNames.map((name) => ({ name })) }) };
+        Object.defineProperty(navigator, 'locks', { value: locks, configurable: true });
+    };
+
+    afterEach(() => {
+        Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true });
+    });
+
+    // Issue #42: a download running in another tab for over an hour had its file deleted under it.
+    it('keeps files another tab still holds, however old, and removes the ones no tab holds', async () => {
+        const running = `${PREFIX}${TWO_DAYS_AGO}-a`;
+        const abandoned = `${PREFIX}${TWO_HOURS_AGO}-b`;
+        withLocks([running]);
+        const { root, removed } = fakeRoot([running, abandoned, 'something-else']);
+
+        await removeStaleOpfsFiles(root, NOW);
+
+        expect(removed).toEqual([abandoned]);
+    });
+
+    it('falls back to a day-old cutoff where Web Locks are missing', async () => {
+        const recent = `${PREFIX}${TWO_HOURS_AGO}-a`;
+        const old = `${PREFIX}${TWO_DAYS_AGO}-b`;
+        withLocks(null);
+        const { root, removed } = fakeRoot([recent, old]);
+
+        await removeStaleOpfsFiles(root, NOW);
+
+        expect(removed).toEqual([old]);
     });
 });

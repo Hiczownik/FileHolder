@@ -9,6 +9,7 @@ import {
     type SaveResult,
     type SkippedMethod,
     type StreamedFile,
+    type StreamSource,
 } from './saveOutcome';
 
 /**
@@ -20,15 +21,17 @@ import {
  *   3. opfs                 written to the site's private disk storage, then downloaded: Safari (macOS, iOS)
  *   4. memory               collected in memory first, capped at MAX_IN_MEMORY_BYTES: anything else
  *
- * A method steps aside (with a reason) only if it has not read from the stream, so the next one can still
- * use it. The reasons are reported with the result, to show which browser feature was missing.
+ * A method only opens the stream once it is ready to write it, and steps aside (with a reason) only if it has
+ * not read from it, so the next one can still use it. A download that no method can save is never opened, so
+ * it never uses up one of the bundle's downloads. The reasons are reported with the result, to show which
+ * browser feature was missing.
  */
 
 export * from './saveOutcome';
 
 export interface SaveMethod {
     readonly name: SaveMethodName;
-    readonly save: (stream: ReadableStream<Uint8Array>, file: StreamedFile) => Promise<SaveOutcome>;
+    readonly save: (open: StreamSource, file: StreamedFile) => Promise<SaveOutcome>;
 }
 
 /** The methods to try, in order, and those left out up front because the browser lacks what they need. */
@@ -108,7 +111,11 @@ interface NavigatorWithActivation {
     readonly userActivation?: { readonly isActive: boolean };
 }
 
-async function saveViaFileSystemAccess(stream: ReadableStream<Uint8Array>, file: StreamedFile): Promise<SaveOutcome> {
+interface RemovableHandle {
+    readonly remove?: () => Promise<void>;
+}
+
+async function saveViaFileSystemAccess(open: StreamSource, file: StreamedFile): Promise<SaveOutcome> {
     const picker = (window as WindowWithSavePicker).showSaveFilePicker;
     if (!picker) {
         return unavailable('no showSaveFilePicker');
@@ -128,6 +135,12 @@ async function saveViaFileSystemAccess(stream: ReadableStream<Uint8Array>, file:
         return unavailable(describeError(err));
     }
 
+    // Opened only now, so the dialog appeared straight after the click, before any network round trip.
+    const stream = await open().catch(async (err: unknown) => {
+        // Some browsers create the picked file at once; don't leave it behind empty. Best effort.
+        await (handle as RemovableHandle).remove?.().catch(() => undefined);
+        throw err;
+    });
     // pipeTo aborts the writable if the stream fails, so a failed download never leaves a partial file behind.
     await stream.pipeTo(await handle.createWritable());
     return 'saved';
@@ -136,13 +149,15 @@ async function saveViaFileSystemAccess(stream: ReadableStream<Uint8Array>, file:
 // ---- opfs ------------------------------------------------------------------------------------------------
 
 const OPFS_PREFIX = 'fileholder-download-';
-// The browser copies the finished file to Downloads from here; it is deleted once that has surely finished.
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
+const MINUTES_PER_HOUR = 60;
 const MS_PER_MINUTE = SECONDS_PER_MINUTE * MS_PER_SECOND;
-const OPFS_DELETE_AFTER_MINUTES = 5;
-// Leftovers from tabs closed before their cleanup ran are removed on the next download.
-const OPFS_STALE_AFTER_MINUTES = 60;
+// The browser copies the finished file to Downloads (or, on iOS, to Files) from here, and nothing reports when
+// that is done. A few GB to Files on a phone can take many minutes, so the file is kept for an hour after.
+const OPFS_DELETE_AFTER_MINUTES = 60;
+// Only used where Web Locks are missing, so a file can't be told to be in use: leftovers older than a day go.
+const OPFS_STALE_WITHOUT_LOCKS_HOURS = 24;
 // Some headroom for the browser's own bookkeeping when checking the storage quota.
 const QUOTA_HEADROOM = 1.1;
 
@@ -151,6 +166,7 @@ const canWrite = (handle: FileSystemFileHandle): boolean =>
     typeof (handle as Partial<FileSystemFileHandle>).createWritable === 'function';
 const canList = (directory: FileSystemDirectoryHandle): boolean =>
     typeof (directory as Partial<FileSystemDirectoryHandle>).keys === 'function';
+const locksOf = (): LockManager | undefined => (navigator as Partial<Navigator>).locks;
 
 /** Deleting is best effort: a leftover file is removed on a later download. */
 async function removeQuietly(root: FileSystemDirectoryHandle, name: string): Promise<void> {
@@ -163,18 +179,41 @@ async function removeQuietly(root: FileSystemDirectoryHandle, name: string): Pro
 
 const opfsTimestamp = (name: string): number => Number(name.slice(OPFS_PREFIX.length).split('-')[0]);
 
+/**
+ * Each OPFS file is marked in use by a Web Lock of the same name, held from before the file exists until it is
+ * deleted. Locks are shared by every tab of the site and released when a tab closes, so the cleanup can tell
+ * a file another tab is still writing or handing over from one a closed tab left behind.
+ */
+const holdLock = (name: string): Promise<() => void> =>
+    new Promise((acquired) => {
+        const locks = locksOf();
+        if (!locks) {
+            acquired(() => undefined);
+            return;
+        }
+        void locks.request(name, () => new Promise<void>((release) => acquired(release)));
+    });
+
+const heldLockNames = async (): Promise<ReadonlySet<string> | null> => {
+    const locks = locksOf();
+    if (!locks) return null;
+    const { held = [] } = await locks.query();
+    return new Set(held.map((lock) => lock.name ?? ''));
+};
+
 const collectNames = async (iterator: AsyncIterator<string>, names: string[]): Promise<string[]> => {
     const { done, value } = await iterator.next();
     return done ? names : collectNames(iterator, [...names, value]);
 };
 
-async function removeStaleOpfsFiles(root: FileSystemDirectoryHandle): Promise<void> {
+/** Removes files no tab is using any more. Exported for tests. */
+export async function removeStaleOpfsFiles(root: FileSystemDirectoryHandle, now: number = Date.now()): Promise<void> {
     if (!canList(root)) return;
-    const names = await collectNames(root.keys(), []);
-    const cutoff = Date.now() - OPFS_STALE_AFTER_MINUTES * MS_PER_MINUTE;
-    await Promise.all(names
-        .filter((name) => name.startsWith(OPFS_PREFIX) && opfsTimestamp(name) < cutoff)
-        .map((name) => removeQuietly(root, name)));
+    const names = (await collectNames(root.keys(), [])).filter((name) => name.startsWith(OPFS_PREFIX));
+    const held = await heldLockNames();
+    const cutoff = now - OPFS_STALE_WITHOUT_LOCKS_HOURS * MINUTES_PER_HOUR * MS_PER_MINUTE;
+    const isStale = (name: string): boolean => (held ? !held.has(name) : opfsTimestamp(name) < cutoff);
+    await Promise.all(names.filter(isStale).map((name) => removeQuietly(root, name)));
 }
 
 async function hasRoomFor(sizeBytes: number | undefined): Promise<boolean> {
@@ -187,45 +226,54 @@ interface PreparedOpfsFile {
     readonly root: FileSystemDirectoryHandle;
     readonly name: string;
     readonly handle: FileSystemFileHandle;
+    /** Deletes the file and lets go of its lock. */
+    readonly discard: () => Promise<void>;
 }
 
-/** Everything that can fail before the stream is read; a failure here only makes OPFS unavailable. */
+/** Everything that can fail before the stream is opened; a failure here only makes OPFS unavailable. */
 async function prepareOpfsFile(file: StreamedFile): Promise<PreparedOpfsFile | string> {
+    // Locked before the file exists, so no cleanup can ever find it unlocked while this tab uses it.
+    const name = `${OPFS_PREFIX}${Date.now()}-${crypto.randomUUID()}`;
+    const releaseLock = await holdLock(name);
     try {
         const root = await navigator.storage.getDirectory();
+        const discard = async (): Promise<void> => {
+            await removeQuietly(root, name);
+            releaseLock();
+        };
         await removeStaleOpfsFiles(root);
         if (!(await hasRoomFor(file.sizeBytes))) {
+            releaseLock();
             return 'not enough storage quota';
         }
 
-        const name = `${OPFS_PREFIX}${Date.now()}-${crypto.randomUUID()}`;
         const handle = await root.getFileHandle(name, { create: true });
         if (!canWrite(handle)) {
-            await removeQuietly(root, name);
+            await discard();
             return 'no createWritable';
         }
-        return { root, name, handle };
+        return { root, name, handle, discard };
     } catch (err: unknown) {
+        releaseLock();
         return describeError(err);
     }
 }
 
-async function saveViaOpfs(stream: ReadableStream<Uint8Array>, file: StreamedFile): Promise<SaveOutcome> {
+async function saveViaOpfs(open: StreamSource, file: StreamedFile): Promise<SaveOutcome> {
     const prepared = await prepareOpfsFile(file);
     if (typeof prepared === 'string') {
         return unavailable(prepared);
     }
 
-    const { root, name, handle } = prepared;
-    const remove = (): Promise<void> => removeQuietly(root, name);
+    const { handle, discard } = prepared;
     try {
-        await stream.pipeTo(await handle.createWritable());
+        await (await open()).pipeTo(await handle.createWritable());
         // The File reads from disk as the browser saves it, so it never has to fit in memory.
         saveBlobAsFile(await handle.getFile(), file.fileName);
-        setTimeout(() => void remove(), OPFS_DELETE_AFTER_MINUTES * MS_PER_MINUTE);
+        setTimeout(() => void discard(), OPFS_DELETE_AFTER_MINUTES * MS_PER_MINUTE);
         return 'saved';
     } catch (err: unknown) {
-        await remove();
+        await discard();
         throw err;
     }
 }
@@ -270,15 +318,15 @@ const collectWithCap = async (
 
 /** Exported for tests, which pass a small cap. */
 export async function saveInMemory(
-    stream: ReadableStream<Uint8Array>,
+    open: StreamSource,
     file: StreamedFile,
     maxBytes: number = MAX_IN_MEMORY_BYTES
 ): Promise<SaveOutcome> {
+    // Refused before the stream is opened, so content that can't fit never uses up a download.
     if (file.sizeBytes !== undefined && file.sizeBytes > maxBytes) {
-        await stream.cancel();
         throw tooLargeForMemory();
     }
-    const parts = await collectWithCap(stream.getReader(), [], 0, maxBytes);
+    const parts = await collectWithCap((await open()).getReader(), [], 0, maxBytes);
     saveBlobAsFile(new Blob(parts as BlobPart[], { type: 'application/octet-stream' }), file.fileName);
     return 'saved';
 }
@@ -289,7 +337,7 @@ const METHODS: Readonly<Record<SaveMethodName, SaveMethod['save']>> = {
     'service-worker': saveViaServiceWorker,
     'file-system-access': saveViaFileSystemAccess,
     opfs: saveViaOpfs,
-    memory: (stream, file) => saveInMemory(stream, file),
+    memory: (open, file) => saveInMemory(open, file),
 };
 
 export function defaultSavePlan(capabilities: BrowserCapabilities = detectCapabilities()): SavePlan {
@@ -297,39 +345,58 @@ export function defaultSavePlan(capabilities: BrowserCapabilities = detectCapabi
     return { methods: methods.map((name) => ({ name, save: METHODS[name] })), skipped };
 }
 
-async function cancelQuietly(stream: ReadableStream<Uint8Array>): Promise<void> {
+async function cancelQuietly(stream: ReadableStream<Uint8Array> | null): Promise<void> {
     try {
-        await stream.cancel();
+        await stream?.cancel();
     } catch {
         // A stream that is locked or already errored needs no cancelling.
     }
 }
 
-/** Tries each method in order; returns the one that saved the file, and why the earlier ones didn't. */
-export async function saveStreamToDisk(
-    stream: ReadableStream<Uint8Array>,
-    file: StreamedFile,
-    plan: SavePlan = defaultSavePlan()
-): Promise<SaveResult> {
+interface OpenOnce {
+    readonly open: StreamSource;
+    readonly cancelIfOpened: () => Promise<void>;
+}
+
+/** Opens the source at most once, so a method that opened it and stepped aside hands the same, unread stream on. */
+const openOnce = (source: StreamSource): OpenOnce => {
+    let opened: Promise<ReadableStream<Uint8Array>> | null = null;
+    return {
+        open: () => {
+            opened ??= source();
+            return opened;
+        },
+        cancelIfOpened: async () => {
+            if (opened) await cancelQuietly(await opened.catch(() => null));
+        },
+    };
+};
+
+async function tryMethods(source: OpenOnce, file: StreamedFile, plan: SavePlan): Promise<SaveResult> {
     const [method, ...rest] = plan.methods;
     if (!method) {
-        await stream.cancel();
+        await source.cancelIfOpened();
         throw new Error('This browser has no way to save the file.');
     }
 
-    let outcome: SaveOutcome;
-    try {
-        outcome = await method.save(stream, file);
-    } catch (err: unknown) {
+    const outcome = await method.save(source.open, file).catch(async (err: unknown) => {
         // The method may have read part of the stream, so no other method can take over.
-        await cancelQuietly(stream);
+        await source.cancelIfOpened();
         throw err;
-    }
+    });
 
     if (outcome === 'saved') {
         return { method: method.name, skipped: plan.skipped };
     }
-    return saveStreamToDisk(stream, file, { methods: rest, skipped: [...plan.skipped, { method: method.name, reason: outcome.unavailable }] });
+    return tryMethods(source, file, { methods: rest, skipped: [...plan.skipped, { method: method.name, reason: outcome.unavailable }] });
+}
+
+/**
+ * Tries each method in order; returns the one that saved the file, and why the earlier ones didn't. The stream is
+ * only opened by the method that saves it, so when none can, the download is never started.
+ */
+export function saveStreamToDisk(source: StreamSource, file: StreamedFile, plan: SavePlan = defaultSavePlan()): Promise<SaveResult> {
+    return tryMethods(openOnce(source), file, plan);
 }
 
 export { DownloadCancelledError };
