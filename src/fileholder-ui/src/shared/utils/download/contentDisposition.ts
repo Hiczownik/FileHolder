@@ -30,8 +30,15 @@ const HEX_RADIX = 16;
 const encodeRfc5987 = (value: string): string =>
     encodeURIComponent(value).replace(NOT_RFC5987_ATTR_CHAR, (char) => `%${char.charCodeAt(0).toString(HEX_RADIX).toUpperCase()}`);
 
+// Matches half a character: a high surrogate not followed by a low one, or a low one not after a high one.
+// "a\uD800b" matches; "a😀b" (an emoji, a whole pair) doesn't.
+// https://regex101.com/?regex=%5B%5CuD800-%5CuDBFF%5D(%3F!%5B%5CuDC00-%5CuDFFF%5D)%7C(%3F%3C!%5B%5CuD800-%5CuDBFF%5D)%5B%5CuDC00-%5CuDFFF%5D&flags=g&testString=a%F0%9F%98%80b
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 export function attachmentDisposition(fileName: string): string {
-    const fallback = asciiFallback(fileName);
+    // Half a character can't be encoded as UTF-8 (encodeURIComponent throws), so it becomes "_", as on the server.
+    const name = fileName.replace(LONE_SURROGATE, '_');
+    const fallback = asciiFallback(name);
     const value = `attachment; filename="${fallback}"`;
-    return fallback === fileName ? value : `${value}; filename*=UTF-8''${encodeRfc5987(fileName)}`;
+    return fallback === name ? value : `${value}; filename*=UTF-8''${encodeRfc5987(name)}`;
 }

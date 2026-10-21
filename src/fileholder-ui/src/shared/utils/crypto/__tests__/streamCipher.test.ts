@@ -287,4 +287,11 @@ describe('stream parameters in the manifest', () => {
 
         expect(() => parseStreamParams(serialized)).toThrow();
     });
+
+    // Found by the property tests (#70): atob threw its own "Invalid character" instead of this module's error.
+    it('refuses a nonce prefix that is not base64url with its own error', () => {
+        const serialized = { ...serializeStreamParams(createStreamParams()), noncePrefix: '\u0000' };
+
+        expect(() => parseStreamParams(serialized)).toThrow('Malformed encryption parameters: the nonce prefix is not base64url.');
+    });
 });

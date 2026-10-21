@@ -100,3 +100,49 @@ describe('makeFileNamesUnique', () => {
         expect(makeFileNamesUnique(['a.txt', 'a (2).txt', 'a.txt'])).toEqual(['a.txt', 'a (2).txt', 'a (3).txt']);
     });
 });
+
+// Brought in line with the server's SanitizeFileName after its property tests (#70) found these there.
+describe('sanitizeFileName, same as the server', () => {
+    const BODY_LIMIT = 190;
+    const BEFORE_LIMIT = BODY_LIMIT - 1;
+    const LONGEST_EXTENSION = 63;
+    const MAX_STORED_LENGTH = 255;
+
+    it('drops trailing dots left once characters are removed', () => {
+        // The control character goes from the extension, which would leave "Ŋॐ.".
+        expect(sanitizeFileName('Ŋॐ.\u001C')).toBe('Ŋॐ');
+    });
+
+    it('is stable when removing characters moves the extension', () => {
+        // One pass gives "._", whose own extension is the whole name.
+        const sanitized = sanitizeFileName('. . $');
+
+        expect(sanitized).toBe('unnamed_file._');
+        expect(sanitizeFileName(sanitized)).toBe(sanitized);
+    });
+
+    it('replaces an emoji with one "_", and half a character with "_"', () => {
+        expect(sanitizeFileName('a\u{1F600}b.txt')).toBe('a_b.txt');
+        expect(sanitizeFileName('a\uD800b.txt')).toBe('a_b.txt');
+    });
+
+    it('never cuts a character in half at the length limit', () => {
+        const body = `${'a'.repeat(BEFORE_LIMIT)}\u{20000}bbb`;
+
+        expect(sanitizeFileName(`${body}.txt`)).toBe(`${'a'.repeat(BEFORE_LIMIT)}.txt`);
+    });
+
+    it('turns a name of only whitespace into "_", as the server does', () => {
+        expect(sanitizeFileName('\t')).toBe('_');
+        expect(sanitizeFileName('   ')).toBe('unnamed_file');
+    });
+
+    it('shortens a maximum-length name to fit its copy number', () => {
+        const longest = `${'a'.repeat(BODY_LIMIT)}.${'b'.repeat(LONGEST_EXTENSION)}`;
+
+        const [, copy] = makeFileNamesUnique([longest, longest.toUpperCase()]);
+
+        expect(copy).toHaveLength(MAX_STORED_LENGTH);
+        expect(copy.endsWith(` (2).${'B'.repeat(LONGEST_EXTENSION)}`)).toBe(true);
+    });
+});

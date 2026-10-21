@@ -73,12 +73,27 @@ export function parseStreamParams(serialized: SerializedStreamParams): StreamPar
     }
     assertValidChunkSize(serialized.chunkSize);
 
-    const noncePrefix = base64Url.decode(serialized.noncePrefix);
+    const noncePrefix = decodeNoncePrefix(serialized.noncePrefix);
     if (noncePrefix.byteLength !== NONCE_PREFIX_BYTES) {
         throw new Error('Malformed encryption parameters: the nonce prefix has the wrong length.');
     }
 
     return { version: STREAM_FORMAT_VERSION, chunkSize: serialized.chunkSize, noncePrefix };
+}
+
+/**
+ * The nonce prefix's bytes. The manifest comes from the uploader, so anything that isn't base64url (atob would throw
+ * its own "Invalid character") is refused with this module's error, like every other bad setting.
+ */
+function decodeNoncePrefix(encoded: unknown): Uint8Array {
+    if (typeof encoded !== 'string') {
+        throw new Error('Malformed encryption parameters: the nonce prefix is missing.');
+    }
+    try {
+        return base64Url.decode(encoded);
+    } catch (err: unknown) {
+        throw new Error('Malformed encryption parameters: the nonce prefix is not base64url.', { cause: err });
+    }
 }
 
 function assertValidChunkSize(chunkSize: number): void {
