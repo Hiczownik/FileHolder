@@ -41,6 +41,7 @@ const stateWith = (files: FileItemMetadata[], overrides: Partial<HookState>): Ho
     error: null,
     lastSaveReport: null,
     downloadProgress: null,
+    promptFor: null,
     setPassword: vi.fn(),
     handleUnlock: vi.fn(),
     handleDownloadFile: vi.fn(),

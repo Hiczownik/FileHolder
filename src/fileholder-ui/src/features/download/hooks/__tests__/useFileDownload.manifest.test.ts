@@ -7,6 +7,7 @@ import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
 import { chunkCount, createStreamParams, encryptChunkRange, MIN_STREAM_CHUNK_SIZE, serializeStreamParams } from '../../../../shared/utils/crypto/streamCipher';
 import { saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
 import type { FileGroupMetadataResponse } from '../../types';
+import { openShareLinkWithNewKey } from './linkKeyFixture';
 
 vi.mock('../../../../shared/utils/downloadUtils', () => ({
     saveBlobAsFile: vi.fn(),
@@ -62,7 +63,7 @@ const readAll = async (reader: ReadableStreamDefaultReader<Uint8Array>, parts: U
  */
 const buildEncryptedBundle = async (files: readonly PlainFile[], withStreamSettings = true) => {
     const salt = cryptoEngine.generateSalt();
-    const { kWrap } = await cryptoEngine.deriveDualKeys(PASSWORD, salt);
+    const { kWrap } = await openShareLinkWithNewKey(salt, PASSWORD);
     const masterKey = await cryptoEngine.generateKey();
 
     const encrypted = await Promise.all(files.map(async (file) => {
@@ -109,6 +110,7 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
             isUnlocked: false,
             isEncrypted: true,
             keySalt: bundle.keySalt,
+            keyMode: 'LinkKeyAndPasskey',
             isExpired: false,
             files: [],
         };
@@ -230,6 +232,7 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
             isUnlocked: false,
             isEncrypted: true,
             keySalt: bundle.keySalt,
+            keyMode: 'LinkKeyAndPasskey',
             isExpired: false,
             files: [],
         };
