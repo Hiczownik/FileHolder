@@ -99,6 +99,12 @@ describe('makeFileNamesUnique', () => {
     it('skips a copy number another file already uses', () => {
         expect(makeFileNamesUnique(['a.txt', 'a (2).txt', 'a.txt'])).toEqual(['a.txt', 'a (2).txt', 'a (3).txt']);
     });
+
+    // Found by the vectors shared with the server (#70): "ᾀ" upper-cases to two letters in JavaScript, so it was kept
+    // apart from "ᾈ", which NTFS and the server treat as the same letter.
+    it('folds case as the server does, also where the full upper case is two letters', () => {
+        expect(makeFileNamesUnique(['ᾈ.txt', 'ᾀ.txt', 'ß.txt', 'ss.txt'])).toEqual(['ᾈ.txt', 'ᾀ (2).txt', 'ß.txt', 'ss.txt']);
+    });
 });
 
 // Brought in line with the server's SanitizeFileName after its property tests (#70) found these there.

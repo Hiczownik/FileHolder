@@ -144,8 +144,11 @@ public static class FileSecurityUtils
             var candidate = name;
             var (body, extension) = SplitExtension(name);
 
-            for (int copy = 2; taken.Contains(candidate); copy++)
+            // The first duplicate becomes "name (2).ext": the original counts as copy 1.
+            var copy = 1;
+            while (taken.Contains(candidate))
             {
+                copy++;
                 // A name already as long as allowed loses the end of its body to make room for " (n)".
                 var suffix = $" ({copy}){extension}";
                 candidate = $"{Truncate(body, MaxStoredLength - suffix.Length)}{suffix}";

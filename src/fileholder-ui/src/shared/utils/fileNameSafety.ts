@@ -97,13 +97,15 @@ export function sanitizeFileName(fileName: string): string {
 }
 
 /**
- * Upper case per code point, only where that maps to a single code point: the closest match to .NET's
- * OrdinalIgnoreCase, which the server compares names with. JavaScript's full mapping would turn "ß" into "SS".
+ * Folds case per code point the way .NET's OrdinalIgnoreCase (which the server compares names with) and NTFS do: by
+ * the simple one-letter mapping. JavaScript only has the full mapping, which can give two letters ("ß" gives "SS",
+ * "ᾀ" gives "ἈΙ"); there the lower case is used instead, so "ᾀ" and "ᾈ" (whose simple upper case is "ᾈ") still
+ * match, and "ß" stays apart from "ss" as on the server.
  */
 const caseKey = (text: string): string =>
     Array.from(text, (char) => {
         const upper = char.toUpperCase();
-        return upper.length === char.length ? upper : char;
+        return upper.length === char.length ? upper : char.toLowerCase();
     }).join('');
 
 /** Checks the name as it will be saved, so "evil.exe " or "evil.e x e" can't dodge the list. */

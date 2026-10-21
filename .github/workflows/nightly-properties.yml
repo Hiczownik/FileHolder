@@ -1,0 +1,62 @@
+name: Nightly Property Tests
+
+# The property tests run on a fixed seed in CI, so every PR tries the same inputs. Once a night they run on a fresh
+# random seed with many more inputs, to find what the fixed seed never tries. A failure prints its seed; the README
+# (Running the Tests > Property tests) shows how to replay it locally. Can also be started by hand from the Actions tab.
+on:
+    schedule:
+        - cron: '17 3 * * *'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    backend-properties:
+        name: FsCheck properties (.NET 10, random seed)
+        runs-on: ubuntu-latest
+        env:
+            FSCHECK_RANDOM: '1'
+            FSCHECK_MAX_TEST: '20000'
+
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+
+            - name: Setup .NET 10 SDK
+              uses: actions/setup-dotnet@v4
+              with:
+                  dotnet-version: 10.0.x
+
+            - name: Run Property Tests
+              # The property classes are all named *Properties; the vectors test runs too, as it costs nothing.
+              run: dotnet test tests/FileHolder.Tests.Unit/FileHolder.Tests.Unit.csproj -c Release --filter "FullyQualifiedName~Properties|FullyQualifiedName~FileNameVectorTests"
+
+    frontend-properties:
+        name: fast-check properties (Vitest, random seed)
+        runs-on: ubuntu-latest
+        env:
+            FC_RANDOM: '1'
+            FC_NUM_RUNS: '10000'
+
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js 22
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '22'
+                  cache: 'npm'
+                  cache-dependency-path: 'src/fileholder-ui/package-lock.json'
+
+            - name: Install Frontend Dependencies
+              run: |
+                  cd src/fileholder-ui
+                  npm ci
+
+            - name: Run Property Tests
+              # Vitest's 5 s per-test limit suits the fixed 200 runs, not 10,000.
+              run: |
+                  cd src/fileholder-ui
+                  npx vitest run properties --testTimeout=600000
