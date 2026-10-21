@@ -1867,4 +1867,60 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     }
 
     #endregion
+
+    #region Closed Bundles Before The Purge
+
+    // The service builds a closed bundle's full details; only the endpoint keeps them from the caller. Until the
+    // purge clears them, nothing but a 410 must reach someone without the password.
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public async Task GetGroupMetadata_ForAClosedBundle_Returns410WithoutAnyOfItsDetails(bool isEncrypted, bool expiredByTime)
+    {
+        var shareToken = FileHolder.Core.Security.CryptoUtils.GenerateShortToken();
+        var now = DateTime.UtcNow;
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.FileGroups.Add(new FileGroup
+            {
+                ShareToken = shareToken,
+                Title = isEncrypted ? null : "secret-title",
+                PasswordHash = FileHolder.Core.Security.CryptoUtils.HashPassword("CorrectPassword123!"),
+                ExpiresAt = expiredByTime ? now.AddHours(-1) : now.AddHours(24),
+                MaxDownloads = 1,
+                DownloadCount = expiredByTime ? 0 : 1,
+                IsDeleted = !expiredByTime,
+                DeletedAt = expiredByTime ? null : now,
+                IsEncrypted = isEncrypted,
+                EncryptedManifest = isEncrypted ? "secret-manifest" : null,
+                KeyEnvelope = isEncrypted ? "secret-envelope" : null,
+                KeySalt = isEncrypted ? "secret-salt" : null,
+                EncryptedTitle = isEncrypted ? "secret-encrypted-title" : null,
+                KeyMode = isEncrypted ? KeyMode.LinkKeyAndPasskey : null,
+                Files = new List<SharedFile>
+                {
+                    new()
+                    {
+                        OriginalFileName = "secret-name.pdf",
+                        StorageKey = $"uploads/{Guid.NewGuid():N}",
+                        ContentType = "application/pdf",
+                        SizeBytes = 987654
+                    }
+                }
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        var response = await _client.GetAsync($"/api/v1/files/{shareToken}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Gone);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().NotContain("secret").And.NotContain("987654");
+    }
+
+    #endregion
 }

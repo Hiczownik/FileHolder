@@ -16,10 +16,13 @@ public class GlobalExceptionHandler(
         Exception exception,
         CancellationToken cancellationToken)
     {
+        // Logged by route, not path: a path holds the share token, which opens a bundle without a password.
+        var route = RouteOf(httpContext);
+
         // The client disconnected: nobody is left to answer, and it is not a server fault.
         if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
         {
-            logger.LogInformation("Request {Path} was cancelled by the client.", httpContext.Request.Path);
+            logger.LogInformation("Request {Route} was cancelled by the client.", route);
             return true;
         }
 
@@ -39,12 +42,15 @@ public class GlobalExceptionHandler(
 
         if (status >= StatusCodes.Status500InternalServerError)
         {
-            logger.LogError(exception, "Unhandled exception while processing {Path}.", httpContext.Request.Path);
+            logger.LogError(exception, "Unhandled exception while processing {Route}.", route);
         }
         else
         {
-            logger.LogWarning("Request {Path} rejected with {StatusCode}: {Message}",
-                httpContext.Request.Path, status, exception.InnerException?.Message ?? exception.Message);
+            // A client error's message can name the user's files, so it is only logged at Debug.
+            logger.LogWarning("Request {Route} rejected with {StatusCode} ({ExceptionType}).",
+                route, status, exception.GetType().Name);
+            logger.LogDebug("Request {Route} rejection detail: {Message}",
+                route, exception.InnerException?.Message ?? exception.Message);
         }
 
         if (environment.IsDevelopment() && (status >= StatusCodes.Status500InternalServerError || exception is BadHttpRequestException))
@@ -73,4 +79,7 @@ public class GlobalExceptionHandler(
 
         return true;
     }
+
+    private static string RouteOf(HttpContext httpContext) =>
+        (httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "(no route)";
 }

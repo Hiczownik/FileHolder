@@ -36,7 +36,8 @@
   * **Storage safety net:** in case that worker is stuck, crashes or has a bug, storage itself deletes **any object older than 10 days**, and **multipart uploads left incomplete for 48 hours**. No legitimate file gets that old: at most about 8 days (24 h to confirm an upload, 7 days of bundle life, then the grace and the worker's next run).
     * The API sets the 10-day bucket lifecycle rule at startup, calculated from its own timings (`StorageSafetyNet`), and refuses to start if `Storage__LifecycleExpiryDays` is set lower. The `fileholder_storage_lifecycle_days` metric shows the rule's days once storage has confirmed it (0 until then).
     * Silo ignores the abort-incomplete-uploads part of lifecycle rules, so abandoned uploads are removed by its own stale-upload clean-up instead: `MINIO_API_STALE_UPLOADS_EXPIRY=48h` in `docker-compose.yml` (Silo's default, 24 h, could cut off a slow upload before it is confirmed).
-  * **The bundle's database rows are currently kept after that** (file names, title, key material). Fixing this is tracked in [#77](https://github.com/Hiczownik/FileHolder/issues/77).
+  * **The bundle's details go with its files:** in the same step, the worker deletes the file names, sizes and types, and clears the title, password hash and an encrypted bundle's key material and manifest. What's left is an anonymous tombstone (the share token, the dates, and whether it was encrypted), so the link says "expired" rather than "not found". **Tombstones are deleted after 7 days**, and finished multipart-upload records 1 day after they finish.
+    * This is deleted *from the database*, not wiped from the disk: Postgres keeps old row versions until it reuses the space, and its write-ahead log for a while. **Database backups keep whatever they copied**, so keep them for 7 days or less.
 * **End-to-end encryption (optional):**
   * **The key is in the link:** the browser creates a random 256-bit *link key* and puts it in the share link's fragment (`/f/<token>#k=<key>`). Browsers never send the fragment to a server, not even in the `Referer` header, so the API and nginx never see it.
   * **Two modes**, chosen on the upload form:
@@ -78,6 +79,7 @@
 * **API responses** carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` and a Content-Security-Policy.
   * **The UI pages, served by nginx, don't send these headers yet.** Tracked in [#81](https://github.com/Hiczownik/FileHolder/issues/81) and [#82](https://github.com/Hiczownik/FileHolder/issues/82).
 * **Error responses** use RFC 7807 `ProblemDetails`. Internal error messages are only shown in Development.
+* **Logs** name the route (`/api/v1/files/{shareToken}`), never the request path, since a share token opens a bundle without a password. File names and titles stay out of them too: a rejected request's message, which can name a file, is only logged at `Debug`. nginx's access log shows `[token]` in place of the token and leaves out query strings; its error log, whose format can't be changed, still shows the full request when it can't reach the API.
 
 A written threat model (what each party can see and do, and the known gaps) is planned in [#81](https://github.com/Hiczownik/FileHolder/issues/81). **Please don't report vulnerabilities in public issues;** contact the maintainer privately (a `SECURITY.md` with the process is part of #81).
 

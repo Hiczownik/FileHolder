@@ -21,7 +21,11 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Host.UseSerilog((ctx, lc) => lc.WriteTo.Console(formatProvider: System.Globalization.CultureInfo.InvariantCulture));
+// Serilog ignores the Logging:LogLevel settings. Without this, ASP.NET Core logs every request's path at
+// Information, and a path holds the share token, which opens a bundle without a password.
+builder.Host.UseSerilog((ctx, lc) => lc
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    .WriteTo.Console(formatProvider: System.Globalization.CultureInfo.InvariantCulture));
 
 builder.Services.AddFileHolderStorageOptions(builder.Configuration);
 

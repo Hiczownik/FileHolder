@@ -40,6 +40,10 @@ public class MultipartUploadSessionConfiguration : IEntityTypeConfiguration<Mult
             .HasColumnType("timestamp with time zone")
             .IsRequired();
 
+        builder.Property(s => s.FinishedAt)
+            .HasColumnType("timestamp with time zone")
+            .IsRequired(false);
+
         // One upload token covers every file of a presign request, so it is not unique on its own.
         builder.HasIndex(s => new { s.UploadToken, s.UploadId })
             .IsUnique();

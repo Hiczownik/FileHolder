@@ -1,8 +1,11 @@
+using System.Net;
+using System.Net.Http.Json;
 using Amazon.S3.Model;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
+using FileHolder.Core.Security;
 using FileHolder.Infrastructure.Data;
 using FileHolder.Infrastructure.Services;
 using FileHolder.Tests.Integration.Fixtures;
@@ -380,6 +383,267 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
         record.StoragePurgedAt.Should().BeNull();
     }
 
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_LeavesOnlyATombstone_AndDropsTheCachedDetails()
+    {
+        var group = await SeedSensitiveGroupAsync("scrub_", "uploads/scrub_" + Guid.NewGuid().ToString("N") + ".enc");
+
+        // Caches the group, file names and all, the way a visitor's request would.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var metadata = await scope.ServiceProvider.GetRequiredService<IFileGroupService>()
+                .GetGroupMetadataByTokenAsync(group.ShareToken);
+            metadata!.Files.Should().NotBeEmpty();
+        }
+
+        await RunPurgeAsync();
+
+        var record = await LoadGroupAsync(group.Id);
+        record.StoragePurgedAt.Should().NotBeNull();
+        ShouldBeTombstone(record, group);
+        (await CountFilesAsync(group.Id)).Should().Be(0);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var metadata = await scope.ServiceProvider.GetRequiredService<IFileGroupService>()
+                .GetGroupMetadataByTokenAsync(group.ShareToken);
+            metadata!.IsExpired.Should().BeTrue();
+            metadata.Files.Should().BeEmpty("the cached copy must go with the rows");
+            metadata.Title.Should().BeNull();
+            metadata.KeySalt.Should().BeNull();
+        }
+
+        // Scrubbing again finds nothing to change.
+        await RunPurgeAsync();
+        ShouldBeTombstone(await LoadGroupAsync(group.Id), group);
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_WhenStorageDeleteFails_KeepsTheDetailsUntilALaterRunDeletesTheFiles()
+    {
+        var group = await SeedSensitiveGroupAsync("scrubfail_", "uploads/delete_fail_scrub_" + Guid.NewGuid().ToString("N") + ".enc");
+
+        await RunPurgeAsync();
+
+        var record = await LoadGroupAsync(group.Id);
+        record.StoragePurgedAt.Should().BeNull();
+        record.KeySalt.Should().Be(group.KeySalt, "the retry still needs the group, and nothing is purged yet");
+        (await CountFilesAsync(group.Id)).Should().Be(1);
+
+        // Storage recovers.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await dbContext.SharedFiles
+                .Where(f => f.FileGroupId == group.Id)
+                .ExecuteUpdateAsync(s => s.SetProperty(f => f.StorageKey, "uploads/recovered_" + Guid.NewGuid().ToString("N")));
+        }
+
+        await RunPurgeAsync();
+
+        ShouldBeTombstone(await LoadGroupAsync(group.Id), group);
+        (await CountFilesAsync(group.Id)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_ScrubsGroupsPurgedBeforeScrubbingExisted()
+    {
+        // Rows purged by older versions kept everything; the first run of this one clears them.
+        var group = await SeedSensitiveGroupAsync("legacy_", "uploads/legacy_" + Guid.NewGuid().ToString("N") + ".enc",
+            storagePurgedAt: DateTime.UtcNow - TimeSpan.FromDays(2));
+
+        factory.MockS3Client.ClearReceivedCalls();
+        await RunPurgeAsync();
+
+        ShouldBeTombstone(await LoadGroupAsync(group.Id), group);
+        (await CountFilesAsync(group.Id)).Should().Be(0);
+        await factory.MockS3Client.DidNotReceive().DeleteObjectsAsync(
+            Arg.Is<DeleteObjectsRequest>(req => req != null && req.Objects.Any(o => o.Key.StartsWith("uploads/legacy_"))),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Tombstone_EveryEndpointSaysExpiredOrSessionInvalid_AndNoneFails()
+    {
+        var group = await SeedSensitiveGroupAsync("tomb_", "uploads/tomb_" + Guid.NewGuid().ToString("N") + ".enc",
+            storagePurgedAt: DateTime.UtcNow - TimeSpan.FromHours(1));
+        var fileId = group.Files.Single().Id;
+        await RunPurgeAsync();
+
+        var client = factory.CreateClient();
+        var token = group.ShareToken;
+
+        (await client.GetAsync($"/api/v1/files/{token}")).StatusCode.Should().Be(HttpStatusCode.Gone);
+        (await client.PostAsJsonAsync($"/api/v1/files/{token}/unlock", new DownloadRequestDto("guess")))
+            .StatusCode.Should().Be(HttpStatusCode.Gone);
+        (await client.PostAsJsonAsync($"/api/v1/files/{token}/downloads", new DownloadRequestDto("guess")))
+            .StatusCode.Should().Be(HttpStatusCode.Gone);
+        (await client.PostAsJsonAsync($"/api/v1/files/{token}/download-all", new DownloadRequestDto("guess")))
+            .StatusCode.Should().Be(HttpStatusCode.Gone);
+
+        // These need a download session, which a purged bundle can't have.
+        (await client.PostAsJsonAsync($"/api/v1/files/{token}/download/{fileId}", new DownloadRequestDto(null, Guid.NewGuid())))
+            .StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        (await client.GetAsync($"/api/v1/files/{token}/download-all?downloadSessionId={Guid.NewGuid()}"))
+            .StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_DeletesTombstonesPastRetention_WithTheirSessions()
+    {
+        var old = await SeedSensitiveGroupAsync("oldtomb_", "uploads/oldtomb_" + Guid.NewGuid().ToString("N") + ".enc",
+            storagePurgedAt: DateTime.UtcNow - PurgeTimings.PurgedGroupRetention - TimeSpan.FromHours(1));
+        var recent = await SeedSensitiveGroupAsync("newtomb_", "uploads/newtomb_" + Guid.NewGuid().ToString("N") + ".enc",
+            storagePurgedAt: DateTime.UtcNow - PurgeTimings.PurgedGroupRetention + TimeSpan.FromHours(1));
+
+        // A recent session row, which the session retention alone would keep.
+        var session = new DownloadSession { FileGroupId = old.Id, CreatedAt = DateTime.UtcNow.AddHours(-3), ExpiresAt = DateTime.UtcNow.AddHours(-2) };
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.DownloadSessions.Add(session);
+            await dbContext.SaveChangesAsync();
+        }
+
+        await RunPurgeAsync();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            (await dbContext.FileGroups.AnyAsync(g => g.Id == old.Id)).Should().BeFalse();
+            (await dbContext.DownloadSessions.AnyAsync(s => s.Id == session.Id)).Should().BeFalse();
+            (await dbContext.FileGroups.AnyAsync(g => g.Id == recent.Id)).Should().BeTrue();
+        }
+
+        var client = factory.CreateClient();
+        (await client.GetAsync($"/api/v1/files/{old.ShareToken}")).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await client.GetAsync($"/api/v1/files/{recent.ShareToken}")).StatusCode.Should().Be(HttpStatusCode.Gone);
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_DeletesFinishedMultipartSessionsPastRetention_AndKeepsTheRest()
+    {
+        var now = DateTime.UtcNow;
+        var pastRetention = now - PurgeTimings.FinishedUploadSessionRetention - TimeSpan.FromHours(1);
+
+        var oldCompleted = NewMultipartSession(now, isCompleted: true, finishedAt: pastRetention);
+        var oldAborted = NewMultipartSession(now, isAborted: true, finishedAt: pastRetention);
+        var recentCompleted = NewMultipartSession(now, isCompleted: true, finishedAt: now - TimeSpan.FromHours(1));
+        var active = NewMultipartSession(now);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.MultipartUploadSessions.AddRange(oldCompleted, oldAborted, recentCompleted, active);
+            await dbContext.SaveChangesAsync();
+        }
+
+        await RunPurgeAsync();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var ids = new[] { oldCompleted.Id, oldAborted.Id, recentCompleted.Id, active.Id };
+            var remaining = await dbContext.MultipartUploadSessions
+                .Where(s => ids.Contains(s.Id))
+                .Select(s => s.Id)
+                .ToListAsync();
+
+            remaining.Should().BeEquivalentTo([recentCompleted.Id, active.Id]);
+        }
+    }
+
+    private static MultipartUploadSession NewMultipartSession(
+        DateTime now, bool isCompleted = false, bool isAborted = false, DateTime? finishedAt = null) => new()
+    {
+        UploadToken = Guid.NewGuid().ToString("N"),
+        UploadId = "upload_" + Guid.NewGuid().ToString("N"),
+        StorageKey = "uploads/" + Guid.NewGuid().ToString("N"),
+        FileName = "holiday.mov",
+        ContentType = "video/quicktime",
+        TotalSizeBytes = 100 * 1024 * 1024,
+        PartSizeBytes = 16 * 1024 * 1024,
+        TotalParts = 7,
+        IsCompleted = isCompleted,
+        IsAborted = isAborted,
+        FinishedAt = finishedAt,
+        CreatedAt = now - TimeSpan.FromDays(3),
+        ExpiresAt = now + TimeSpan.FromHours(1)
+    };
+
+    /// <summary>
+    /// A closed encrypted bundle with every detail the purge must clear, past its grace period unless
+    /// <paramref name="storagePurgedAt"/> says it was purged already.
+    /// </summary>
+    private async Task<FileGroup> SeedSensitiveGroupAsync(string tokenPrefix, string storageKey, DateTime? storagePurgedAt = null)
+    {
+        var closedAt = DateTime.UtcNow - StoragePurgeService.DeletionGracePeriod - TimeSpan.FromMinutes(1);
+        var group = new FileGroup
+        {
+            ShareToken = tokenPrefix + Guid.NewGuid().ToString("N")[..8],
+            Title = "Tax return 2026",
+            PasswordHash = CryptoUtils.HashPassword("unlock-value"),
+            ExpiresAt = DateTime.UtcNow.AddHours(24),
+            MaxDownloads = 1,
+            DownloadCount = 1,
+            IsDeleted = true,
+            DeletedAt = closedAt,
+            StoragePurgedAt = storagePurgedAt,
+            IsEncrypted = true,
+            EncryptedManifest = "encrypted-manifest",
+            KeyEnvelope = "key-envelope",
+            KeySalt = "key-salt",
+            EncryptedTitle = "encrypted-title",
+            KeyMode = KeyMode.LinkKeyAndPasskey,
+            FailedPasswordAttempts = 3,
+            PasswordLockedUntil = DateTime.UtcNow.AddMinutes(5),
+            Files = new List<SharedFile>
+            {
+                new()
+                {
+                    OriginalFileName = "passport-scan.pdf",
+                    StorageKey = storageKey,
+                    ContentType = "application/octet-stream",
+                    SizeBytes = 1024
+                }
+            }
+        };
+
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        dbContext.FileGroups.Add(group);
+        await dbContext.SaveChangesAsync();
+        return group;
+    }
+
+    private static void ShouldBeTombstone(FileGroup record, FileGroup seeded)
+    {
+        record.Title.Should().BeNull();
+        record.PasswordHash.Should().BeNull();
+        record.EncryptedManifest.Should().BeNull();
+        record.KeyEnvelope.Should().BeNull();
+        record.KeySalt.Should().BeNull();
+        record.EncryptedTitle.Should().BeNull();
+        record.KeyMode.Should().BeNull();
+        record.MaxDownloads.Should().BeNull();
+        record.DownloadCount.Should().Be(0);
+        record.FailedPasswordAttempts.Should().Be(0);
+        record.PasswordLockedUntil.Should().BeNull();
+
+        // What's left only says the link existed and has expired.
+        record.ShareToken.Should().Be(seeded.ShareToken);
+        record.IsDeleted.Should().BeTrue();
+        record.IsEncrypted.Should().BeTrue();
+        record.StoragePurgedAt.Should().NotBeNull();
+    }
+
+    private async Task<int> CountFilesAsync(Guid groupId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return await dbContext.SharedFiles.CountAsync(f => f.FileGroupId == groupId);
+    }
+
     private async Task<FileGroup> SeedGroupAsync(
         string tokenPrefix,
         string storageKey,
@@ -479,6 +743,7 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
             var session = await dbContext.MultipartUploadSessions.FirstOrDefaultAsync(s => s.UploadId == targetUploadId);
             session.Should().NotBeNull();
             session.IsAborted.Should().BeTrue();
+            session.FinishedAt.Should().NotBeNull();
         }
     }
 }
