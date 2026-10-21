@@ -1,9 +1,9 @@
-using System.Net;
-using System.Threading.RateLimiting;
+﻿using System.Net;
 using Amazon.S3;
 using FileHolder.Api.Endpoints;
 using FileHolder.Api.ExceptionHandling;
 using FileHolder.Api.Middleware;
+using FileHolder.Api.RateLimiting;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
@@ -109,78 +109,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     }
 });
 
-// UseForwardedHeaders has already replaced RemoteIpAddress when the request came through a trusted proxy.
-// Never read X-Forwarded-For here: clients can set it to anything and get a fresh rate-limit partition.
-static string ResolveClientIp(HttpContext context)
-{
-    var address = context.Connection.RemoteIpAddress;
-    if (address == null)
-    {
-        return "anonymous";
-    }
-
-    if (address.IsIPv4MappedToIPv6)
-    {
-        return address.MapToIPv4().ToString();
-    }
-
-    // One IPv6 host usually owns a whole /64, so partitioning per address would let it rotate through
-    // addresses for unlimited attempts. Partition on the /64 prefix instead.
-    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-    {
-        var bytes = address.GetAddressBytes();
-        Array.Clear(bytes, 8, 8);
-        return $"{new IPAddress(bytes)}/64";
-    }
-
-    return address.ToString();
-}
-
-builder.Services.AddRateLimiter(options =>
-{
-    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-
-    // 1. Front Door: Strict 10 / min per IP
-    options.AddPolicy("UploadInitiatePolicy", context =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ResolveClientIp(context),
-            factory: _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 10,
-                Window = TimeSpan.FromMinutes(1)
-            }));
-
-    // 2. In-Flight Pipeline: High throughput 100 / min per IP
-    options.AddPolicy("MultipartPipelinePolicy", context =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ResolveClientIp(context),
-            factory: _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 100,
-                Window = TimeSpan.FromMinutes(1)
-            }));
-
-    // 3. Downloader & Vault: 30 / min per IP
-    options.AddPolicy("DownloadPolicy", context =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ResolveClientIp(context),
-            factory: _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 30,
-                Window = TimeSpan.FromMinutes(1)
-            }));
-
-    // 4. Bundle metadata: 60 / min per IP. Kept apart from DownloadPolicy so page loads don't eat into
-    // the unlock and download budget, but bounded so share tokens can't be guessed at will.
-    options.AddPolicy("MetadataPolicy", context =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: ResolveClientIp(context),
-            factory: _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = 60,
-                Window = TimeSpan.FromMinutes(1)
-            }));
-});
+builder.Services.AddRateLimiter(RateLimitPolicies.Configure);
 
 builder.Services.AddCors(options =>
 {
@@ -188,7 +117,9 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins("http://localhost:3000", "http://localhost:5173")
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              // So the browser can read how long to wait after a 429 (see RateLimitPolicies.WriteRetryAfterAsync).
+              .WithExposedHeaders("Retry-After");
     });
 });
 

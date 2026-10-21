@@ -30,6 +30,7 @@ public class GlobalExceptionHandler(
         {
             InvalidRequestException => (StatusCodes.Status400BadRequest, "Bad Request", exception.Message),
             ResourceNotFoundException => (StatusCodes.Status404NotFound, "Resource Not Found", exception.Message),
+            ConflictException => (StatusCodes.Status409Conflict, "Conflict", exception.Message),
             BadHttpRequestException badRequest => (badRequest.StatusCode, "Bad Request", InvalidBodyDetail),
             DbUpdateException => (StatusCodes.Status500InternalServerError, "Database Persistence Error",
                 "An error occurred while saving entity changes to the database."),

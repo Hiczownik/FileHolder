@@ -36,6 +36,9 @@ public class PendingUploadConfiguration : IEntityTypeConfiguration<PendingUpload
             .HasColumnType("timestamp with time zone")
             .IsRequired();
 
+        builder.Property(p => p.ClaimedUntil)
+            .HasColumnType("timestamp with time zone");
+
         builder.HasIndex(p => p.UploadToken);
 
         builder.HasIndex(p => p.StorageKey)

@@ -24,4 +24,10 @@ public static class UploadTimings
     /// purge and leave an object nothing tracks.
     /// </summary>
     public static readonly TimeSpan SinglePutUrlLifetime = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// How long a confirm holds its upload's pending rows while it checks and copies the files. A failed
+    /// confirm releases them at once; this only frees an upload whose confirm crashed part way.
+    /// </summary>
+    public static readonly TimeSpan ConfirmClaimLifetime = TimeSpan.FromMinutes(5);
 }

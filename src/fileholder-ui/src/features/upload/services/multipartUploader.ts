@@ -1,6 +1,7 @@
 import type { CompletedPartInput, PresignedItem } from "../../download/types";
 import { uploadApi } from "../api/uploadApi";
 import type { ConcurrencyLimiter } from "../../../shared/utils/concurrencyLimiter";
+import { abortError, withRateLimitRetry } from "./rateLimitRetry";
 
 export interface MultipartUploadOptions {
     concurrency?: number;
@@ -30,8 +31,6 @@ interface SignedPartUrl {
     readonly url: string;
     readonly signedAt: number;
 }
-
-const abortError = (): DOMException => new DOMException('Upload aborted by user', 'AbortError');
 
 const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -80,7 +79,11 @@ export async function executeMultipartUpload(
 
         const batch = (async (): Promise<void> => {
             try {
-                const response = await uploadApi.presignPartBatch({ uploadToken, storageKey, uploadId, startPartNumber, count });
+                // Rate-limited by the API, unlike the part uploads, which go straight to storage.
+                const response = await withRateLimitRetry(
+                    () => uploadApi.presignPartBatch({ uploadToken, storageKey, uploadId, startPartNumber, count }),
+                    options?.signal
+                );
                 response.parts.forEach((part) => signedUrls.set(part.partNumber, { url: part.uploadUrl, signedAt }));
             } finally {
                 coveredParts.forEach((partNumber) => pendingBatches.delete(partNumber));
@@ -172,10 +175,13 @@ export async function executeMultipartUpload(
 
     completedParts.sort((a, b) => a.partNumber - b.partNumber);
 
-    await uploadApi.completeMultipartUpload({
-        uploadToken,
-        storageKey,
-        uploadId,
-        parts: completedParts,
-    });
+    await withRateLimitRetry(
+        () => uploadApi.completeMultipartUpload({
+            uploadToken,
+            storageKey,
+            uploadId,
+            parts: completedParts,
+        }),
+        options?.signal
+    );
 }

@@ -1,4 +1,5 @@
-﻿using FileHolder.Api.Validation;
+﻿using FileHolder.Api.RateLimiting;
+using FileHolder.Api.Validation;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
 using FileHolder.Core.Security;
@@ -17,12 +18,12 @@ public static class FileEndpoints
 
         group.MapPost("/presign", GetPresignedUploadUrl)
             .AddEndpointFilter<ValidationFilter<CreatePresignedUrlRequestDto>>()
-            .RequireRateLimiting("UploadInitiatePolicy")
+            .RequireRateLimiting(RateLimitPolicies.UploadInitiate)
             .WithName("GetPresignedUploadUrl");
 
         var multipart = group.MapGroup("/multipart")
             .WithTags("Multipart Uploads")
-            .RequireRateLimiting("MultipartPipelinePolicy");
+            .RequireRateLimiting(RateLimitPolicies.MultipartPipeline);
 
         multipart.MapPost("/presign-batch", PresignPartBatch)
             .AddEndpointFilter<ValidationFilter<PresignPartBatchRequestDto>>()
@@ -37,33 +38,34 @@ public static class FileEndpoints
             .WithName("AbortMultipartUpload");
 
         group.MapPost("/confirm", ConfirmUpload)
+            .RequireRateLimiting(RateLimitPolicies.Confirm)
             .AddEndpointFilter<ValidationFilter<ConfirmUploadRequestDto>>()
             .WithName("ConfirmUpload");
 
         group.MapGet("/{shareToken}", GetGroupMetadata)
-            .RequireRateLimiting("MetadataPolicy")
+            .RequireRateLimiting(RateLimitPolicies.Metadata)
             .WithName("GetGroupMetadata");
 
         group.MapPost("/{shareToken}/unlock", UnlockGroup)
-            .RequireRateLimiting("DownloadPolicy")
+            .RequireRateLimiting(RateLimitPolicies.Download)
             .WithName("UnlockGroup");
 
         group.MapPost("/{shareToken}/downloads", OpenDownloadSession)
-            .RequireRateLimiting("DownloadPolicy")
+            .RequireRateLimiting(RateLimitPolicies.Download)
             .WithName("OpenDownloadSession");
 
         group.MapPost("/{shareToken}/download/{fileId:guid}", GenerateDownloadLink)
-            .RequireRateLimiting("DownloadPolicy")
+            .RequireRateLimiting(RateLimitPolicies.Download)
             .WithName("GenerateDownloadLink");
 
         group.MapPost("/{shareToken}/download-all", StreamBundleZip)
-            .RequireRateLimiting("DownloadPolicy")
+            .RequireRateLimiting(RateLimitPolicies.Download)
             .WithName("StreamBundleZip");
 
         // The same ZIP for an open download session, as a plain GET the browser can navigate to, so it is
         // saved straight to disk instead of being buffered in page memory first.
         group.MapGet("/{shareToken}/download-all", StreamBundleZipForSession)
-            .RequireRateLimiting("DownloadPolicy")
+            .RequireRateLimiting(RateLimitPolicies.Download)
             .WithName("StreamBundleZipForSession");
     }
 

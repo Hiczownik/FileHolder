@@ -196,45 +196,54 @@ public class FileGroupService
             {
                 throw new InvalidRequestException($"File details for {item.FileName} do not match the presigned upload.");
             }
-
-            // The presigned URL doesn't limit size, so the stored object is checked against what presign approved.
-            var remoteSize = await _storageProvider.GetObjectSizeAsync(pending.StorageKey);
-            if (remoteSize is null)
-            {
-                throw new ResourceNotFoundException($"Uploaded object for {item.FileName} was not found in storage.");
-            }
-
-            if (remoteSize.Value != pending.SizeBytes)
-            {
-                throw new InvalidRequestException($"File size mismatch for {item.FileName}");
-            }
         }
 
-        var shareToken = CryptoUtils.GenerateShortToken();
-        var passwordHash = CryptoUtils.HashPassword(dto.Password);
-
-        var fileGroup = new FileGroup
-        {
-            ShareToken = shareToken,
-            Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title.Trim(),
-            PasswordHash = passwordHash,
-            MaxDownloads = dto.MaxDownloads,
-            ExpiresAt = dto.ExpireInHours.HasValue ? now.AddHours(dto.ExpireInHours.Value) : null,
-            IsEncrypted = dto.IsEncrypted,
-            EncryptedManifest = dto.EncryptedManifest,
-            KeyEnvelope = dto.KeyEnvelope,
-            KeySalt = dto.KeySalt
-        };
+        // Everything above only reads the database. Claimed before the storage checks, copies and bcrypt, so
+        // parallel confirms of one upload token can't each do that work and have all but one thrown away.
+        var claimId = await ClaimPendingUploadsAsync(dto.UploadToken, pendingUploads.Count, now);
 
         // A single-file PUT URL stays valid after confirm, so the uploader could overwrite the checked object.
         // Those files are served from a copy under a key no URL was issued for, and its size is checked on
         // the copy. Multipart files need no copy: completing the upload consumed its upload ID, so its part
-        // URLs can no longer write. Each confirm copies to fresh keys, so a racing confirm that loses and
-        // cleans up its copies never touches the winner's.
+        // URLs can no longer write. Each confirm copies to fresh keys, so a confirm that fails and cleans up
+        // its copies never touches another bundle's.
         var copiedKeys = new List<string>();
 
         try
         {
+            foreach (var item in dto.Files)
+            {
+                var pending = pendingByKey[item.StorageKey];
+
+                // The presigned URL doesn't limit size, so the stored object is checked against what presign approved.
+                var remoteSize = await _storageProvider.GetObjectSizeAsync(pending.StorageKey);
+                if (remoteSize is null)
+                {
+                    throw new ResourceNotFoundException($"Uploaded object for {item.FileName} was not found in storage.");
+                }
+
+                if (remoteSize.Value != pending.SizeBytes)
+                {
+                    throw new InvalidRequestException($"File size mismatch for {item.FileName}");
+                }
+            }
+
+            var shareToken = CryptoUtils.GenerateShortToken();
+            var passwordHash = CryptoUtils.HashPassword(dto.Password);
+
+            var fileGroup = new FileGroup
+            {
+                ShareToken = shareToken,
+                Title = string.IsNullOrWhiteSpace(dto.Title) ? null : dto.Title.Trim(),
+                PasswordHash = passwordHash,
+                MaxDownloads = dto.MaxDownloads,
+                ExpiresAt = dto.ExpireInHours.HasValue ? now.AddHours(dto.ExpireInHours.Value) : null,
+                IsEncrypted = dto.IsEncrypted,
+                EncryptedManifest = dto.EncryptedManifest,
+                KeyEnvelope = dto.KeyEnvelope,
+                KeySalt = dto.KeySalt
+            };
+
             foreach (var item in dto.Files)
             {
                 var pending = pendingByKey[item.StorageKey];
@@ -264,16 +273,16 @@ public class FileGroupService
 
             await using var tx = await _dbContext.Database.BeginTransactionAsync();
 
-            // Claiming the rows makes the token single-use: the DELETE locks them, so a concurrent confirm
-            // waits, then deletes nothing and is rejected instead of creating a second bundle.
+            // Deleting the rows makes the token single-use. Only this confirm's claim is deleted: if it outlived
+            // ConfirmClaimLifetime and another confirm took the rows over, this one loses instead.
             int claimed = await _dbContext.PendingUploads
-                .Where(p => p.UploadToken == dto.UploadToken && p.ExpiresAt > now)
+                .Where(p => p.UploadToken == dto.UploadToken && p.ClaimId == claimId)
                 .ExecuteDeleteAsync();
 
             if (claimed != pendingUploads.Count)
             {
                 await tx.RollbackAsync();
-                throw new InvalidRequestException("This upload was already confirmed.");
+                throw new ConflictException("This upload was confirmed by another request.");
             }
 
             // The copied originals are left to the abandoned-upload purge, which deletes them once their PUT
@@ -299,6 +308,10 @@ public class FileGroupService
             _dbContext.FileGroups.Add(fileGroup);
             await _dbContext.SaveChangesAsync();
             await tx.CommitAsync();
+
+            await _cache.SetAsync($"file_group:{shareToken}", fileGroup);
+
+            return shareToken;
         }
         catch
         {
@@ -307,12 +320,57 @@ public class FileGroupService
                 await _storageProvider.DeleteObjectsAsync(copiedKeys, CancellationToken.None);
             }
 
+            await ReleaseClaimAsync(claimId);
             throw;
         }
+    }
 
-        await _cache.SetAsync($"file_group:{shareToken}", fileGroup);
+    /// <summary>
+    /// Claims all of the upload's pending rows for this confirm, or none: a claim another confirm still holds
+    /// refuses this one with 409. Returns the claim's id, which the final delete and the release match on.
+    /// </summary>
+    private async Task<Guid> ClaimPendingUploadsAsync(string uploadToken, int expectedCount, DateTime now)
+    {
+        var claimId = Guid.NewGuid();
+        var claimedUntil = now + UploadTimings.ConfirmClaimLifetime;
 
-        return shareToken;
+        // One conditional UPDATE: a parallel confirm waits on the row locks, then Postgres re-checks the WHERE
+        // clause, finds the rows claimed and updates none of them.
+        int claimed = await _dbContext.PendingUploads
+            .Where(p => p.UploadToken == uploadToken
+                        && p.ExpiresAt > now
+                        && (p.ClaimedUntil == null || p.ClaimedUntil <= now))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(p => p.ClaimId, claimId)
+                .SetProperty(p => p.ClaimedUntil, claimedUntil));
+
+        if (claimed != expectedCount)
+        {
+            await ReleaseClaimAsync(claimId);
+            throw new ConflictException("This upload is already being confirmed. Wait a moment, then try again.");
+        }
+
+        return claimId;
+    }
+
+    /// <summary>
+    /// Frees the rows of a confirm that failed, so the uploader can retry straight away. Best effort: if it
+    /// fails too, the claim simply runs out after <see cref="UploadTimings.ConfirmClaimLifetime"/>.
+    /// </summary>
+    private async Task ReleaseClaimAsync(Guid claimId)
+    {
+        try
+        {
+            await _dbContext.PendingUploads
+                .Where(p => p.ClaimId == claimId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(p => p.ClaimId, (Guid?)null)
+                    .SetProperty(p => p.ClaimedUntil, (DateTime?)null), CancellationToken.None);
+        }
+        catch
+        {
+            // The error that failed the confirm is the one worth reporting.
+        }
     }
 
     public async Task<FileGroupMetadataResponseDto?> GetGroupMetadataByTokenAsync(string shareToken)
