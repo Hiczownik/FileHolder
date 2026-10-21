@@ -5,34 +5,39 @@ import { Clock, Download, Folder, KeyRound, Lock, ShieldCheck } from "lucide-rea
 import { FileDropzone } from "./FileDropzone";
 import { UploadProgress } from "./UploadProgress";
 import { Button } from "../../../shared/components/Button";
+import { StatusAlert } from "../../../shared/components/StatusAlert";
+import { mergeSelectedFiles } from "../services/selectedFiles";
 
 interface Props {
     uploadState: UploadState;
     onUpload: (formValues: UploadFormValues, files: File[]) => void;
 }
 
+const PASSKEY_CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789";
+const PASSKEY_SEGMENT_LENGTH = 4;
+const PASSKEY_SEGMENT_COUNT = 3;
+const DEFAULT_EXPIRE_IN_HOURS = 24;
+const DEFAULT_MAX_DOWNLOADS = 10;
+
 function generateReadablePasskey(): string {
-    const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789";
-    const getRandomSegment = () => {
-        let seg = "";
-        const bytes = window.crypto.getRandomValues(new Uint8Array(4));
-        for (let i = 0; i < 4; i++) {
-            seg += charset[bytes[i] % charset.length];
-        }
-        return seg;
-    };
-    return `${getRandomSegment()}-${getRandomSegment()}-${getRandomSegment()}`;
+    const getRandomSegment = (): string =>
+        Array.from(window.crypto.getRandomValues(new Uint8Array(PASSKEY_SEGMENT_LENGTH)))
+            .map((byte) => PASSKEY_CHARSET[byte % PASSKEY_CHARSET.length])
+            .join('');
+    return Array.from({ length: PASSKEY_SEGMENT_COUNT }, getRandomSegment).join('-');
 }
 
 export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
     const [files, setFiles] = useState<File[]>([]);
+    // Shown until the next pick, so a file left out is never dropped without a word.
+    const [skippedNames, setSkippedNames] = useState<string[]>([]);
     const isUploading = uploadState.status === "uploading";
 
     const { register, handleSubmit, control, setValue } = useForm<UploadFormValues>({
         defaultValues: {
             title: '',
-            expireInHours: 24,
-            maxDownloads: 10,
+            expireInHours: DEFAULT_EXPIRE_IN_HOURS,
+            maxDownloads: DEFAULT_MAX_DOWNLOADS,
             password: '',
             isEncrypted: false,
         },
@@ -45,13 +50,9 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
     const isSubmitDisabled = files.length === 0 || isPasswordMissingForE2EE;
 
     const handleFilesSelect = (newFiles: File[]) => {
-        setFiles((prev) => {
-            const existingKeys = new Set(prev.map((f) => `${f.name}_${f.size}`));
-            const uniqueNewFiles = newFiles.filter(
-                (f) => !existingKeys.has(`${f.name}_${f.size}`)
-            );
-            return [...prev, ...uniqueNewFiles];
-        });
+        const merged = mergeSelectedFiles(files, newFiles);
+        setFiles(merged.files);
+        setSkippedNames(merged.skipped.map((file) => file.name));
     };
 
     const handleRemoveFile = (index: number) => {
@@ -87,6 +88,13 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 onFilesSelect={handleFilesSelect}
                 onRemoveFile={handleRemoveFile}
             />
+
+            {skippedNames.length > 0 && (
+                <StatusAlert
+                    variant="info"
+                    message={`Skipped ${skippedNames.length === 1 ? '1 file' : `${skippedNames.length} files`} already in the list: ${skippedNames.join(', ')}.`}
+                />
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 <div>

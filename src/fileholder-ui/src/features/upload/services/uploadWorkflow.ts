@@ -11,6 +11,7 @@ import { executeMultipartUpload, fileSource } from "./multipartUploader";
 import { isExtensionForbidden } from "../../../shared/utils/fileNameSafety";
 import { formatSize } from "../../../shared/utils/formatSize";
 import { createConcurrencyLimiter } from "../../../shared/utils/concurrencyLimiter";
+import { abortError } from "./rateLimitRetry";
 
 const PERCENT_COMPLETE = 100;
 // Progress stops short of 100% until every file has finished uploading.
@@ -20,6 +21,61 @@ const MULTIPART_CONCURRENCY = 4;
 // parts are built in memory just before they are sent (16 MiB each, a few copies while encrypting), so this is
 // what bounds memory however many files a bundle has. Browsers open about 6 connections per host anyway.
 const MAX_PARTS_IN_FLIGHT = 4;
+
+const throwIfAborted = (signal: AbortSignal): void => {
+    if (signal.aborted) {
+        throw abortError();
+    }
+};
+
+/** Best effort: a multipart upload left behind is still aborted by the server's purge once its session expires. */
+async function abortQuietly(uploadToken: string, item: PresignedItem): Promise<void> {
+    try {
+        await uploadApi.abortMultipartUpload({ uploadToken, storageKey: item.storageKey, uploadId: item.uploadId ?? '' });
+    } catch {
+        // The error that stopped the upload is the one worth showing.
+    }
+}
+
+/**
+ * Uploads every file, or none: the first file to fail (or the user cancelling) stops all the others, so they don't
+ * keep sending in the background. Once every file has stopped, the multipart uploads that didn't finish are
+ * aborted, so their parts don't sit in storage until the purge; aborting only then means no part lands after it.
+ */
+async function uploadAllOrStop(
+    items: readonly PresignedItem[],
+    uploadToken: string,
+    uploadOne: (item: PresignedItem, index: number, signal: AbortSignal) => Promise<void>,
+    signal?: AbortSignal
+): Promise<void> {
+    const controller = new AbortController();
+    const stopAll = (): void => controller.abort();
+    if (signal?.aborted) stopAll();
+    signal?.addEventListener('abort', stopAll, { once: true });
+
+    const finished = new Set<number>();
+    const failures: unknown[] = [];
+
+    await Promise.allSettled(items.map(async (item, index) => {
+        try {
+            await uploadOne(item, index, controller.signal);
+            finished.add(index);
+        } catch (err: unknown) {
+            failures.push(err);
+            stopAll();
+        }
+    }));
+    signal?.removeEventListener('abort', stopAll);
+
+    if (failures.length === 0) return;
+
+    await Promise.all(items
+        .filter((item, index) => item.uploadMode === 'Multipart' && !finished.has(index))
+        .map((item) => abortQuietly(uploadToken, item)));
+
+    // The first failure is what went wrong; the rest are the files it stopped.
+    throw failures[0];
+}
 
 /** Fails before anything is uploaded, with the same limit the server enforces at presign. */
 function assertWithinBundleLimit(files: readonly File[]): void {
@@ -61,21 +117,21 @@ export async function executeStandardUploadWorkflow(
     };
 
     const limiter = createConcurrencyLimiter(MAX_PARTS_IN_FLIGHT);
-    const uploadTasks = items.map(async (item, index) => {
+    await uploadAllOrStop(items, presign.uploadToken, async (item, index, fileSignal) => {
         const currentFile = files[index];
 
         if (item.uploadMode === 'Multipart') {
             await executeMultipartUpload(
                 fileSource(currentFile),
                 item,
-                presign.uploadToken, 
+                presign.uploadToken,
                 {
                     concurrency: MULTIPART_CONCURRENCY,
                     limiter,
-                    signal,
+                    signal: fileSignal,
                     onChunkUploaded: (chunkSize) => {
                         fileUploadedBytes[index] += chunkSize;
-                        syncProgress(); 
+                        syncProgress();
                     },
                 }
             );
@@ -84,14 +140,15 @@ export async function executeStandardUploadWorkflow(
                 throw new Error(`Missing upload URL for file ${item.fileName}`);
             }
             const uploadUrl = item.uploadUrl;
-            await limiter.run(() => uploadApi.uploadDirectToS3(uploadUrl, currentFile, (percent) => {
-                fileUploadedBytes[index] = Math.round((currentFile.size * percent) / PERCENT_COMPLETE);
-                syncProgress();
-            }));
+            await limiter.run(() => {
+                throwIfAborted(fileSignal);
+                return uploadApi.uploadDirectToS3(uploadUrl, currentFile, (percent) => {
+                    fileUploadedBytes[index] = Math.round((currentFile.size * percent) / PERCENT_COMPLETE);
+                    syncProgress();
+                }, fileSignal);
+            });
         }
-    });
-
-    await Promise.all(uploadTasks);
+    }, signal);
     onProgress(PERCENT_COMPLETE);
 
     const shareToken = await uploadApi.confirmUpload({ 
@@ -166,7 +223,7 @@ export async function executeEncryptedUploadWorkflow(
     };
 
     const limiter = createConcurrencyLimiter(MAX_PARTS_IN_FLIGHT);
-    const uploadTasks = items.map(async (item, index) => {
+    await uploadAllOrStop(items, presign.uploadToken, async (item, index, fileSignal) => {
         const encryptedItem = prepared.files[index];
 
         if (item.uploadMode === 'Multipart') {
@@ -180,7 +237,7 @@ export async function executeEncryptedUploadWorkflow(
                 {
                     concurrency: MULTIPART_CONCURRENCY,
                     limiter,
-                    signal,
+                    signal: fileSignal,
                     onChunkUploaded: (chunkSize) => {
                         fileUploadedBytes[index] += chunkSize;
                         syncProgress();
@@ -195,16 +252,15 @@ export async function executeEncryptedUploadWorkflow(
             // slot while encrypting keeps many of them from being encrypted into memory at the same time.
             const uploadUrl = item.uploadUrl;
             await limiter.run(async () => {
+                throwIfAborted(fileSignal);
                 const ciphertext = await encryptWholeFile(encryptedItem);
                 await uploadApi.uploadDirectToS3(uploadUrl, ciphertext, (percent) => {
                     fileUploadedBytes[index] = Math.round((encryptedItem.encryptedSize * percent) / PERCENT_COMPLETE);
                     syncProgress();
-                });
+                }, fileSignal);
             });
         }
-    });
-
-    await Promise.all(uploadTasks);
+    }, signal);
     onProgress(PERCENT_COMPLETE);
 
     const shareToken = await uploadApi.confirmUpload({
