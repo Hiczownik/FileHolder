@@ -139,8 +139,8 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
             async (url) => streamOf(bundle.ciphertexts.get(url.replace('storage://', ''))!)
         );
         const saved: (readonly [string, string])[] = [];
-        vi.mocked(saveStreamToDisk).mockImplementation(async (stream, file) => {
-            saved.push([file.fileName, decoder.decode(await readAll(stream.getReader(), []))]);
+        vi.mocked(saveStreamToDisk).mockImplementation(async (open, file) => {
+            saved.push([file.fileName, decoder.decode(await readAll((await open()).getReader(), []))]);
             return { method: 'memory', skipped: [] };
         });
 
@@ -197,6 +197,11 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
             files: [{ id: FILE_A.serverId, fileName: FILE_A.fileName, sizeBytes: 1, contentType: 'text/plain' }],
         });
         const openSessionSpy = vi.spyOn(downloadApi, 'openDownloadSession');
+        // Like a real saving method, opens the download once it is ready to write it.
+        vi.mocked(saveStreamToDisk).mockImplementation(async (open) => {
+            await (await open()).cancel();
+            return { method: 'memory', skipped: [] };
+        });
 
         const { result } = renderHook(() => useFileDownload(neverUnlockedToken));
         await waitFor(() => {

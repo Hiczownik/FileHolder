@@ -8,6 +8,8 @@ const SECOND = Uint8Array.from({ length: SECOND_LENGTH }, (_, i) => FIRST_LENGTH
 const UUID_LENGTH = 36;
 const REGISTERED_TIMEOUT_MS = 3_000;
 const STARTED_TIMEOUT_MS = 10_000;
+// The failed registration, then the one that worked; after that the worker is reused.
+const SUCCESSFUL_ATTEMPT = 2;
 
 interface PortMessage {
     readonly type: string;
@@ -84,7 +86,7 @@ describe('saveViaServiceWorker', () => {
             downloaded = downloadFrom(messageQueue(ports[0]), ports[0]);
         };
 
-        const outcome = await saveViaServiceWorker(streamOf(FIRST, SECOND), { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl });
+        const outcome = await saveViaServiceWorker(async () => streamOf(FIRST, SECOND), { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl });
 
         expect(outcome).toBe('saved');
         expect(await downloaded).toEqual([...FIRST, ...SECOND]);
@@ -92,41 +94,41 @@ describe('saveViaServiceWorker', () => {
         expect(openedUrl.length).toBe(DOWNLOAD_WORKER_SCOPE.length + UUID_LENGTH);
     });
 
-    it('is unavailable, leaving the stream untouched, when there is no worker', async () => {
-        const stream = streamOf(FIRST);
+    it('is unavailable, without opening the stream, when there is no worker', async () => {
+        const open = vi.fn(async () => streamOf(FIRST));
 
-        expect(await saveViaServiceWorker(stream, { fileName: 'a.bin' }, { getWorker: async () => null, openUrl: vi.fn() }))
+        expect(await saveViaServiceWorker(open, { fileName: 'a.bin' }, { getWorker: async () => null, openUrl: vi.fn() }))
             .toEqual({ unavailable: expect.stringContaining('download worker') });
-        expect(stream.locked).toBe(false);
+        expect(open).not.toHaveBeenCalled();
     });
 
     it('is unavailable when the worker never confirms the registration', async () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         const { worker } = createFakeWorker(false);
-        const stream = streamOf(FIRST);
+        const open = vi.fn(async () => streamOf(FIRST));
         const openUrl = vi.fn();
 
-        const outcome = saveViaServiceWorker(stream, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl });
+        const outcome = saveViaServiceWorker(open, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl });
         await vi.advanceTimersByTimeAsync(REGISTERED_TIMEOUT_MS);
 
         expect(await outcome).toEqual({ unavailable: 'the download worker did not accept the download' });
         expect(openUrl).not.toHaveBeenCalled();
-        expect(stream.locked).toBe(false);
+        expect(open).not.toHaveBeenCalled();
     });
 
     it('is unavailable when the download never starts, and fails that download should it start later', async () => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
         const { worker, ports } = createFakeWorker();
-        const stream = streamOf(FIRST);
+        const open = vi.fn(async () => streamOf(FIRST));
         let markOpened: () => void = () => undefined;
         const opened = new Promise<void>((resolve) => { markOpened = resolve; });
 
-        const outcome = saveViaServiceWorker(stream, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl: () => markOpened() });
+        const outcome = saveViaServiceWorker(open, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl: () => markOpened() });
         await opened;
         await vi.advanceTimersByTimeAsync(STARTED_TIMEOUT_MS);
 
         expect(await outcome).toEqual({ unavailable: 'the browser did not start the download within 10 s' });
-        expect(stream.locked).toBe(false);
+        expect(open).not.toHaveBeenCalled();
         // The first thing a late request would read is an error, so it fails at once.
         expect(await messageQueue(ports[0])()).toMatchObject({ type: 'error' });
     });
@@ -144,7 +146,7 @@ describe('saveViaServiceWorker', () => {
             downloaded = downloadFrom(messageQueue(ports[0]), ports[0]);
         };
 
-        await expect(saveViaServiceWorker(failing, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl }))
+        await expect(saveViaServiceWorker(async () => failing, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl }))
             .rejects.toThrow('Decryption failed at chunk 1');
         await expect(downloaded).rejects.toThrow('Decryption failed at chunk 1');
     });
@@ -157,8 +159,42 @@ describe('saveViaServiceWorker', () => {
             void downloadFrom(messageQueue(ports[0]), ports[0], 1);
         };
 
-        await expect(saveViaServiceWorker(endless, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl }))
+        await expect(saveViaServiceWorker(async () => endless, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl }))
             .rejects.toBeInstanceOf(DownloadCancelledError);
         expect(cancel).toHaveBeenCalled();
+    });
+
+    it('fails the started download when opening the stream fails', async () => {
+        const { worker, ports } = createFakeWorker();
+        let downloaded: Promise<number[]> = Promise.resolve([]);
+        const openUrl = (): void => {
+            downloaded = downloadFrom(messageQueue(ports[0]), ports[0]);
+        };
+
+        await expect(saveViaServiceWorker(async () => { throw new Error('This bundle has expired.'); }, { fileName: 'a.bin' }, { getWorker: async () => worker, openUrl }))
+            .rejects.toThrow('This bundle has expired.');
+        await expect(downloaded).rejects.toThrow('This bundle has expired.');
+    });
+});
+
+describe('getDownloadWorker', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        vi.resetModules();
+    });
+
+    // Issue #41: a failed first registration used to be kept for the whole page, so the worker was never used.
+    it('tries again on the next download after a failed registration, and keeps a worker once it has one', async () => {
+        const activeWorker = { state: 'activated' } as ServiceWorker;
+        const register = vi.fn()
+            .mockRejectedValueOnce(new Error('storage is blocked'))
+            .mockResolvedValue({ active: activeWorker });
+        vi.stubGlobal('navigator', { ...navigator, serviceWorker: { register } });
+        const { getDownloadWorker } = await import('../serviceWorkerSaving');
+
+        expect(await getDownloadWorker()).toBeNull();
+        expect(await getDownloadWorker()).toBe(activeWorker);
+        expect(await getDownloadWorker()).toBe(activeWorker);
+        expect(register).toHaveBeenCalledTimes(SUCCESSFUL_ATTEMPT);
     });
 });

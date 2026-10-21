@@ -74,7 +74,7 @@ describe('download-sw.js with the page side', () => {
         const listeners = loadWorkerScript();
         const { opened, openUrl } = iframeThrough(listeners);
 
-        const saving = saveViaServiceWorker(streamOf(FIRST, SECOND), { fileName: FILE_NAME }, { getWorker: async () => asServiceWorker(listeners), openUrl });
+        const saving = saveViaServiceWorker(async () => streamOf(FIRST, SECOND), { fileName: FILE_NAME }, { getWorker: async () => asServiceWorker(listeners), openUrl });
         const served = await opened;
         const body = new Uint8Array(await served.arrayBuffer());
 
@@ -96,7 +96,7 @@ describe('download-sw.js with the page side', () => {
             },
         });
 
-        const saving = saveViaServiceWorker(failing, { fileName: FILE_NAME }, { getWorker: async () => asServiceWorker(listeners), openUrl });
+        const saving = saveViaServiceWorker(async () => failing, { fileName: FILE_NAME }, { getWorker: async () => asServiceWorker(listeners), openUrl });
         const served = await opened;
 
         await Promise.all([
@@ -109,7 +109,7 @@ describe('download-sw.js with the page side', () => {
         const listeners = loadWorkerScript();
         const { opened, openUrl, urls } = iframeThrough(listeners);
 
-        const saving = saveViaServiceWorker(streamOf(FIRST), { fileName: FILE_NAME }, { getWorker: async () => asServiceWorker(listeners), openUrl });
+        const saving = saveViaServiceWorker(async () => streamOf(FIRST), { fileName: FILE_NAME }, { getWorker: async () => asServiceWorker(listeners), openUrl });
         await (await opened).arrayBuffer();
         await saving;
 

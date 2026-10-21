@@ -122,8 +122,8 @@ describe('useFileDownload streaming decryption', () => {
     it('decrypts a chunk-encrypted file as it downloads and hands the plaintext stream to the saver', async () => {
         const bundle = await buildStreamBundle();
         const saved: Uint8Array[] = [];
-        vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
-            saved.push(...(await readAll(stream.getReader(), [])));
+        vi.mocked(saveStreamToDisk).mockImplementation(async (open) => {
+            saved.push(...(await readAll((await open()).getReader(), [])));
             return { method: 'service-worker', skipped: [] };
         });
 
@@ -147,8 +147,8 @@ describe('useFileDownload streaming decryption', () => {
         // The saver reads one decrypted chunk, then waits, so the test can look at the progress mid-download.
         let releaseSaver: () => void = () => undefined;
         const saverMayFinish = new Promise<void>((resolve) => { releaseSaver = resolve; });
-        vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
-            const reader = stream.getReader();
+        vi.mocked(saveStreamToDisk).mockImplementation(async (open) => {
+            const reader = (await open()).getReader();
             await reader.read();
             await saverMayFinish;
             await readAll(reader, []);
@@ -188,8 +188,8 @@ describe('useFileDownload streaming decryption', () => {
                 controller.error(new TypeError('network error'));
             },
         });
-        vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
-            await readAll(stream.getReader(), []);
+        vi.mocked(saveStreamToDisk).mockImplementation(async (open) => {
+            await readAll((await open()).getReader(), []);
             return { method: 'opfs', skipped: [] };
         });
 
@@ -211,8 +211,8 @@ describe('useFileDownload streaming decryption', () => {
         const tampered = bundle.ciphertext.slice();
         // The first byte of the second encrypted chunk (each is CHUNK plaintext bytes plus a tag).
         tampered[CHUNK + STREAM_TAG_BYTES] ^= 1;
-        vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
-            await readAll(stream.getReader(), []);
+        vi.mocked(saveStreamToDisk).mockImplementation(async (open) => {
+            await readAll((await open()).getReader(), []);
             return { method: 'memory', skipped: [] };
         });
 

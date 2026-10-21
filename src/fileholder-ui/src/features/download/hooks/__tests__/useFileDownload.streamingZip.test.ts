@@ -147,15 +147,16 @@ describe('useFileDownload streaming ZIP of an encrypted bundle', () => {
         const events: string[] = [];
         serveCiphertexts(bundle.ciphertexts, events);
         let zipBytes = new Uint8Array(0);
-        vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
-            zipBytes = new Uint8Array(await new Blob(await readAll(stream.getReader(), []) as BlobPart[]).arrayBuffer());
+        vi.mocked(saveStreamToDisk).mockImplementation(async (open) => {
+            zipBytes = new Uint8Array(await new Blob(await readAll((await open()).getReader(), []) as BlobPart[]).arrayBuffer());
             return { method: 'service-worker', skipped: [] };
         });
 
         const result = await unlockAndDownloadAll(bundle);
 
         expect(result.current.error).toBeNull();
-        expect(vi.mocked(saveStreamToDisk).mock.calls[0][1]).toEqual({ fileName: `Streamed_Zip_${SHARE_TOKEN}.zip` });
+        // The size handed to the saving method is exactly what was written, ZIP headers included (issue #26).
+        expect(vi.mocked(saveStreamToDisk).mock.calls[0][1]).toEqual({ fileName: `Streamed_Zip_${SHARE_TOKEN}.zip`, sizeBytes: zipBytes.byteLength });
         expect(downloadApi.openDownloadSession).toHaveBeenCalledTimes(1);
         // Lazy and sequential: the next file is only fetched once the previous one has been read to the end.
         expect(events).toEqual(['open srv-a', 'end srv-a', 'open srv-b', 'end srv-b']);
@@ -171,8 +172,8 @@ describe('useFileDownload streaming ZIP of an encrypted bundle', () => {
         const tampered = bundle.ciphertexts.get('srv-a')!.slice();
         tampered[CHUNK + STREAM_TAG_BYTES] ^= 1;
         serveCiphertexts(new Map([...bundle.ciphertexts, ['srv-a', tampered]]), []);
-        vi.mocked(saveStreamToDisk).mockImplementation(async (stream) => {
-            await readAll(stream.getReader(), []);
+        vi.mocked(saveStreamToDisk).mockImplementation(async (open) => {
+            await readAll((await open()).getReader(), []);
             return { method: 'memory', skipped: [] };
         });
 
