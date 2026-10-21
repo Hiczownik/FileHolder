@@ -20,7 +20,7 @@
 * **Uploading:** the browser asks the API to **presign** the bundle, uploads each file **straight to storage**, then **confirms**:
   * Files up to 50 MB go in a single `PUT`. Larger files go as a multipart upload in parts of at least 16 MiB, 4 at a time, retried with backoff.
   * On confirm, the API checks every stored file's size against what it approved. It serves single-file uploads from a copy, so the original upload link can't overwrite them.
-  * The sender gets a share link (`/f/<token>`) and a QR code for it.
+  * The sender gets a share link (`/f/<token>`, plus `#k=<key>` for encrypted bundles) and a QR code for it.
 * **Downloading:** the recipient opens the link, unlocks it with the password if there is one, and starts a **download session**:
   * The session counts as one download and lasts up to 6 hours, never past the bundle's expiry. Within it, the recipient can fetch the files (or retry) without using up another download.
   * Each file link is valid for 5 minutes and points straight at storage.
@@ -30,12 +30,22 @@
   * A background worker runs every 30 minutes. It deletes a closed bundle's files from storage once no download session is still running (plus a 10-minute grace for links already handed out).
   * **The bundle's database rows are currently kept after that** (file names, title, key material). Fixing this is tracked in [#77](https://github.com/Hiczownik/FileHolder/issues/77).
 * **End-to-end encryption (optional):**
-  * **Keys:** the browser creates a random master key and locks it with a key derived from the passkey (PBKDF2-SHA-256, 300,000 rounds, then HKDF). Each file gets its own key derived from the master key.
+  * **The key is in the link:** the browser creates a random 256-bit *link key* and puts it in the share link's fragment (`/f/<token>#k=<key>`). Browsers never send the fragment to a server, not even in the `Referer` header, so the API and nginx never see it.
+  * **Two modes**, chosen on the upload form:
+
+    | Mode | What the recipient needs | Who can read the files |
+    | :--- | :--- | :--- |
+    | Link only (**default**) | the link (or its QR code) | **anyone who has the link**: chat history, synced browser history, extensions, a photo of the QR code |
+    | *Also require a passkey* | the link **and** a passkey, sent separately | only someone with both. A leaked link alone is useless, and so is a leaked passkey alone |
+
+    Use the passkey for sensitive files. A bundle's mode can't be changed after upload.
+  * **Keys:** the browser creates a random master key and locks it with a key derived from the link key, plus the passkey when there is one. The passkey is stretched with PBKDF2-SHA-256 (300,000 rounds), because it's what someone holding the link would have to guess. The random link key isn't stretched. Both then go through HKDF, salted per bundle. Each file gets its own key derived from the master key.
   * **File contents:** encrypted with AES-256-GCM in 4 MiB chunks. Each chunk's position and a last-chunk flag are authenticated, so chunks can't be reordered, dropped or added.
   * **File names and types:** live only in an encrypted manifest. Storage holds `<id>.enc` files.
   * **Title:** encrypted with the master key like the manifest, and only returned once the bundle is unlocked. Until then, the page shows "Encrypted bundle".
-  * **What the server receives:** never the passkey, only a separate value derived from it, used to check the unlock.
-  * **What it can still see:** the number of files, each file's encrypted size (the real size to within 16 bytes per 4 MiB), the expiry, the download limit and how many downloads were used. Anyone with the link sees the same, without the passkey.
+  * **What the server receives:** never the link key or the passkey. It only gets a separate value derived from them, which it checks on unlock like a password (bcrypt, lockout after repeated failures).
+  * **What it can still see:** the number of files, each file's encrypted size (the real size to within 16 bytes per 4 MiB), the expiry, the download limit, how many downloads were used, and whether the bundle needs a passkey. Anyone with the link without its key (or without the passkey) sees the same.
+  * **Older encrypted bundles**, which had only a passkey and no key in the link, can no longer be opened. The page says so.
 
 ---
 
@@ -126,6 +136,13 @@ The default credentials (`minioadmin`, the Postgres password in `appsettings.jso
 * **Storage addresses** (`Storage:ServiceUrl` for the API, `Storage:PublicBaseUrl` for browsers) may each be `http://` or `https://`. Upload and download links follow `PublicBaseUrl`'s scheme, so when the app is served over HTTPS, storage must be too, or browsers block the links as mixed content.
 
 ### Encrypted Downloads
+* **Opening the link:**
+  * The page reads the key from the address and then removes it, so it doesn't stay on screen or in screenshots. Anything else in the address, such as `?diagnostics`, stays.
+  * The key is kept for that browser tab (`sessionStorage`), so a reload still works. It's forgotten once the bundle has expired or been deleted.
+  * Link-only bundles open without a prompt. Bundles with a passkey ask for the passkey only.
+* **Incomplete or damaged links:**
+  * A link whose key is missing or cut short says *"This link is incomplete"*. The server isn't asked to unlock, so none of the bundle's unlock attempts are used up.
+  * A key the server refuses says the link is damaged (or, with a passkey, that the passkey or the link is wrong).
 * **Size limits:** encrypted files are encrypted and decrypted in the browser in 4 MiB chunks, so their size doesn't depend on the browser's memory.
 * **How they're saved:** written to disk as they decrypt. Through a service worker (Chrome, Edge, Firefox); otherwise a "Save as" dialog; otherwise the site's private storage (OPFS, which Safari has).
 * **Browsers with none of those** save in memory, capped at 1 GB. They're told before the download starts (so no download is used up) to open the link in Chrome, Edge or Firefox for anything larger.
@@ -222,11 +239,16 @@ Encrypted downloads are saved differently per browser (see *Encrypted Downloads*
    cloudflared tunnel --url http://localhost:9000   # storage: upload and download links point straight at it
    ```
 3. **Point upload and download links at the storage tunnel:** copy `docker-compose.override.example.yml` to `docker-compose.override.yml` (git-ignored), put the storage tunnel's address in it, then `docker compose up -d api`.
-4. **Upload through the app tunnel's address** (on the PC is fine), so the share link uses that address too. Open the share link on the phone with `?diagnostics` added, e.g. `https://….trycloudflare.com/f/AbCd1234?diagnostics`. A *Diagnostics* panel shows which saving methods the browser will try, why others are left out, the free site storage, and how the last download was saved. **Copy** puts the whole report on the clipboard.
+4. **Upload through the app tunnel's address** (on the PC is fine), so the share link uses that address too. Open the share link on the phone with `?diagnostics` added **before the `#`**, e.g. `https://….trycloudflare.com/f/AbCd1234?diagnostics#k=…`. A *Diagnostics* panel shows which saving methods the browser will try, why others are left out, the free site storage, and how the last download was saved. **Copy** puts the whole report on the clipboard.
 5. **Checks:**
    - A small encrypted file downloads to *Files → Downloads* and opens; the panel says `via opfs`.
    - An encrypted file of about 1.5 GB (over the 1 GB in-memory cap) also says `via opfs`. If the page instead says the browser *can only save up to 1 GB*, the panel's *Left out up front* / *Skipped* reasons say why OPFS wasn't used.
    - *Download All* on a multi-file encrypted bundle gives a ZIP that opens in Files.
+   - **Link keys:**
+     - A link-only bundle opens on the phone without a prompt, both from a pasted link and by scanning the success card's QR code with the camera.
+     - A bundle with *Also require a passkey* asks for the passkey only.
+     - After opening, the address bar shows no `#k=…`.
+     - Reloading the page still opens the bundle.
    - A tampered file must fail with an error, not save. Tamper with the stored copy (Git Bash on Windows): `scripts/tamper-stored-file.sh <share-token> [file-number] [byte-offset]`. It flips one byte (by default in the middle of the file) and prints the command that restores it.
 6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the storage console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api`.
 
