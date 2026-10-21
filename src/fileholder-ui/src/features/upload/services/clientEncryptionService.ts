@@ -7,7 +7,7 @@ import {
     STREAM_TAG_BYTES,
     type StreamParams,
 } from "../../../shared/utils/crypto/streamCipher";
-import type { FileItemMetadata } from "../../download/types";
+import type { FileItemMetadata, KeyMode } from "../../download/types";
 
 /**
  * One file of an encrypted bundle, ready to upload. Nothing is encrypted up front: the plaintext stays in
@@ -32,16 +32,25 @@ export interface PreparedEncryptedPayload {
     readonly kAuth: string;
     /** The title, encrypted with the master key like the manifest; absent when the bundle has none. */
     readonly encryptedTitle?: string;
+    /** Goes only in the share link's fragment; never sent to the server. */
+    readonly linkKey: string;
+    readonly keyMode: KeyMode;
 }
 
+/**
+ * Encrypts the bundle's manifest and title, and sets up the keys its files are encrypted with. With a passkey,
+ * recipients need it as well as the link; without one, the link alone opens the files.
+ */
 export async function prepareEncryptedBundle(
     files: readonly File[],
-    password: string,
+    passkey: string | undefined,
     title?: string
 ): Promise<PreparedEncryptedPayload> {
     const masterKey = await cryptoEngine.generateKey();
     const salt = cryptoEngine.generateSalt();
-    const { kAuth, kWrap } = await cryptoEngine.deriveDualKeys(password, salt);
+    // Separate from the master key, so the master key only ever exists wrapped.
+    const linkKey = cryptoEngine.generateLinkKey();
+    const { kAuth, kWrap } = await cryptoEngine.deriveLinkKeys(linkKey, salt, passkey);
     const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap);
 
     const encryptedFiles = await Promise.all(files.map(async (file): Promise<EncryptedFileItem> => {
@@ -75,6 +84,8 @@ export async function prepareEncryptedBundle(
         keySalt: base64Url.encode(salt),
         kAuth,
         encryptedTitle: trimmedTitle === '' ? undefined : await cryptoEngine.encryptJson(masterKey, trimmedTitle),
+        linkKey,
+        keyMode: passkey === undefined ? 'LinkKey' : 'LinkKeyAndPasskey',
     };
 }
 

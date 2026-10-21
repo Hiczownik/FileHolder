@@ -1,15 +1,17 @@
 import { useReducer, useRef } from "react";
-import type { UploadFormValues, UploadState } from "../types";
+import { keyModeOf, type UploadFormValues, type UploadState } from "../types";
+import type { KeyMode } from "../../download/types";
 import { parseApiError } from "../../../shared/utils/parseApiError";
 import {
     executeStandardUploadWorkflow,
     executeEncryptedUploadWorkflow,
+    PASSKEY_REQUIRED_MESSAGE,
 } from "../services/uploadWorkflow";
 
 type UploadAction =
     | { type: 'START_UPLOAD' }
     | { type: 'SET_PROGRESS'; payload: number }
-    | { type: 'UPLOAD_SUCCESS'; payload: { shareLink: string; isEncrypted: boolean } }
+    | { type: 'UPLOAD_SUCCESS'; payload: { shareLink: string; keyMode?: KeyMode } }
     | { type: 'UPLOAD_ERROR'; payload: string }
     | { type: 'RESET' };
 
@@ -40,11 +42,9 @@ export const useFileUpload = () => {
 
         abortControllerRef.current = new AbortController();
 
-        if (formValues.isEncrypted && !formValues.password) {
-            dispatch({
-                type: 'UPLOAD_ERROR',
-                payload: 'A passkey is required for Zero-Knowledge End-to-End Encryption.',
-            });
+        const keyMode = keyModeOf(formValues);
+        if (keyMode === 'LinkKeyAndPasskey' && !formValues.password) {
+            dispatch({ type: 'UPLOAD_ERROR', payload: PASSKEY_REQUIRED_MESSAGE });
             return;
         }
 
@@ -67,7 +67,7 @@ export const useFileUpload = () => {
 
             dispatch({
                 type: 'UPLOAD_SUCCESS',
-                payload: { shareLink, isEncrypted: Boolean(formValues.isEncrypted) },
+                payload: { shareLink, keyMode },
             });
         } catch (err: unknown) {
             dispatch({ type: 'UPLOAD_ERROR', payload: parseApiError(err) });

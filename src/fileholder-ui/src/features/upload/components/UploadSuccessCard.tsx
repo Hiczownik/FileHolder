@@ -2,14 +2,23 @@ import { Check } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { CopyButton } from "../../../shared/components/CopyButton";
 import { Button } from "../../../shared/components/Button";
+import type { KeyMode } from "../../download/types";
 
 interface Props {
+    /** For an encrypted bundle, includes the link key in its fragment. */
     shareLink: string;
-    isEncrypted: boolean;
+    /** Set for encrypted bundles only. */
+    keyMode?: KeyMode;
     onReset: () => void;
 }
 
-export const UploadSuccessCard: React.FC<Props> = ({ shareLink, isEncrypted, onReset }) => {
+// What the sender must know before sharing, by how the bundle is unlocked.
+const KEY_MODE_NOTES: Readonly<Record<KeyMode, string>> = {
+    LinkKey: 'Anyone with this link or QR code can open the files.',
+    LinkKeyAndPasskey: "The link alone won't open the files. Share the passkey separately (not in the same message).",
+};
+
+export const UploadSuccessCard: React.FC<Props> = ({ shareLink, keyMode, onReset }) => {
     return (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-6">
             <div className="p-4 bg-emerald-500/10 rounded-full w-16 h-16 mx-auto flex items-center justify-center text-emerald-400 border border-emerald-500/20">
@@ -47,10 +56,8 @@ export const UploadSuccessCard: React.FC<Props> = ({ shareLink, isEncrypted, onR
                     className="mx-auto rounded-xl"
                 />
                 <p className="text-xs text-slate-400">Scan to open the link on another device.</p>
-                {isEncrypted && (
-                    <p className="text-xs text-amber-400">
-                        The QR code holds only the link. Share the passkey separately.
-                    </p>
+                {keyMode && (
+                    <p className="text-xs text-amber-400">{KEY_MODE_NOTES[keyMode]}</p>
                 )}
             </div>
 

@@ -148,9 +148,10 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await fileInput.setInputFiles([testFile1, testFile2]);
     await expect(page.getByText('Selected Files (2)')).toBeVisible();
 
-    const e2eeCheckbox = page.locator('input[type="checkbox"]');
+    const e2eeCheckbox = page.getByRole('checkbox', { name: 'End-to-end encryption' });
     await e2eeCheckbox.click();
     await expect(e2eeCheckbox).toBeChecked();
+    await page.getByRole('checkbox', { name: 'Also require a passkey' }).click();
 
     const passwordInput = page.locator('input[type="password"]');
     await passwordInput.fill('ClassifiedPass123!');
@@ -170,6 +171,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     expect(postData.keyEnvelope).toBeTruthy();
     expect(postData.keySalt).toBeTruthy();
     expect(postData.encryptedManifest).toBeTruthy();
+    expect(postData.keyMode).toBe('LinkKeyAndPasskey');
 
     // Verify plaintext password is never sent over the wire
     expect(rawPostData).not.toContain('ClassifiedPass123!');
@@ -178,9 +180,10 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await expect(shareLinkInput).toBeVisible({ timeout: 30000 });
 
     const shareUrl = await shareLinkInput.inputValue();
-    // Clean URL invariant: Share URL MUST NOT contain any #key= fragment
-    expect(shareUrl).toMatch(/\/f\/[A-Za-z0-9_-]+$/);
-    expect(shareUrl).not.toContain('#key=');
+    // The link key travels only in the fragment: matches "/f/abc#k=" plus 43 base64url characters, rejects "/f/abc".
+    // https://regex101.com/?regex=%5C%2Ff%5C%2F%5BA-Za-z0-9_-%5D%2B%23k%3D%5BA-Za-z0-9_-%5D%7B43%7D%24&testString=%2Ff%2Fabc%23k%3Dq3-_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%0A%2Ff%2Fabc
+    expect(shareUrl).toMatch(/\/f\/[A-Za-z0-9_-]+#k=[A-Za-z0-9_-]{43}$/);
+    expect(rawPostData).not.toContain(new URL(shareUrl).hash.slice('#k='.length));
 
     const downloaderContext = await browser.newContext();
     const downloaderPage = await downloaderContext.newPage();
@@ -277,7 +280,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
 
       await expect(page.getByText('Selected Files (2)')).toBeVisible();
 
-      const e2eCheckbox = page.locator('input[type="checkbox"]');
+      const e2eCheckbox = page.getByRole('checkbox', { name: 'End-to-end encryption' });
       await e2eCheckbox.click();
       await expect(e2eCheckbox).toBeChecked();
 
@@ -285,8 +288,12 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       const warningBanner = page.locator('.bg-amber-500\\/10');
       await expect(warningBanner).not.toBeVisible();
 
-      // Submit is disabled until passkey is entered
+      // The link carries the key, so no passkey is needed by default
       const submitBtn = page.getByRole('button', { name: /Generate Shareable Link/i });
+      await expect(submitBtn).toBeEnabled();
+
+      // Once a passkey is required, submit is disabled until it is entered
+      await page.getByRole('checkbox', { name: 'Also require a passkey' }).click();
       await expect(submitBtn).toBeDisabled();
 
       // Entering passkey enables the submit button for 220 MB payload
@@ -324,7 +331,8 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       await page.getByPlaceholder(/e.g. Project Deliverables v1/i).fill('Chunked E2EE');
       await page.locator('input[type="file"]').setInputFiles([filePath]);
       await expect(page.getByText('Selected Files (1)')).toBeVisible();
-      await page.locator('input[type="checkbox"]').click();
+      await page.getByRole('checkbox', { name: 'End-to-end encryption' }).click();
+      await page.getByRole('checkbox', { name: 'Also require a passkey' }).click();
       await page.locator('input[type="password"]').fill('ChunkedPass123!');
 
       const presignResponsePromise = page.waitForResponse((res) => res.url().includes('/api/v1/files/presign') && res.request().method() === 'POST');

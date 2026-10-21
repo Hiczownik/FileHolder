@@ -40,13 +40,18 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
             maxDownloads: DEFAULT_MAX_DOWNLOADS,
             password: '',
             isEncrypted: false,
+            requirePasskey: false,
         },
     });
 
     const isEncrypted = useWatch({ control, name: 'isEncrypted' }) ?? false;
+    const requirePasskey = useWatch({ control, name: 'requirePasskey' }) ?? false;
     const passwordValue = useWatch({ control, name: 'password' }) ?? '';
 
-    const isPasswordMissingForE2EE = isEncrypted && (!passwordValue || passwordValue.trim().length === 0);
+    // An encrypted bundle's link carries its key, so it needs a passkey only when the uploader asks for one.
+    const isPasskeyRequired = isEncrypted && requirePasskey;
+    const showPasswordField = !isEncrypted || requirePasskey;
+    const isPasswordMissingForE2EE = isPasskeyRequired && (!passwordValue || passwordValue.trim().length === 0);
     const isSubmitDisabled = files.length === 0 || isPasswordMissingForE2EE;
 
     const handleFilesSelect = (newFiles: File[]) => {
@@ -137,29 +142,51 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 </div>
             </div>
 
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0" />
-                    <div>
-                        <p className="text-xs font-semibold text-slate-200">Zero-Knowledge Envelope Encryption</p>
-                        <p className="text-[11px] text-slate-500">
-                            Files are encrypted with a private key wrapped by your password. Decryption requires your passkey.
-                        </p>
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0" />
+                        <div>
+                            <p className="text-xs font-semibold text-slate-200">Zero-Knowledge Envelope Encryption</p>
+                            <p className="text-[11px] text-slate-500">
+                                Files are encrypted in your browser. The key goes in the share link, which the server never sees.
+                            </p>
+                        </div>
                     </div>
+                    <input
+                        type="checkbox"
+                        aria-label="End-to-end encryption"
+                        {...register('isEncrypted')}
+                        className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                    />
                 </div>
-                <input
-                    type="checkbox"
-                    {...register('isEncrypted')}
-                    className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
-                />
+
+                {isEncrypted && (
+                    <div className="flex items-center justify-between border-t border-slate-800 pt-3 pl-8">
+                        <div>
+                            <p className="text-xs font-semibold text-slate-200">Also require a passkey</p>
+                            <p className="text-[11px] text-slate-500">
+                                {requirePasskey
+                                    ? "The link alone won't open the files. Send the passkey separately."
+                                    : 'The link is the secret: anyone who gets it can open the files. For sensitive files, also require a passkey.'}
+                            </p>
+                        </div>
+                        <input
+                            type="checkbox"
+                            aria-label="Also require a passkey"
+                            {...register('requirePasskey')}
+                            className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                        />
+                    </div>
+                )}
             </div>
 
-            <div>
+            {showPasswordField && <div>
                 <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-semibold text-slate-400 flex items-center gap-1.5">
                         <Lock className="w-4 h-4 text-indigo-400" />
                         <span>
-                            {isEncrypted ? 'Vault Passkey (Required for E2EE)' : 'Password Protection (Optional)'}
+                            {isEncrypted ? 'Passkey (Required)' : 'Password Protection (Optional)'}
                         </span>
                     </label>
                     {isEncrypted && (
@@ -176,10 +203,10 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 <input
                     type="password"
                     placeholder={isEncrypted ? 'Enter or generate a secure passkey' : 'Leave empty for public link'}
-                    {...register('password', { required: isEncrypted })}
+                    {...register('password', { required: isPasskeyRequired })}
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
                 />
-            </div>
+            </div>}
 
             {isUploading && <UploadProgress progress={uploadState.progress} />}
 

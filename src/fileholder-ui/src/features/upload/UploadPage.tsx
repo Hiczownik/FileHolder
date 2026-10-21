@@ -25,7 +25,7 @@ export const UploadPage: React.FC = () => {
             {uploadState.status === 'success' ? (
                 <UploadSuccessCard
                     shareLink={uploadState.shareLink}
-                    isEncrypted={uploadState.isEncrypted}
+                    keyMode={uploadState.keyMode}
                     onReset={reset}
                 />
             ) : (
