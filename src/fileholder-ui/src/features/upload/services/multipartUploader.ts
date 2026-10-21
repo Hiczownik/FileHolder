@@ -1,10 +1,17 @@
 import type { CompletedPartInput, PresignedItem } from "../../download/types";
 import { uploadApi } from "../api/uploadApi";
+import type { ConcurrencyLimiter } from "../../../shared/utils/concurrencyLimiter";
 
 export interface MultipartUploadOptions {
     concurrency?: number;
     onChunkUploaded?: (bytes: number) => void;
     signal?: AbortSignal;
+    /**
+     * Shared with every other upload of the same bundle, so the number of parts built and in flight is bounded
+     * for the whole bundle, not per file. A part is only read (and, for encrypted files, encrypted) once it holds
+     * a slot, so memory doesn't grow with the number of files.
+     */
+    limiter?: ConcurrencyLimiter;
 }
 
 const DEFAULT_CONCURRENCY = 4;
@@ -127,6 +134,8 @@ export async function executeMultipartUpload(
     let currentIndex = 0;
     let activeError: Error | null = null;
 
+    const runLimited = <T,>(task: () => Promise<T>): Promise<T> => (options?.limiter ? options.limiter.run(task) : task());
+
     const worker = async (): Promise<void> => {
         if (activeError || currentIndex >= partNumbers.length) {
             return;
@@ -137,15 +146,17 @@ export async function executeMultipartUpload(
         const end = Math.min(start + partSizeBytes, source.size);
 
         try {
-            const chunk = await source.read(start, end);
-            // Each part URL is signed for exactly this many bytes, so storage would refuse anything else.
-            if (chunk.size !== end - start) {
-                throw new Error(`Part ${partNumber} is ${chunk.size} bytes, but ${end - start} were expected.`);
-            }
+            await runLimited(async () => {
+                const chunk = await source.read(start, end);
+                // Each part URL is signed for exactly this many bytes, so storage would refuse anything else.
+                if (chunk.size !== end - start) {
+                    throw new Error(`Part ${partNumber} is ${chunk.size} bytes, but ${end - start} were expected.`);
+                }
 
-            const etag = await uploadPart(partNumber, chunk, 1);
-            completedParts.push({ partNumber, eTag: etag });
-            options?.onChunkUploaded?.(chunk.size);
+                const etag = await uploadPart(partNumber, chunk, 1);
+                completedParts.push({ partNumber, eTag: etag });
+                options?.onChunkUploaded?.(chunk.size);
+            });
         } catch (err) {
             activeError = err instanceof Error ? err : new Error(`Failed to upload part ${partNumber}`);
             throw activeError;
