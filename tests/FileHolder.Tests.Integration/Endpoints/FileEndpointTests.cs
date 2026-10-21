@@ -128,8 +128,10 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     // download limit
     [InlineData("document.pdf", "application/pdf", 1024, 24, 0, null)]
     [InlineData("document.pdf", "application/pdf", 1024, 24, 2000, null)]
-    // password
+    // password: too short, or only spaces (which would otherwise leave the bundle unprotected)
     [InlineData("document.pdf", "application/pdf", 1024, 24, 10, "123")]
+    [InlineData("document.pdf", "application/pdf", 1024, 24, 10, "    ")]
+    [InlineData("document.pdf", "application/pdf", 1024, 24, 10, "\t \t ")]
     public async Task GetPresignedUrl_Returns400BadRequest_WhenValidationFails(
         string fileName,
         string contentType,

@@ -81,6 +81,9 @@ public static partial class BundleRules
     private static partial Regex ContentTypeRegex();
 
     public static IRuleBuilderOptions<T, string?> MustBeValidPassword<T>(this IRuleBuilder<T, string?> rule) =>
-        rule.Must(password => string.IsNullOrEmpty(password) || password.Length is >= 4 and <= 100)
-            .WithMessage("Password must be between 4 and 100 characters.");
+        // Whitespace-only is refused, not treated as "no password": CryptoUtils.HashPassword stores no hash for it,
+        // so the bundle would quietly end up unprotected although the uploader asked for a password.
+        rule.Must(password => string.IsNullOrEmpty(password)
+                              || (!string.IsNullOrWhiteSpace(password) && password.Length is >= 4 and <= 100))
+            .WithMessage("Password must be between 4 and 100 characters, and not only spaces.");
 }

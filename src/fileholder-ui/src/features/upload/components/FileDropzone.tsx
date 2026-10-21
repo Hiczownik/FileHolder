@@ -16,6 +16,9 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
     };
 
     const handleDrop = (e: React.DragEvent) => {
+        // Otherwise the browser also opens the dropped file itself, navigating away and losing the form.
+        e.preventDefault();
+        e.stopPropagation();
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             onFilesSelect(Array.from(e.dataTransfer.files));
         }
