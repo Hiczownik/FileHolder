@@ -5,14 +5,15 @@ import { cn } from '../utils/cn';
 
 // eslint-disable-next-line react-refresh/only-export-components
 export const buttonVariants = cva(
-    'font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-slate-950',
+    'font-semibold rounded-xl transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-canvas',
     {
         variants: {
             variant: {
-                primary: 'bg-indigo-600 hover:bg-indigo-500 text-white focus:ring-indigo-500',
-                secondary: 'bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-800 hover:border-slate-700 focus:ring-slate-700',
-                danger: 'bg-rose-600 hover:bg-rose-500 text-white focus:ring-nose-500',
-                outline: 'bg-transparent hover:bg-slate-800/60 text-slate-300 border border-slate-800 hover:border-slate-700 focus:ring-slate-700',
+                primary: 'bg-accent-solid hover:bg-accent-solid/90 text-on-accent focus:ring-accent',
+                secondary: 'bg-surface hover:bg-surface-raised text-fg border border-line hover:border-line-strong focus:ring-line-strong',
+                // on-accent reads on the solid danger colour in both themes (white on dark red, dark on light red).
+                danger: 'bg-danger hover:bg-danger/90 text-on-accent focus:ring-danger',
+                outline: 'bg-transparent hover:bg-surface-raised text-fg-soft border border-line hover:border-line-strong focus:ring-line-strong',
             },
             size: {
                 sm: 'text-xs px-3 py-1.5',

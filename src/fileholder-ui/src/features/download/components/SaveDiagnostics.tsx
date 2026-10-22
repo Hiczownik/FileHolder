@@ -41,12 +41,12 @@ export const SaveDiagnostics: React.FC<Props> = ({ lastSaveReport }) => {
     });
 
     return (
-        <section aria-label="Download diagnostics" className="space-y-2 border-t border-slate-800 pt-4">
+        <section aria-label="Download diagnostics" className="space-y-2 border-t border-line pt-4">
             <div className="flex items-center justify-between">
-                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Diagnostics</h2>
+                <h2 className="text-xs font-semibold text-muted uppercase tracking-wider">Diagnostics</h2>
                 <CopyButton text={report} />
             </div>
-            <pre className="text-[11px] leading-relaxed text-slate-300 bg-slate-950 border border-slate-800 rounded-xl p-3 whitespace-pre-wrap break-words">
+            <pre className="text-[11px] leading-relaxed text-fg-soft bg-canvas border border-line rounded-xl p-3 whitespace-pre-wrap break-words">
                 {report}
             </pre>
         </section>

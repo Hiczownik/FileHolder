@@ -41,7 +41,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
 
     const shareLinkInput = page.locator('input[readonly]');
-    const errorBanner = page.locator('.bg-rose-500\\/10');
+    const errorBanner = page.locator('[data-variant="error"]');
 
     await Promise.race([
       shareLinkInput.waitFor({ state: 'visible', timeout: 30000 }),
@@ -101,7 +101,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
 
     await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
 
-    const errorBanner = page.locator('.bg-rose-500\\/10');
+    const errorBanner = page.locator('[data-variant="error"]');
     await expect(errorBanner).toBeVisible({ timeout: 10000 });
 
     const errorText = await errorBanner.textContent();
@@ -222,7 +222,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     const downloadPromise = downloaderPage.waitForEvent('download');
     await downloaderPage.getByRole('button', { name: /Download All.*ZIP/i }).click();
 
-    const downloadErrorBanner = downloaderPage.locator('.bg-rose-500\\/10');
+    const downloadErrorBanner = downloaderPage.locator('[data-variant="error"]');
     const download = await Promise.race([
       downloadPromise,
       downloadErrorBanner.waitFor({ state: 'visible', timeout: 30000 }).then(async () => {
@@ -286,7 +286,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       await expect(e2eCheckbox).toBeChecked();
 
       // Assert: No 200 MB warning banner appears in the new streaming architecture
-      const warningBanner = page.locator('.bg-amber-500\\/10');
+      const warningBanner = page.locator('[data-variant="warning"]');
       await expect(warningBanner).not.toBeVisible();
 
       // The link carries the key, so no passkey is needed by default
@@ -344,7 +344,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       expect(presign.items[0].partSizeBytes % ENCRYPTED_CHUNK_BYTES).toBe(0);
 
       const shareLinkInput = page.locator('input[readonly]');
-      const errorBanner = page.locator('.bg-rose-500\\/10');
+      const errorBanner = page.locator('[data-variant="error"]');
       await Promise.race([
         shareLinkInput.waitFor({ state: 'visible', timeout: TRANSFER_TIMEOUT_MS }),
         errorBanner.waitFor({ state: 'visible', timeout: TRANSFER_TIMEOUT_MS }).then(async () => {

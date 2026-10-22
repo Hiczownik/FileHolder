@@ -35,7 +35,7 @@ export const DownloadPage: React.FC = () => {
 
     if (isLoading) {
         return (
-            <div className="max-w-md mx-auto my-20 text-center text-slate-400 text-sm">
+            <div className="max-w-md mx-auto my-20 text-center text-muted text-sm">
                 Loading bundle details...
             </div>
         );
@@ -43,12 +43,12 @@ export const DownloadPage: React.FC = () => {
 
     if (error && !metadata) {
         return (
-            <div className="max-w-md mx-auto my-20 p-8 bg-slate-900 border border-slate-800 rounded-2xl text-center space-y-4">
-                <div className="p-4 bg-rose-500/10 rounded-full w-16 h-16 mx-auto flex items-center justify-center text-rose-400 border border-rose-500/20">
+            <div className="max-w-md mx-auto my-20 p-8 bg-surface border border-line rounded-2xl text-center space-y-4">
+                <div className="p-4 bg-danger-tint rounded-full w-16 h-16 mx-auto flex items-center justify-center text-danger border border-danger/30">
                     <ShieldAlert className="w-8 h-8" />
                 </div>
-                <h2 className="text-xl font-bold text-white">Bundle Unavailable</h2>
-                <p className="text-slate-400 text-sm">{error}</p>
+                <h2 className="text-xl font-bold text-fg">Bundle Unavailable</h2>
+                <p className="text-muted text-sm">{error}</p>
             </div>
         );
     }
@@ -58,18 +58,18 @@ export const DownloadPage: React.FC = () => {
     // bundle shows only the error explaining why.
     const lockedView = promptFor
         ? <PasswordPrompt kind={promptFor} password={password} isUnlocking={isUnlocking} onPasswordChange={setPassword} onUnlock={handleUnlock} />
-        : isUnlocking && <p className="text-center text-sm text-slate-400">Unlocking encrypted files...</p>;
+        : isUnlocking && <p className="text-center text-sm text-muted">Unlocking encrypted files...</p>;
     // Encrypted downloads report decrypted bytes; without it a long one looks as if it has stopped.
     const progressText = downloadProgress ? describeDownloadProgress(downloadProgress) : undefined;
 
     return (
         <div className="max-w-xl mx-auto my-12 px-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+            <div className="bg-surface border border-line rounded-2xl p-6 space-y-6">
                 {metadata && (
                     <div className="space-y-4">
                         {metadata.isEncrypted && (
                             <div className="flex items-center">
-                                <span className="inline-flex items-center gap-1.5 text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-full text-[11px] font-medium">
+                                <span className="inline-flex items-center gap-1.5 text-success bg-success-tint border border-success/30 px-2.5 py-1 rounded-full text-[11px] font-medium">
                                     <ShieldCheck className="w-3.5 h-3.5" />
                                     <span>End-to-End Encrypted</span>
                                 </span>
@@ -109,7 +109,7 @@ export const DownloadPage: React.FC = () => {
 
                         {/* Clean Read-Only Manifest (No Per-Row Action Buttons) */}
                         <div className="space-y-3">
-                            <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                            <h2 className="text-xs font-semibold text-muted uppercase tracking-wider">
                                 Files in Bundle ({metadata?.files.length})
                             </h2>
 

@@ -6,7 +6,7 @@ import { DownloadPage } from './features/download/DownloadPage';
 function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+      <div className="min-h-screen bg-canvas text-fg font-sans">
         <Navbar />
         <main>
           <Routes>

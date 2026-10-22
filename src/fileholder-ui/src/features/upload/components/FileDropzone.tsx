@@ -45,7 +45,7 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-indigo-500/30 hover:border-indigo-500/60 bg-slate-900/40 hover:bg-slate-900/80 rounded-2xl p-8 text-center cursor-pointer transition-all group"
+                className="border-2 border-dashed border-accent/40 hover:border-accent/70 bg-canvas hover:bg-surface-raised rounded-2xl p-8 text-center cursor-pointer transition-all group"
             >
                 <input
                     type="file"
@@ -56,22 +56,22 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
                 />
 
                 <div className="flex flex-col items-center gap-3">
-                    <div className="p-4 bg-slate-800 rounded-full text-indigo-400 group-hover:scale-110 transition-transform">
+                    <div className="p-4 bg-surface-raised rounded-full text-accent group-hover:scale-110 transition-transform">
                         <Upload className="w-8 h-8" />
                     </div>
                     <div>
-                        <p className="font-medium text-slate-200 text-base">
-                            Drag & Drop your files here, or <span className="text-indigo-400 underline">browse</span>
+                        <p className="font-medium text-fg text-base">
+                            Drag & Drop your files here, or <span className="text-accent underline">browse</span>
                         </p>
-                        <p className="text-xs text-slate-500 mt-1">Supports up to 50 files (5 GB total limit)</p>
+                        <p className="text-xs text-muted mt-1">Supports up to 50 files (5 GB total limit)</p>
                     </div>
                 </div>
             </div>
 
             {selectedFiles.length > 0 && (
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-3">
-                    <div className="flex justify-between items-center text-xs text-slate-400 border-b border-slate-800 pb-2">
-                        <span className="font-semibold text-slate-200">Selected Files ({selectedFiles.length})</span>
+                <div className="bg-canvas border border-line rounded-xl p-4 space-y-3">
+                    <div className="flex justify-between items-center text-xs text-muted border-b border-line pb-2">
+                        <span className="font-semibold text-fg">Selected Files ({selectedFiles.length})</span>
                         <span>Total: {formatSize(totalBytes)}</span>
                     </div>
 
@@ -79,13 +79,13 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
                         {selectedFiles.map((file, index) => (
                             <li
                                 key={`${file.name}-${file.size}-${index}`}
-                                className="flex items-center justify-between bg-slate-900 p-2.5 rounded-lg border border-l-slate-800/80 text-xs"
+                                className="flex items-center justify-between bg-surface p-2.5 rounded-lg border border-line text-xs"
                             >
                                 <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2.5 min-w-0 flex-1 pr-2">
                                     <div className="flex items-center gap-2.5 min-w-0">
-                                        <FileText className="w-4 h-4 text-indigo-400 shrink-0"/>
-                                        <span className="text-slate-200 truncate">{file.name}</span>
-                                        <span className="text-slate-500 shrink-0">({formatSize(file.size)})</span>
+                                        <FileText className="w-4 h-4 text-accent shrink-0"/>
+                                        <span className="text-fg truncate">{file.name}</span>
+                                        <span className="text-muted shrink-0">({formatSize(file.size)})</span>
                                     </div>
                                     <MetadataLabels report={metadataReports.get(file)} stripMetadata={stripMetadata} />
                                 </div>
@@ -95,7 +95,7 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
                                         e.stopPropagation();
                                         onRemoveFile(index);
                                     }}
-                                    className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-rose-400 transition"
+                                    className="p-1 hover:bg-surface-raised rounded text-muted hover:text-danger transition"
                                     title="Remove file"
                                 >
                                     <X className="w-4 h-4" />
