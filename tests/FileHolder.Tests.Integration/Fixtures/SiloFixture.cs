@@ -16,8 +16,7 @@ public class SiloFixture : IAsyncLifetime
     private const string RootUser = "minioadmin";
     private const string RootPassword = "minioadmin";
 
-    private readonly IContainer _container = new ContainerBuilder()
-        .WithImage("pgsty/silo:latest")
+    private readonly IContainer _container = new ContainerBuilder(ComposeImages.Silo)
         .WithCommand("server", "/data")
         .WithEnvironment("MINIO_ROOT_USER", RootUser)
         .WithEnvironment("MINIO_ROOT_PASSWORD", RootPassword)

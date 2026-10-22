@@ -109,7 +109,7 @@ A written threat model (what each party can see and do, and the known gaps) is p
 | **Backend API** | **.NET 10**, ASP.NET Core Minimal APIs | Route groups, typed results, FluentValidation, RFC 7807 `ProblemDetails` |
 | **API docs** | Native OpenAPI + **Scalar UI** | Development only |
 | **Database** | **PostgreSQL 17**, **EF Core 10** (Npgsql) | Migrations applied at startup, filtered indexes |
-| **Object storage** | **Silo** (`pgsty/silo`) | A community-maintained fork of the MinIO server (MinIO wound down its community edition). Private bucket, accessed with the AWS SDK for .NET. The compose service is still called `minio` |
+| **Object storage** | **Silo** (`pgsty/silo`) | A community-maintained fork of the MinIO server (MinIO wound down its community edition). Private bucket, accessed with the AWS SDK for .NET. The compose service is still called `minio`. Pinned to one release by tag and digest, like every image here; one vendor maintains it on a best-effort basis, so read its release notes before updating |
 | **Caching** | .NET `HybridCache` | In-memory only (no shared L2 cache), with stampede protection |
 | **Background work** | `BackgroundService` | Storage purge every 30 minutes |
 | **Frontend** | **React 19**, Vite 8, TypeScript 6, Tailwind CSS 4 | axios, react-hook-form, client-zip (ZIPs in the browser), qrcode.react |
