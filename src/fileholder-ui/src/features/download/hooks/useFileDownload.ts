@@ -36,6 +36,9 @@ export const WRONG_PASSKEY_MESSAGE = 'Incorrect passkey. If you\'re sure it\'s r
 
 export type PromptKind = 'password' | 'passkey';
 
+/** Why the bundle can't be shown at all: it expired or ran out of downloads (`gone`), or no bundle has this link. */
+export type Unavailability = 'gone' | 'notFound';
+
 /**
  * Takes the link key out of the address bar, so it doesn't sit on screen, in screenshots or in the tab's history
  * entry. The rest of the URL (such as ?diagnostics) stays. Undefined when the address has no key.
@@ -92,6 +95,7 @@ export const useFileDownload = (shareToken?: string) => {
         });
     };
     const [error, setError] = useState<string | null>(null);
+    const [unavailable, setUnavailable] = useState<Unavailability | null>(null);
 
     // This tab's copy of the bundle's link key, read from the address bar on load (see takeLinkKeyFromAddressBar).
     const [linkKey, setLinkKey] = useState<string | null>(null);
@@ -166,6 +170,7 @@ export const useFileDownload = (shareToken?: string) => {
                 setMetadata(raw);
                 if (raw.isExpired) {
                     linkKeyStore.clear(shareToken);
+                    setUnavailable('gone');
                     return;
                 }
 
@@ -180,6 +185,7 @@ export const useFileDownload = (shareToken?: string) => {
                 if (isCancelled) return;
                 if (isAxiosError(err) && (err.response?.status === HTTP_NOT_FOUND || err.response?.status === HTTP_GONE)) {
                     linkKeyStore.clear(shareToken);
+                    setUnavailable(err.response.status === HTTP_GONE ? 'gone' : 'notFound');
                 }
                 setError(parseApiError(err));
             } finally {
@@ -400,6 +406,7 @@ export const useFileDownload = (shareToken?: string) => {
         downloadingFileId,
         isDownloadingAll,
         error,
+        unavailable,
         lastSaveReport,
         downloadProgress,
         promptFor,

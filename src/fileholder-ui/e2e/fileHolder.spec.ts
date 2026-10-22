@@ -200,7 +200,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await downloaderPage.goto(shareUrl);
 
     // Initial state: the link's key is taken out of the address bar, the passkey prompt shows, files are hidden
-    await expect(downloaderPage.getByText('Passkey Required')).toBeVisible();
+    await expect(downloaderPage.getByRole('heading', { name: 'Enter the passkey' })).toBeVisible();
     expect(new URL(downloaderPage.url()).hash).toBe('');
     await expect(downloaderPage.getByText(testFile1.name)).not.toBeVisible();
     await expect(downloaderPage.getByText(testFile2.name)).not.toBeVisible();

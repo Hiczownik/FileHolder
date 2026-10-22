@@ -3,6 +3,8 @@ import { describe, it, expect } from 'vitest';
 import { BundleHeader } from '../BundleHeader';
 import type { FileGroupMetadataResponse } from '../../types';
 
+const BYTES_PER_KB = 1024;
+
 const base: FileGroupMetadataResponse = {
     shareToken: 'header_token',
     totalSizeBytes: 0,
@@ -29,7 +31,17 @@ describe('BundleHeader', () => {
     });
 
     it('falls back to a generic heading for an unlocked bundle without a title', () => {
-        expect(heading({ ...base, isUnlocked: true })).toBe('Shared File Group');
+        expect(heading({ ...base, isUnlocked: true })).toBe('Shared files');
+    });
+
+    it('leaves out the size of a locked bundle until it is known', () => {
+        render(<BundleHeader metadata={base} />);
+        expect(screen.getByText('1 file')).toBeInTheDocument();
+    });
+
+    it('shows the size once the bundle is unlocked', () => {
+        render(<BundleHeader metadata={{ ...base, isUnlocked: true, totalSizeBytes: BYTES_PER_KB }} />);
+        expect(screen.getByText('1 file · 1 KB')).toBeInTheDocument();
     });
 
     it('shows a plain bundle\'s title as before', () => {
