@@ -10,5 +10,3 @@ services:
       RateLimits__ConfirmPermitLimit: "10000"
       RateLimits__DownloadPermitLimit: "10000"
       RateLimits__MetadataPermitLimit: "10000"
-      # TEMPORARY (#80): a wrong storage port, to show CI's readiness wait fails. Reverted in the next commit.
-      Storage__ServiceUrl: "http://minio:9999"
