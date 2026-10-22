@@ -17,6 +17,10 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # typescript-eslint doesn't accept TypeScript 7 yet (npm ci fails, #115). Remove once it does.
+      - dependency-name: "typescript"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: nuget
     # The solution, with every version in Directory.Packages.props.
@@ -39,6 +43,10 @@ updates:
       - dependency-name: "Microsoft.Extensions.*"
         update-types: [version-update:semver-major]
       - dependency-name: "Npgsql.EntityFrameworkCore.PostgreSQL"
+        update-types: [version-update:semver-major]
+      # ASP.NET Core's OpenAPI source generator is built against Microsoft.OpenApi 2.x and doesn't compile with 3.x
+      # (#119); it moves with the .NET major.
+      - dependency-name: "Microsoft.OpenApi"
         update-types: [version-update:semver-major]
 
   - package-ecosystem: docker
