@@ -10,7 +10,7 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
     const LARGE_FILE_MB = 110;
     const SMALL_FILE_BYTES = BYTES_PER_KB;
     const LARGE_FILE_BYTES = LARGE_FILE_MB * BYTES_PER_MB;
-    const PASSKEY_PLACEHOLDER = 'Enter or generate a secure passkey';
+    const PASSKEY_PLACEHOLDER = 'Type one or generate it';
 
     const createMockFile = (name: string, size: number): File => {
         const file = new File(['dummy_content'], name, { type: 'application/octet-stream' });
@@ -25,11 +25,11 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
         render(<UploadForm uploadState={idleUploadState} onUpload={onUpload} />);
         const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
         fireEvent.change(fileInput, { target: { files } });
-        return { onUpload, submitButton: screen.getByRole('button', { name: 'Generate Shareable Link' }) };
+        return { onUpload, submitButton: screen.getByRole('button', { name: 'Create share link' }) };
     };
 
-    const e2eeCheckbox = (): HTMLElement => screen.getByRole('checkbox', { name: 'End-to-end encryption' });
-    const passkeyCheckbox = (): HTMLElement => screen.getByRole('checkbox', { name: 'Also require a passkey' });
+    const e2eeCheckbox = (): HTMLElement => screen.getByRole('switch', { name: 'End-to-end encryption' });
+    const passkeyCheckbox = (): HTMLElement => screen.getByRole('switch', { name: 'Also require a passkey' });
 
     it('needs no passkey for an encrypted bundle by default: the link carries the key', async () => {
         const user = userEvent.setup();
@@ -39,7 +39,7 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
 
         expect(passkeyCheckbox()).not.toBeChecked();
         expect(screen.queryByPlaceholderText(PASSKEY_PLACEHOLDER)).not.toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Generate Secure Passkey' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Generate' })).not.toBeInTheDocument();
         expect(screen.getByText('The link is the secret', { exact: false })).toBeInTheDocument();
         expect(submitButton).toBeEnabled();
 
@@ -51,8 +51,8 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
         const user = userEvent.setup();
         renderWithFiles();
 
-        expect(screen.queryByRole('checkbox', { name: 'Also require a passkey' })).not.toBeInTheDocument();
-        expect(screen.getByPlaceholderText('Leave empty for public link')).toBeInTheDocument();
+        expect(screen.queryByRole('switch', { name: 'Also require a passkey' })).not.toBeInTheDocument();
+        expect(screen.getByPlaceholderText('Leave empty for no password')).toBeInTheDocument();
 
         await user.click(e2eeCheckbox());
         expect(passkeyCheckbox()).toBeInTheDocument();
@@ -67,7 +67,8 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
         await user.click(passkeyCheckbox());
 
         expect(submitButton).toBeDisabled();
-        expect(screen.getByText('Passkey (Required)')).toBeInTheDocument();
+        // Readable, not masked: the sender has to copy it into a separate message.
+        expect(screen.getByLabelText('Passkey')).toHaveAttribute('type', 'text');
         expect(screen.getByText("The link alone won't open the files", { exact: false })).toBeInTheDocument();
     });
 
@@ -86,13 +87,13 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
             expect.any(Array));
     });
 
-    it('generates and populates a secure passkey when clicking Generate Secure Passkey', async () => {
+    it('generates and populates a secure passkey when clicking Generate', async () => {
         const user = userEvent.setup();
         const { submitButton } = renderWithFiles();
 
         await user.click(e2eeCheckbox());
         await user.click(passkeyCheckbox());
-        await user.click(screen.getByRole('button', { name: 'Generate Secure Passkey' }));
+        await user.click(screen.getByRole('button', { name: 'Generate' }));
 
         const passwordInput = screen.getByPlaceholderText(PASSKEY_PLACEHOLDER) as HTMLInputElement;
         // Three dash-separated groups of four: matches "AB12-CD34-EF56"; rejects "ab12-cd34".
@@ -104,7 +105,7 @@ describe('UploadForm Component - Zero-Knowledge E2EE Form Guardrails', () => {
     it('removes photo metadata by default, and lets the uploader turn that off', async () => {
         const user = userEvent.setup();
         const { onUpload, submitButton } = renderWithFiles();
-        const stripCheckbox = screen.getByRole('checkbox', { name: 'Remove photo metadata' });
+        const stripCheckbox = screen.getByRole('switch', { name: 'Remove photo metadata' });
 
         expect(stripCheckbox).toBeChecked();
         await user.click(submitButton);

@@ -18,7 +18,7 @@ const pick = (files: File[]): void => {
 };
 
 const submittedFiles = async (onUpload: ReturnType<typeof vi.fn>): Promise<File[]> => {
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Generate Shareable Link' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Create share link' }));
     await waitFor(() => expect(onUpload).toHaveBeenCalled());
     return onUpload.mock.calls[0][1] as File[];
 };

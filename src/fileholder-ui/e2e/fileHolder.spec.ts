@@ -22,14 +22,14 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     page.on('pageerror', (err) => console.log(`[Browser Exception]: ${err.message}`));
 
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /Secure File Sharing/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Send files that clean up after themselves.' })).toBeVisible();
 
-    await page.getByPlaceholder(/e.g. Project Deliverables v1/i).fill('E2E Deliverables');
+    await page.getByLabel('Title (optional)').fill('E2E Deliverables');
 
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles([testFile1, testFile2]);
 
-    await expect(page.getByText('Selected Files (2)')).toBeVisible();
+    await expect(page.getByText('2 files', { exact: true })).toBeVisible();
 
     const selects = page.locator('select');
     await selects.nth(0).selectOption('24');
@@ -38,9 +38,9 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     const passwordInput = page.locator('input[type="password"]');
     await passwordInput.fill('PlaywrightPass123!');
 
-    await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
+    await page.getByRole('button', { name: 'Create share link' }).click();
 
-    const shareLinkInput = page.locator('input[readonly]');
+    const shareLinkInput = page.getByLabel('Share link');
     const errorBanner = page.locator('[data-variant="error"]');
 
     await Promise.race([
@@ -99,7 +99,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       },
     ]);
 
-    await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
+    await page.getByRole('button', { name: 'Create share link' }).click();
 
     const errorBanner = page.locator('[data-variant="error"]');
     await expect(errorBanner).toBeVisible({ timeout: 10000 });
@@ -114,9 +114,9 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles([testFile1, testFile2]);
 
-    await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
+    await page.getByRole('button', { name: 'Create share link' }).click();
 
-    const shareLinkInput = page.locator('input[readonly]');
+    const shareLinkInput = page.getByLabel('Share link');
     await expect(shareLinkInput).toBeVisible({ timeout: 30000 });
     const shareUrl = await shareLinkInput.inputValue();
 
@@ -140,27 +140,27 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     page.on('pageerror', (err) => console.log(`[Browser Exception]: ${err.message}`));
 
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /Secure File Sharing/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Send files that clean up after themselves.' })).toBeVisible();
 
-    await page.getByPlaceholder(/e.g. Project Deliverables v1/i).fill('E2EE Classified Archive');
+    await page.getByLabel('Title (optional)').fill('E2EE Classified Archive');
 
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles([testFile1, testFile2]);
-    await expect(page.getByText('Selected Files (2)')).toBeVisible();
+    await expect(page.getByText('2 files', { exact: true })).toBeVisible();
 
-    const e2eeCheckbox = page.getByRole('checkbox', { name: 'End-to-end encryption' });
+    const e2eeCheckbox = page.getByRole('switch', { name: 'End-to-end encryption' });
     await e2eeCheckbox.click();
     await expect(e2eeCheckbox).toBeChecked();
-    await page.getByRole('checkbox', { name: 'Also require a passkey' }).click();
+    await page.getByRole('switch', { name: 'Also require a passkey' }).click();
 
-    const passwordInput = page.locator('input[type="password"]');
+    const passwordInput = page.getByLabel('Passkey', { exact: true });
     await passwordInput.fill('ClassifiedPass123!');
 
     const confirmRequestPromise = page.waitForRequest(
       (req) => req.url().includes('/api/v1/files/confirm') && req.method() === 'POST'
     );
 
-    await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
+    await page.getByRole('button', { name: 'Create share link' }).click();
 
     const confirmRequest = await confirmRequestPromise;
     const postData = confirmRequest.postDataJSON();
@@ -176,7 +176,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     // Verify plaintext password is never sent over the wire
     expect(rawPostData).not.toContain('ClassifiedPass123!');
 
-    const shareLinkInput = page.locator('input[readonly]');
+    const shareLinkInput = page.getByLabel('Share link');
     await expect(shareLinkInput).toBeVisible({ timeout: 30000 });
 
     const shareUrl = await shareLinkInput.inputValue();
@@ -279,9 +279,9 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       // Pass filesystem paths (bypasses Playwright's 50MB in-memory CDP buffer limit)
       await fileInput.setInputFiles([bigFile1Path, bigFile2Path]);
 
-      await expect(page.getByText('Selected Files (2)')).toBeVisible();
+      await expect(page.getByText('2 files', { exact: true })).toBeVisible();
 
-      const e2eCheckbox = page.getByRole('checkbox', { name: 'End-to-end encryption' });
+      const e2eCheckbox = page.getByRole('switch', { name: 'End-to-end encryption' });
       await e2eCheckbox.click();
       await expect(e2eCheckbox).toBeChecked();
 
@@ -290,15 +290,15 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
       await expect(warningBanner).not.toBeVisible();
 
       // The link carries the key, so no passkey is needed by default
-      const submitBtn = page.getByRole('button', { name: /Generate Shareable Link/i });
+      const submitBtn = page.getByRole('button', { name: 'Create share link' });
       await expect(submitBtn).toBeEnabled();
 
       // Once a passkey is required, submit is disabled until it is entered
-      await page.getByRole('checkbox', { name: 'Also require a passkey' }).click();
+      await page.getByRole('switch', { name: 'Also require a passkey' }).click();
       await expect(submitBtn).toBeDisabled();
 
       // Entering passkey enables the submit button for 220 MB payload
-      const passwordInput = page.locator('input[type="password"]');
+      const passwordInput = page.getByLabel('Passkey', { exact: true });
       await passwordInput.fill('VaultPass123!');
       await expect(submitBtn).toBeEnabled();
     } finally {
@@ -329,21 +329,21 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
 
     try {
       await page.goto('/');
-      await page.getByPlaceholder(/e.g. Project Deliverables v1/i).fill('Chunked E2EE');
+      await page.getByLabel('Title (optional)').fill('Chunked E2EE');
       await page.locator('input[type="file"]').setInputFiles([filePath]);
-      await expect(page.getByText('Selected Files (1)')).toBeVisible();
-      await page.getByRole('checkbox', { name: 'End-to-end encryption' }).click();
-      await page.getByRole('checkbox', { name: 'Also require a passkey' }).click();
-      await page.locator('input[type="password"]').fill('ChunkedPass123!');
+      await expect(page.getByText('1 file', { exact: true })).toBeVisible();
+      await page.getByRole('switch', { name: 'End-to-end encryption' }).click();
+      await page.getByRole('switch', { name: 'Also require a passkey' }).click();
+      await page.getByLabel('Passkey', { exact: true }).fill('ChunkedPass123!');
 
       const presignResponsePromise = page.waitForResponse((res) => res.url().includes('/api/v1/files/presign') && res.request().method() === 'POST');
-      await page.getByRole('button', { name: /Generate Shareable Link/i }).click();
+      await page.getByRole('button', { name: 'Create share link' }).click();
 
       const presign = await (await presignResponsePromise).json();
       expect(presign.items[0].uploadMode).toBe('Multipart');
       expect(presign.items[0].partSizeBytes % ENCRYPTED_CHUNK_BYTES).toBe(0);
 
-      const shareLinkInput = page.locator('input[readonly]');
+      const shareLinkInput = page.getByLabel('Share link');
       const errorBanner = page.locator('[data-variant="error"]');
       await Promise.race([
         shareLinkInput.waitFor({ state: 'visible', timeout: TRANSFER_TIMEOUT_MS }),
@@ -445,20 +445,20 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
 
     await page.goto('/');
     await page.locator('input[type="file"]').setInputFiles([testFile1]);
-    await expect(page.getByText('Selected Files (1)')).toBeVisible();
-    await page.getByRole('checkbox', { name: 'End-to-end encryption' }).click();
+    await expect(page.getByText('1 file', { exact: true })).toBeVisible();
+    await page.getByRole('switch', { name: 'End-to-end encryption' }).click();
 
     // No passkey by default: the field isn't even shown, and the link is said to be the secret.
-    await expect(page.getByRole('checkbox', { name: 'Also require a passkey' })).not.toBeChecked();
-    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await expect(page.getByRole('switch', { name: 'Also require a passkey' })).not.toBeChecked();
+    await expect(page.getByLabel('Passkey', { exact: true })).toHaveCount(0);
     await expect(page.getByText('The link is the secret', { exact: false })).toBeVisible();
 
     const confirmRequestPromise = page.waitForRequest((req) => req.url().includes('/api/v1/files/confirm') && req.method() === 'POST');
-    await page.getByRole('button', { name: 'Generate Shareable Link' }).click();
+    await page.getByRole('button', { name: 'Create share link' }).click();
     const confirmRequest = await confirmRequestPromise;
     expect(confirmRequest.postDataJSON().keyMode).toBe('LinkKey');
 
-    const shareLinkInput = page.locator('input[readonly]');
+    const shareLinkInput = page.getByLabel('Share link');
     await expect(shareLinkInput).toBeVisible({ timeout: UPLOAD_TIMEOUT_MS });
     await expect(page.getByText('Anyone with this link or QR code can open the files.')).toBeVisible();
     const shareUrl = await shareLinkInput.inputValue();

@@ -79,7 +79,7 @@ test.describe('Network faults: uploads', () => {
     expect(sessions.every((session) => session.isAborted && !session.isCompleted)).toBe(true);
     expect(presign.items.flatMap((item) => incompleteUploads(item.storageKey)), 'no parts left in storage').toEqual([]);
     expect(apiErrorsSince(startedAt)).toEqual([]);
-    await expect(page.getByRole('button', { name: 'Generate Shareable Link' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Create share link' })).toBeEnabled();
   });
 
   test('S2. A part that fails twice is retried and the file arrives byte for byte', async ({ page, browser }, testInfo) => {

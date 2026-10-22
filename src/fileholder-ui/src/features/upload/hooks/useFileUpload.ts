@@ -1,7 +1,6 @@
 import { useReducer, useRef } from "react";
-import { keyModeOf, type MetadataSummary, type UploadFormValues, type UploadState } from "../types";
+import { keyModeOf, type BundleSummary, type UploadFormValues, type UploadResult, type UploadState } from "../types";
 import { cleanPhotos } from "../services/photoCleaning";
-import type { KeyMode } from "../../download/types";
 import { describeUploadError } from "../services/uploadErrors";
 import {
     executeStandardUploadWorkflow,
@@ -12,7 +11,7 @@ import {
 type UploadAction =
     | { type: 'START_UPLOAD'; payload: { preparing: boolean } }
     | { type: 'SET_PROGRESS'; payload: number }
-    | { type: 'UPLOAD_SUCCESS'; payload: { shareLink: string; keyMode?: KeyMode; metadataSummary?: MetadataSummary } }
+    | { type: 'UPLOAD_SUCCESS'; payload: UploadResult }
     | { type: 'UPLOAD_ERROR'; payload: string }
     | { type: 'RESET' };
 
@@ -74,9 +73,23 @@ export const useFileUpload = () => {
                     signal
                 );
 
+            const bundle: BundleSummary = {
+                title: formValues.title.trim(),
+                fileCount: toUpload.length,
+                totalBytes: toUpload.reduce((sum, file) => sum + file.size, 0),
+                // The selects hand over their option values as strings.
+                expireInHours: Number(formValues.expireInHours),
+                maxDownloads: Number(formValues.maxDownloads),
+            };
             dispatch({
                 type: 'UPLOAD_SUCCESS',
-                payload: { shareLink, keyMode, metadataSummary: cleaned?.summary },
+                payload: {
+                    shareLink,
+                    bundle,
+                    keyMode,
+                    passkey: keyMode === 'LinkKeyAndPasskey' ? formValues.password : undefined,
+                    metadataSummary: cleaned?.summary,
+                },
             });
         } catch (err: unknown) {
             dispatch({ type: 'UPLOAD_ERROR', payload: describeUploadError(err) });

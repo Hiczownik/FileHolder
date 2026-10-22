@@ -33,12 +33,34 @@ export interface MetadataSummary {
     readonly motionPhotos: number;
 }
 
+/** What the link-ready card says about the bundle just uploaded. */
+export interface BundleSummary {
+    /** Empty when the sender gave none. */
+    readonly title: string;
+    readonly fileCount: number;
+    /** As stored: after photo metadata removal, before encryption. */
+    readonly totalBytes: number;
+    readonly expireInHours: number;
+    readonly maxDownloads: number;
+}
+
+/** Everything the link-ready card shows. */
+export interface UploadResult {
+    readonly shareLink: string;
+    readonly bundle: BundleSummary;
+    /** Set for encrypted bundles only. */
+    readonly keyMode?: KeyMode;
+    /** Set for link-and-passkey bundles only, so the sender can copy it and send it separately. */
+    readonly passkey?: string;
+    /** Set when photo metadata removal was on. */
+    readonly metadataSummary?: MetadataSummary;
+}
+
 export type UploadState =
     | { status: 'idle' }
     /** `preparing`: photo metadata is being removed, before anything is uploaded. */
     | { status: 'uploading'; progress: number; preparing?: boolean }
-    /** `keyMode` is set for encrypted bundles only; `metadataSummary` when photo metadata removal was on. */
-    | { status: 'success'; shareLink: string; keyMode?: KeyMode; metadataSummary?: MetadataSummary }
+    | ({ status: 'success' } & UploadResult)
     | { status: 'error'; message: string };
 
 /** How a bundle uploaded with these values is unlocked; undefined for a plain bundle. */
