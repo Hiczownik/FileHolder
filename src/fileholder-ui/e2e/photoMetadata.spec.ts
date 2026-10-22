@@ -26,7 +26,7 @@ async function uploadPhoto(page: Page, options: { encrypted: boolean; strip: boo
   await page.locator('input[type="file"]').setInputFiles([photo]);
   await expect(page.getByText(LOCATION_LABEL)).toBeVisible();
 
-  const stripCheckbox = page.getByRole('checkbox', { name: 'Remove photo metadata' });
+  const stripCheckbox = page.getByRole('switch', { name: 'Remove photo metadata' });
   await expect(stripCheckbox).toBeChecked();
   if (!options.strip) {
     await stripCheckbox.click();
@@ -37,11 +37,11 @@ async function uploadPhoto(page: Page, options: { encrypted: boolean; strip: boo
     await expect(page.getByText(WILL_REMOVE_LABEL)).toBeVisible();
   }
   if (options.encrypted) {
-    await page.getByRole('checkbox', { name: 'End-to-end encryption' }).click();
+    await page.getByRole('switch', { name: 'End-to-end encryption' }).click();
   }
 
-  await page.getByRole('button', { name: 'Generate Shareable Link' }).click();
-  const shareLinkInput = page.locator('input[readonly]');
+  await page.getByRole('button', { name: 'Create share link' }).click();
+  const shareLinkInput = page.getByLabel('Share link');
   await expect(shareLinkInput).toBeVisible({ timeout: UPLOAD_TIMEOUT_MS });
   const summary = page.getByText('Removed metadata from 1 photo.');
   await (options.strip ? expect(summary).toBeVisible() : expect(summary).not.toBeVisible());

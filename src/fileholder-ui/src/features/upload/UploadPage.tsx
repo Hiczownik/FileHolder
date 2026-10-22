@@ -1,37 +1,61 @@
-import { Sparkles } from "lucide-react";
+import { Clock, ShieldCheck, Upload } from "lucide-react";
 import { useFileUpload } from "./hooks/useFileUpload"
 import { StatusAlert } from "../../shared/components/StatusAlert";
 import { UploadSuccessCard } from "./components/UploadSuccessCard";
 import { UploadForm } from "./components/UploadForm";
+import { EncryptionModes, HowItWorks } from "./components/HomeSections";
+
+const FACTS = [
+    { icon: Clock, text: 'Expires after 1 hour to 7 days, or after 1 to 100 downloads' },
+    { icon: ShieldCheck, text: 'End-to-end encryption in your browser, optional' },
+    { icon: Upload, text: 'Files go straight to storage, never through our server' },
+] as const;
 
 export const UploadPage: React.FC = () => {
     const { upload, uploadState, reset } = useFileUpload();
 
+    if (uploadState.status === 'success') {
+        return (
+            <div className="max-w-[600px] mx-auto px-4 py-10 sm:py-14">
+                <UploadSuccessCard result={uploadState} onReset={reset} />
+            </div>
+        );
+    }
+
     return (
-        <div className="max-w-2xl mx-auto py-12 px-4">
-            <div className="text-center mb-8">
-                <h1 className="text-4xl font-extrabold text-fg tracking-tight flex items-center justify-center gap-2">
-                    Secure File Sharing <Sparkles className="w-6 h-6 text-accent" />
-                </h1>
-                <p className="text-muted text-sm mt-2">
-                    Upload single files or multi-file bundles directly to storage with custom expiration rules and password protection.
-                </p>
+        <>
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-14 flex flex-col lg:flex-row gap-8 lg:gap-14 lg:items-start">
+                <div className="lg:flex-1 lg:pt-6 space-y-4 sm:space-y-5 min-w-0">
+                    <p className="hidden sm:block text-[13px] font-semibold text-accent uppercase tracking-wider">
+                        Self-destructing file sharing
+                    </p>
+                    <h1 className="text-[28px] sm:text-[44px] leading-[1.1] font-semibold tracking-tight">
+                        Send files that clean up after themselves.
+                    </h1>
+                    <p className="text-fg-soft sm:text-[17px] max-w-[460px]">
+                        Share up to 50 files as one link. The bundle disappears after the time or number of downloads you
+                        choose. Turn on encryption and the server never sees what&apos;s inside.
+                    </p>
+                    <ul className="hidden sm:block pt-2 space-y-3 text-sm text-fg-soft">
+                        {FACTS.map(({ icon: Icon, text }) => (
+                            <li key={text} className="flex items-center gap-2.5">
+                                <Icon aria-hidden="true" className="w-[18px] h-[18px] text-accent shrink-0" />
+                                <span>{text}</span>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+
+                <div className="lg:flex-[1.15] min-w-0 space-y-4">
+                    {uploadState.status === 'error' && (
+                        <StatusAlert variant="error" message={uploadState.message} />
+                    )}
+                    <UploadForm uploadState={uploadState} onUpload={upload} />
+                </div>
             </div>
 
-            {uploadState.status === 'error' && (
-                <StatusAlert variant="error" message={uploadState.message} className="mb-6" />
-            )}
-
-            {uploadState.status === 'success' ? (
-                <UploadSuccessCard
-                    shareLink={uploadState.shareLink}
-                    keyMode={uploadState.keyMode}
-                    metadataSummary={uploadState.metadataSummary}
-                    onReset={reset}
-                />
-            ) : (
-                <UploadForm uploadState={uploadState} onUpload={upload} />
-            )}
-        </div>
+            <HowItWorks />
+            <EncryptionModes />
+        </>
     );
 };

@@ -19,9 +19,9 @@ describe('FileDropzone Component', () => {
             />
         );
 
-        expect(screen.getByText(/Drag & Drop your files here/i)).toBeInTheDocument();
-        expect(screen.getByText(/Supports up to 50 files/i)).toBeInTheDocument();
-        expect(screen.queryByText(/Selected Files/i)).not.toBeInTheDocument();
+        expect(screen.getByText(/Drop files here/i)).toBeInTheDocument();
+        expect(screen.getByText('Up to 50 files, 5 GB in total')).toBeInTheDocument();
+        expect(screen.queryByRole('list', { name: 'Selected files' })).not.toBeInTheDocument();
     });
 
     it('renders selected files list with accurate count and formatted sizes', () => {
@@ -38,11 +38,11 @@ describe('FileDropzone Component', () => {
             />
         );
 
-        expect(screen.getByText('Selected Files (2)')).toBeInTheDocument();
+        expect(screen.getByText('2 files')).toBeInTheDocument();
         expect(screen.getByText('report.pdf')).toBeInTheDocument();
         expect(screen.getByText('chart.png')).toBeInTheDocument();
-        expect(screen.getByText('(1 KB)')).toBeInTheDocument();
-        expect(screen.getByText('(2 KB)')).toBeInTheDocument();
+        expect(screen.getByText('1 KB')).toBeInTheDocument();
+        expect(screen.getByText('2 KB')).toBeInTheDocument();
     });
 
     it('calls onRemoveFile with correct index when delete icon is clicked', async () => {
@@ -58,7 +58,7 @@ describe('FileDropzone Component', () => {
             />
         )
 
-        const removeButtons = screen.getAllByTitle('Remove file');
+        const removeButtons = screen.getAllByRole('button', { name: /^Remove / });
         expect(removeButtons).toHaveLength(2);
 
         await user.click(removeButtons[0]);
@@ -74,7 +74,7 @@ describe('FileDropzone Component', () => {
         render(<FileDropzone selectedFiles={[]} onFilesSelect={onFilesSelect} onRemoveFile={vi.fn()} stripMetadata />);
 
         // fireEvent returns false when the handler called preventDefault.
-        const browserDefaultRan = fireEvent.drop(screen.getByText('browse'), { dataTransfer: { files: [dropped] } });
+        const browserDefaultRan = fireEvent.drop(screen.getByText('choose files'), { dataTransfer: { files: [dropped] } });
 
         expect(browserDefaultRan).toBe(false);
         expect(onFilesSelect).toHaveBeenCalledWith([dropped]);

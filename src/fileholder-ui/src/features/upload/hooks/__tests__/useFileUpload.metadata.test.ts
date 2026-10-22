@@ -78,7 +78,14 @@ describe('useFileUpload photo metadata removal', () => {
 
         expect(api.put.mock.calls[0][1]).toBe(original);
         expect(api.presign.mock.calls[0][0].files[0].sizeBytes).toBe(original.size);
-        expect(result.current.uploadState).toEqual({ status: 'success', shareLink: expect.stringContaining('/f/share_token'), keyMode: undefined, metadataSummary: undefined });
+        expect(result.current.uploadState).toEqual({
+            status: 'success',
+            shareLink: expect.stringContaining('/f/share_token'),
+            bundle: expect.objectContaining({ fileCount: 1, totalBytes: original.size }),
+            keyMode: undefined,
+            passkey: undefined,
+            metadataSummary: undefined,
+        });
     });
 
     it('shows a "preparing" phase while cleaning, which ends before the upload starts', async () => {

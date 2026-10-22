@@ -173,8 +173,48 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
       );
     });
 
-    expect(result.current.uploadState).toMatchObject({ status: 'success', keyMode: 'LinkKey' });
+    expect(result.current.uploadState).toMatchObject({ status: 'success', keyMode: 'LinkKey', passkey: undefined });
     expect(confirmUploadSpy.mock.calls[0][0].keyMode).toBe('LinkKey');
+  });
+
+  it('hands the link-ready card a summary of the bundle, and the passkey to send separately', async () => {
+    vi.spyOn(uploadApi, 'getPresignedUrl').mockResolvedValue({
+      uploadToken: 'token_passkey',
+      items: [{ fileName: 'mock.enc', uploadUrl: 'http://test.url/enc', storageKey: 'uploads/enc_key', uploadMode: 'Single' }],
+    });
+    vi.spyOn(uploadApi, 'uploadDirectToS3').mockResolvedValue();
+    vi.spyOn(uploadApi, 'confirmUpload').mockResolvedValue('share_passkey');
+    const passkey = 'K7QM-2HXP-9RTA';
+
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.upload(
+        // As the form hands them over: the selects give strings, and the title may have stray spaces.
+        {
+          title: '  Signed lease ',
+          expireInHours: String(EXPIRE_IN_HOURS) as unknown as number,
+          maxDownloads: String(MAX_DOWNLOADS) as unknown as number,
+          isEncrypted: true,
+          requirePasskey: true,
+          password: passkey,
+        },
+        [createDummyFile('doc.txt', SMALL_FILE_BYTES)]
+      );
+    });
+
+    expect(result.current.uploadState).toMatchObject({
+      status: 'success',
+      keyMode: 'LinkKeyAndPasskey',
+      passkey,
+      bundle: {
+        title: 'Signed lease',
+        fileCount: 1,
+        totalBytes: SMALL_FILE_BYTES,
+        expireInHours: EXPIRE_IN_HOURS,
+        maxDownloads: MAX_DOWNLOADS,
+      },
+    });
   });
 
   it('refuses to start when a passkey is required but empty', async () => {

@@ -60,21 +60,21 @@ export interface UploadOptions {
 export async function fillUploadForm(page: Page, files: readonly TestFile[], options: UploadOptions = {}): Promise<void> {
   await page.goto('/');
   await page.locator('input[type="file"]').setInputFiles(files.map((file) => file.path));
-  await expect(page.getByText(`Selected Files (${files.length})`)).toBeVisible();
+  await expect(page.getByText(files.length === 1 ? '1 file' : `${files.length} files`, { exact: true })).toBeVisible();
   if (options.encrypted) {
-    await page.getByRole('checkbox', { name: 'End-to-end encryption' }).click();
+    await page.getByRole('switch', { name: 'End-to-end encryption' }).click();
   }
 }
 
 /** Submits the filled-in form; resolves with presign's answer, which names the uploads the app then starts. */
 export async function submitUpload(page: Page): Promise<Presign> {
   const presignResponse = page.waitForResponse((res) => res.url().endsWith('/api/v1/files/presign') && res.request().method() === 'POST');
-  await page.getByRole('button', { name: 'Generate Shareable Link' }).click();
+  await page.getByRole('button', { name: 'Create share link' }).click();
   return (await presignResponse).json() as Promise<Presign>;
 }
 
 export const errorBanner = (page: Page): Locator => page.locator('[data-variant="error"]');
-const shareLinkInput = (page: Page): Locator => page.locator('input[readonly]');
+const shareLinkInput = (page: Page): Locator => page.getByLabel('Share link');
 
 /** Waits for the share link; fails with the page's error message if an error shows instead. */
 export async function waitForShareLink(page: Page, timeout = TRANSFER_TIMEOUT_MS): Promise<string> {
