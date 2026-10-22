@@ -7,13 +7,8 @@
         <NoWarn>$(NoWarn);CA1848;CA1873</NoWarn>
     </PropertyGroup>
     
-    <ItemGroup>
-        <PackageReference Include="SonarAnalyzer.CSharp" Version="10.*">
-            <PrivateAssets>all</PrivateAssets>
-            <IncludeAssets>runtime; native; contentFiles; analyzers; buildtransitive</IncludeAssets>
-        </PackageReference>
-    </ItemGroup>
-    
+    <!-- SonarAnalyzer.CSharp is added to every project by Directory.Packages.props (a GlobalPackageReference). -->
+
     <PropertyGroup Condition="$(MSBuildProjectName.Contains('Tests'))">
         <!--
           CA1707: Identifiers should not contain underscores (allows BDD test naming)

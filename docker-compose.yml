@@ -1,6 +1,9 @@
+# Every image is pinned to an exact version and its digest, so a pull or a fresh CI runner always gets the same
+# image. Update the tag and the digest together. The integration tests read the postgres and silo images from this
+# file (ComposeImages.cs), so they always test against what runs here.
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17.11-alpine3.24@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
     container_name: fileholder-postgres
     environment:
       POSTGRES_DB: fileholder_db
@@ -18,7 +21,10 @@ services:
       retries: 5
 
   minio:
-    image: pgsty/silo:latest
+    # Silo: a community fork of the MinIO server (MinIO wound down its community edition), maintained by one vendor
+    # on a best-effort basis, so read the release notes before taking an update. The -distroless variant can't be
+    # used: it has no mc for the healthcheck the other services wait on, and runs as root just the same.
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     container_name: fileholder-minio
     command: server /data --console-address ":9001"
     environment:
@@ -43,7 +49,7 @@ services:
       retries: 5
 
   minio-init:
-    image: pgsty/silo:latest
+    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
     container_name: fileholder-minio-init
     depends_on:
       minio:
@@ -100,7 +106,7 @@ services:
       - api
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
     container_name: fileholder-prometheus
     ports:
       - "127.0.0.1:9090:9090"
@@ -110,7 +116,7 @@ services:
       - api
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
     container_name: fileholder-grafana
     ports:
       - "127.0.0.1:3001:3000"
