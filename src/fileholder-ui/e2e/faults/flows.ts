@@ -73,7 +73,7 @@ export async function submitUpload(page: Page): Promise<Presign> {
   return (await presignResponse).json() as Promise<Presign>;
 }
 
-export const errorBanner = (page: Page): Locator => page.locator('.bg-rose-500\\/10');
+export const errorBanner = (page: Page): Locator => page.locator('[data-variant="error"]');
 const shareLinkInput = (page: Page): Locator => page.locator('input[readonly]');
 
 /** Waits for the share link; fails with the page's error message if an error shows instead. */

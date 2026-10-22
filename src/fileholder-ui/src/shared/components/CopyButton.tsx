@@ -7,6 +7,9 @@ interface Props {
     className?: string;
 }
 
+// How long the button says "Copied!" before going back to "Copy".
+const COPIED_FEEDBACK_MS = 2000;
+
 export const CopyButton: React.FC<Props> = ({ text, className }) => {
     const [copied, setCopied] = useState<boolean>(false);
 
@@ -14,7 +17,7 @@ export const CopyButton: React.FC<Props> = ({ text, className }) => {
         try {
             await navigator.clipboard.writeText(text);
             setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+            setTimeout(() => setCopied(false), COPIED_FEEDBACK_MS);
         } catch (err) {
             console.error('Failed to copy to clipboard:', err);
         }
@@ -28,7 +31,7 @@ export const CopyButton: React.FC<Props> = ({ text, className }) => {
             onClick={handleCopy}
             className={className}
         >
-            {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
             <span>{copied ? 'Copied!' : 'Copy'}</span>
         </Button>
     );

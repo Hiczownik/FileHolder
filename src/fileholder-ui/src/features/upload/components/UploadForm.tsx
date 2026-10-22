@@ -67,20 +67,21 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
     };
 
     return (
-        <form onSubmit={handleSubmit(onSubmit)} className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6">
+        <form onSubmit={handleSubmit(onSubmit)} className="bg-surface border border-line rounded-2xl p-6 space-y-6">
             <div>
-                <label className="text-xs font-semibold text-slate-400 flex items-center gap-1.5 mb-2">
-                    <Folder className="w-4 h-4 text-indigo-400" />
+                <label htmlFor="bundle-title" className="text-xs font-semibold text-muted flex items-center gap-1.5 mb-2">
+                    <Folder className="w-4 h-4 text-accent" />
                     <span>Bundle Title (Optional)</span>
                 </label>
                 <input
                     type="text"
                     placeholder="e.g. Project Deliverables v1"
+                    id="bundle-title"
                     {...register('title')}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                    className="w-full bg-canvas border border-line rounded-xl px-3 py-2 text-sm text-fg outline-none focus:border-accent"
                 />
                 {isEncrypted && (
-                    <p className="text-[11px] text-slate-500 mt-1.5">
+                    <p className="text-[11px] text-muted mt-1.5">
                         Encrypted with your files; recipients see it after unlocking.
                     </p>
                 )}
@@ -100,12 +101,12 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 />
             )}
 
-            <label className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between gap-3 cursor-pointer">
+            <label className="bg-canvas p-4 rounded-xl border border-line flex items-center justify-between gap-3 cursor-pointer">
                 <span className="flex items-center gap-3">
-                    <MapPinOff className="w-5 h-5 text-indigo-400 shrink-0" />
+                    <MapPinOff className="w-5 h-5 text-accent shrink-0" />
                     <span>
-                        <span className="block text-xs font-semibold text-slate-200">Remove photo metadata (location, camera details)</span>
-                        <span className="block text-[11px] text-slate-500">
+                        <span className="block text-xs font-semibold text-fg">Remove photo metadata (location, camera details)</span>
+                        <span className="block text-[11px] text-muted">
                             Done in your browser before upload, without changing the photos. HEIC photos and videos aren&apos;t cleaned.
                         </span>
                     </span>
@@ -114,19 +115,20 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                     type="checkbox"
                     aria-label="Remove photo metadata"
                     {...register('stripImageMetadata')}
-                    className="w-4 h-4 accent-indigo-600 rounded cursor-pointer shrink-0"
+                    className="w-4 h-4 accent-accent-solid rounded cursor-pointer shrink-0"
                 />
             </label>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
                 <div>
-                    <label className="text-xs font-semibold text-slate-400 flex items-center gap-1.5 mb-2">
-                        <Clock className="w-4 h-4 text-indigo-400" />
+                    <label htmlFor="expire-in-hours" className="text-xs font-semibold text-muted flex items-center gap-1.5 mb-2">
+                        <Clock className="w-4 h-4 text-accent" />
                         <span>Expiration Time</span>
                     </label>
                     <select
+                        id="expire-in-hours"
                         {...register('expireInHours')}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                        className="w-full bg-canvas border border-line rounded-xl px-3 py-2 text-sm text-fg outline-none focus:border-accent"
                     >
                         <option value={1}>1 Hour</option>
                         <option value={12}>12 Hours</option>
@@ -137,13 +139,14 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 </div>
 
                 <div>
-                    <label className="text-xs font-semibold text-slate-400 flex items-center gap-1.5 mb-2">
-                        <Download className="w-4 h-4 text-indigo-400" />
+                    <label htmlFor="max-downloads" className="text-xs font-semibold text-muted flex items-center gap-1.5 mb-2">
+                        <Download className="w-4 h-4 text-accent" />
                         <span>Max Downloads</span>
                     </label>
                     <select
+                        id="max-downloads"
                         {...register('maxDownloads')}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                        className="w-full bg-canvas border border-line rounded-xl px-3 py-2 text-sm text-fg outline-none focus:border-accent"
                     >
                         <option value={1}>1 Download (Self-Destruct)</option>
                         <option value={5}>5 Downloads</option>
@@ -154,13 +157,13 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 </div>
             </div>
 
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
+            <div className="bg-canvas p-4 rounded-xl border border-line space-y-3">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <ShieldCheck className="w-5 h-5 text-indigo-400 shrink-0" />
+                        <ShieldCheck className="w-5 h-5 text-accent shrink-0" />
                         <div>
-                            <p className="text-xs font-semibold text-slate-200">Zero-Knowledge Envelope Encryption</p>
-                            <p className="text-[11px] text-slate-500">
+                            <p className="text-xs font-semibold text-fg">Zero-Knowledge Envelope Encryption</p>
+                            <p className="text-[11px] text-muted">
                                 Files are encrypted in your browser. The key goes in the share link, which the server never sees.
                             </p>
                         </div>
@@ -169,15 +172,15 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                         type="checkbox"
                         aria-label="End-to-end encryption"
                         {...register('isEncrypted')}
-                        className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                        className="w-4 h-4 accent-accent-solid rounded cursor-pointer"
                     />
                 </div>
 
                 {isEncrypted && (
-                    <div className="flex items-center justify-between border-t border-slate-800 pt-3 pl-8">
+                    <div className="flex items-center justify-between border-t border-line pt-3 pl-8">
                         <div>
-                            <p className="text-xs font-semibold text-slate-200">Also require a passkey</p>
-                            <p className="text-[11px] text-slate-500">
+                            <p className="text-xs font-semibold text-fg">Also require a passkey</p>
+                            <p className="text-[11px] text-muted">
                                 {requirePasskey
                                     ? "The link alone won't open the files. Send the passkey separately."
                                     : 'The link is the secret: anyone who gets it can open the files. For sensitive files, also require a passkey.'}
@@ -187,7 +190,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                             type="checkbox"
                             aria-label="Also require a passkey"
                             {...register('requirePasskey')}
-                            className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                            className="w-4 h-4 accent-accent-solid rounded cursor-pointer"
                         />
                     </div>
                 )}
@@ -195,8 +198,8 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
 
             {showPasswordField && <div>
                 <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-semibold text-slate-400 flex items-center gap-1.5">
-                        <Lock className="w-4 h-4 text-indigo-400" />
+                    <label htmlFor="bundle-password" className="text-xs font-semibold text-muted flex items-center gap-1.5">
+                        <Lock className="w-4 h-4 text-accent" />
                         <span>
                             {isEncrypted ? 'Passkey (Required)' : 'Password Protection (Optional)'}
                         </span>
@@ -205,7 +208,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                         <button
                             type="button"
                             onClick={handleGeneratePasskey}
-                            className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium transition cursor-pointer"
+                            className="text-xs text-accent hover:text-fg flex items-center gap-1 font-medium transition cursor-pointer"
                         >
                             <KeyRound className="w-3.5 h-3.5" />
                             <span>Generate Secure Passkey</span>
@@ -215,8 +218,9 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 <input
                     type="password"
                     placeholder={isEncrypted ? 'Enter or generate a secure passkey' : 'Leave empty for public link'}
+                    id="bundle-password"
                     {...register('password', { required: isPasskeyRequired })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                    className="w-full bg-canvas border border-line rounded-xl px-3 py-2 text-sm text-fg outline-none focus:border-accent"
                 />
             </div>}
 

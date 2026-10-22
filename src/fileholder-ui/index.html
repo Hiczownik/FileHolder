@@ -4,7 +4,12 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>fileholder-ui</title>
+    <!-- Phone browsers tint their bars with these; useTheme overrides both when a theme is picked by hand. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F6F7F5" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0F1211" />
+    <title>FileHolder</title>
+    <!-- Before the stylesheet and synchronous, so the first paint already has the right theme. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

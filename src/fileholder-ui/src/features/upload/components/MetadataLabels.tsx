@@ -37,19 +37,19 @@ export const MetadataLabels: React.FC<Props> = ({ report, stripMetadata }) => {
         <span className="flex flex-wrap gap-1 pl-6 sm:pl-0 sm:shrink-0">
             {report.hasLocation && (
                 <span
-                    className={`${BADGE} text-amber-300 bg-amber-500/10 border-amber-500/30`}
+                    className={`${BADGE} text-warning bg-warning-tint border-warning/30`}
                     title={stripMetadata ? 'Its location is removed before upload.' : 'Turn on "Remove photo metadata" to remove it before upload.'}
                 >
                     📍 Contains location
                 </span>
             )}
             {willRemove && (
-                <span className={`${BADGE} text-emerald-300 bg-emerald-500/10 border-emerald-500/30`} title={`Removes: ${report.removable.join(', ')}`}>
+                <span className={`${BADGE} text-success bg-success-tint border-success/30`} title={`Removes: ${report.removable.join(', ')}`}>
                     {report.isMotionPhoto ? 'Metadata will be removed; Motion Photo becomes a still' : 'Metadata will be removed'}
                 </span>
             )}
             {cantRemove && (
-                <span className={`${BADGE} text-slate-300 bg-slate-500/10 border-slate-500/30`} title="Uploaded as it is, metadata included.">
+                <span className={`${BADGE} text-fg-soft bg-surface-raised border-line`} title="Uploaded as it is, metadata included.">
                     Metadata can&apos;t be removed ({UNREMOVABLE_REASON[report.format]})
                 </span>
             )}

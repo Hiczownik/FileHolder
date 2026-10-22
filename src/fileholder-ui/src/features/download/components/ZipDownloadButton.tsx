@@ -18,7 +18,7 @@ export const ZipDownloadButton: React.FC<Props> = ({ fileCount, isDownloading, o
             onClick={onDownloadZip}
             isLoading={isDownloading}
             loadingText={progressText ?? "Streaming & Compressing ZIP..."}
-            className="w-full text-indigo-400 hover:border-indigo-500/50"
+            className="w-full text-accent hover:border-accent/60"
         >
             <Archive className="w-4 h-4" />
             <span>Download All ({fileCount} Files) as ZIP</span>

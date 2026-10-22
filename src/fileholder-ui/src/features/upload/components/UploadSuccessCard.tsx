@@ -25,25 +25,25 @@ const KEY_MODE_NOTES: Readonly<Record<KeyMode, string>> = {
 export const UploadSuccessCard: React.FC<Props> = ({ shareLink, keyMode, metadataSummary, onReset }) => {
     const metadataNote = metadataSummary ? describeMetadataSummary(metadataSummary) : null;
     return (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-6">
-            <div className="p-4 bg-emerald-500/10 rounded-full w-16 h-16 mx-auto flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+        <div className="bg-surface border border-line rounded-2xl p-8 text-center space-y-6">
+            <div className="p-4 bg-success-tint rounded-full w-16 h-16 mx-auto flex items-center justify-center text-success border border-success/30">
                 <Check className="w-8 h-8" />
             </div>
 
             <div>
-                <h2 className="text-2xl font-bold text-white">Your File Group is Ready!</h2>
-                <p className="text-sm text-slate-400 mt-1">
+                <h2 className="text-2xl font-bold text-fg">Your File Group is Ready!</h2>
+                <p className="text-sm text-muted mt-1">
                     Anyone with this link can view metadata and download files.
                 </p>
-                {metadataNote && <p className="text-xs text-slate-400 mt-2">{metadataNote}</p>}
+                {metadataNote && <p className="text-xs text-muted mt-2">{metadataNote}</p>}
             </div>
 
-            <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
+            <div className="flex items-center gap-2 bg-canvas p-2 rounded-xl border border-line">
                 <input
                     type="text"
                     readOnly
                     value={shareLink}
-                    className="bg-transparent text-indigo-300 text-sm px-3 flex-1 outline-none font-mono"
+                    className="bg-transparent text-accent text-sm px-3 flex-1 outline-none font-mono"
                 />
                 <CopyButton text={shareLink} />
             </div>
@@ -61,9 +61,9 @@ export const UploadSuccessCard: React.FC<Props> = ({ shareLink, keyMode, metadat
                     title="QR code for the share link"
                     className="mx-auto rounded-xl"
                 />
-                <p className="text-xs text-slate-400">Scan to open the link on another device.</p>
+                <p className="text-xs text-muted">Scan to open the link on another device.</p>
                 {keyMode && (
-                    <p className="text-xs text-amber-400">{KEY_MODE_NOTES[keyMode]}</p>
+                    <p className="text-xs text-warning">{KEY_MODE_NOTES[keyMode]}</p>
                 )}
             </div>
 

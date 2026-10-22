@@ -10,10 +10,10 @@ export const UploadPage: React.FC = () => {
     return (
         <div className="max-w-2xl mx-auto py-12 px-4">
             <div className="text-center mb-8">
-                <h1 className="text-4xl font-extrabold text-white tracking-tight flex items-center justify-center gap-2">
-                    Secure File Sharing <Sparkles className="w-6 h-6 text-indigo-400" />
+                <h1 className="text-4xl font-extrabold text-fg tracking-tight flex items-center justify-center gap-2">
+                    Secure File Sharing <Sparkles className="w-6 h-6 text-accent" />
                 </h1>
-                <p className="text-slate-400 text-sm mt-2">
+                <p className="text-muted text-sm mt-2">
                     Upload single files or multi-file bundles directly to storage with custom expiration rules and password protection.
                 </p>
             </div>
