@@ -2,7 +2,7 @@ import { useReducer, useRef } from "react";
 import { keyModeOf, type MetadataSummary, type UploadFormValues, type UploadState } from "../types";
 import { cleanPhotos } from "../services/photoCleaning";
 import type { KeyMode } from "../../download/types";
-import { parseApiError } from "../../../shared/utils/parseApiError";
+import { describeUploadError } from "../services/uploadErrors";
 import {
     executeStandardUploadWorkflow,
     executeEncryptedUploadWorkflow,
@@ -79,7 +79,7 @@ export const useFileUpload = () => {
                 payload: { shareLink, keyMode, metadataSummary: cleaned?.summary },
             });
         } catch (err: unknown) {
-            dispatch({ type: 'UPLOAD_ERROR', payload: parseApiError(err) });
+            dispatch({ type: 'UPLOAD_ERROR', payload: describeUploadError(err) });
         }
     };
 

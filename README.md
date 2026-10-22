@@ -271,6 +271,8 @@ npx playwright test      # Chromium, Firefox and WebKit
 npx playwright test --ui
 ```
 
+**Network-fault tests:** `e2e/faults` breaks the network on purpose: failed parts, a dropped connection, a download cut off half way. Each test then checks that nothing is left behind or counted twice. They run with the others; to run only them, start the stack with `docker-compose.ci.yml` as well, which raises the rate limits, and use `npx playwright test --project="faults*"`. See [`e2e/faults/README.md`](src/fileholder-ui/e2e/faults/README.md).
+
 ### 5. Testing from a Phone (e.g. Safari on iPhone)
 Encrypted downloads are saved differently per browser (see *Encrypted Downloads*), and CI can't run real Safari. To check a phone by hand, it has to reach your local stack **over HTTPS**: Safari only enables service workers and its private file storage (OPFS) on HTTPS, so a plain `http://<your-PC-IP>:3000` test would silently fall back to saving in memory and prove nothing.
 

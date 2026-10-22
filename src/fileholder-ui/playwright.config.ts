@@ -1,11 +1,18 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const TEST_TIMEOUT_MS = 60_000;
+const CI_RETRIES = 2;
+// Matches the tag in titles of tests that also run in Firefox and WebKit: "4. E2EE journey @cross-browser" matches,
+// "2. Rejects executable files" doesn't.
+// https://regex101.com/?regex=%40cross-browser&flags=&testString=4.%20E2EE%20journey%20%40cross-browser%0A2.%20Rejects%20executable%20files
+const CROSS_BROWSER = /@cross-browser/;
+
 export default defineConfig({
   testDir: './e2e',
-  timeout: 60000,
+  timeout: TEST_TIMEOUT_MS,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  retries: process.env.CI ? CI_RETRIES : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   
@@ -19,18 +26,43 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: '**/faults/**',
       use: { ...devices['Desktop Chrome'] },
     },
     // Saving decrypted downloads works differently per browser engine (see streamSaving.ts), so the tests
     // tagged @cross-browser also run in Firefox and WebKit (Safari's engine).
     {
       name: 'firefox',
-      grep: /@cross-browser/,
+      grep: CROSS_BROWSER,
+      testIgnore: '**/faults/**',
       use: { ...devices['Desktop Firefox'] },
     },
     {
       name: 'webkit',
-      grep: /@cross-browser/,
+      grep: CROSS_BROWSER,
+      testIgnore: '**/faults/**',
+      use: { ...devices['Desktop Safari'] },
+    },
+    // Network-fault tests (#71, see e2e/faults/README.md). One at a time: their checks read the stack's shared
+    // database, storage and API log. Run them alone with: npx playwright test --project="faults*"
+    {
+      name: 'faults',
+      testDir: './e2e/faults',
+      workers: 1,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'faults-firefox',
+      testDir: './e2e/faults',
+      grep: CROSS_BROWSER,
+      workers: 1,
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'faults-webkit',
+      testDir: './e2e/faults',
+      grep: CROSS_BROWSER,
+      workers: 1,
       use: { ...devices['Desktop Safari'] },
     },
   ],
