@@ -95,7 +95,15 @@ jobs:
                 # Compose requires a Grafana password; CI never logs in, so a throwaway one is enough.
                 # Only api and ui (plus their dependencies) are started: the tests don't use Prometheus or Grafana.
                 # docker-compose.ci.yml raises the per-address rate limits: every test request comes from this runner.
-                GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build api ui
+                # Compose starts ui only once the API's health check (/healthz/ready) passes, and fails if it never does;
+                # then the readiness report says which check failed.
+                if ! GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build api ui; then
+                  echo "::error::The stack didn't start. The API's readiness report:"
+                  curl -sS http://localhost:8080/healthz/ready || true
+                  echo
+                  docker compose logs --tail 50 api
+                  exit 1
+                fi
             # Image scans: high and critical vulnerabilities that have a fix fail the build. Accepted ones, each with
             # a reason and an expiry date, are in .trivyignore.
             - name: Find the Pinned Storage Image
@@ -128,10 +136,16 @@ jobs:
                 ignore-unfixed: true
                 exit-code: '1'
                 trivyignores: .trivyignore
-            - name: Wait for API Healthcheck Readiness
+            - name: Wait for API Readiness
               run: |
-                echo "Waiting for .NET 10 API to become healthy..."
-                timeout 60s bash -c 'until curl -s http://localhost:8080/healthz; do sleep 2; done'
+                # -f: a 503 (database or storage Unhealthy) counts as not ready, not just a closed port.
+                # Compose has already waited on the same check before starting ui; this shows the result.
+                if ! timeout 90s bash -c 'until curl -fsS http://localhost:8080/healthz/ready; do sleep 2; done'; then
+                  echo "::error::The API didn't become ready within 90 s. Its last readiness report:"
+                  curl -sS http://localhost:8080/healthz/ready || true
+                  docker compose logs --tail 50 api
+                  exit 1
+                fi
             - name: Verify Storage Bucket Rejects Anonymous Access
               run: |
                 # Unsigned requests must be denied. A missing key answers 403 (not 404) when the caller

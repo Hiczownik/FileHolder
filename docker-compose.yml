@@ -90,6 +90,15 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+    # Ready means the database and storage answer (/healthz/ready, see HealthEndpoints.cs). A lagging purge only
+    # makes it Degraded, which still answers 200 and passes. The aspnet Alpine image has BusyBox wget, not curl;
+    # wget exits non-zero on the 503 an Unhealthy check returns.
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/healthz/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   ui:
     build:
@@ -103,7 +112,9 @@ services:
         # Fixed so the API can trust X-Forwarded-For from this container and nothing else.
         ipv4_address: 172.30.250.10
     depends_on:
-      - api
+      # Started once the API is ready, so the page never loads against an API that can't serve it.
+      api:
+        condition: service_healthy
 
   prometheus:
     image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2

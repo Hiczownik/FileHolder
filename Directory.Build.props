@@ -13,7 +13,7 @@
       NuGet audit: every restore checks all packages, the ones pulled in by others too, against the GitHub advisory
       database. A high (NU1903) or critical (NU1904) vulnerability fails the build, here and in the Docker build;
       low (NU1901) and moderate (NU1902) ones stay warnings. Fix by updating the package, or by pinning a fixed
-      version of a transitive one in Directory.Packages.props (as for SSH.NET).
+      version of a transitive one in Directory.Packages.props.
     -->
     <PropertyGroup>
         <NuGetAudit>true</NuGetAudit>

@@ -43,6 +43,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
         S3ObjectRegistry[storageKey] = sizeBytes;
     }
 
+    /// <summary>Stops this fixture's Postgres, as if the database went down. Its address changes if started again.</summary>
+    public Task StopDatabaseAsync() => _postgresContainer.StopAsync();
+
     public async Task InitializeAsync()
     {
         await _postgresContainer.StartAsync();
@@ -151,8 +154,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
                 services.Remove(dbContextDescriptor);
             }
 
-            services.AddDbContext<AppDbContext>(options =>
-                options.UseNpgsql(_postgresContainer.GetConnectionString()));
+            // Read once, like a real deployment's fixed setting: asking the container again after it stopped throws.
+            var connectionString = _postgresContainer.GetConnectionString();
+            services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
 
             var s3Descriptors = services
                 .Where(d => d.ServiceType == typeof(IAmazonS3))

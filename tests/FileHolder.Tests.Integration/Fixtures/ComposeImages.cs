@@ -8,6 +8,9 @@ public static class ComposeImages
 {
     public const string ComposeFileName = "docker-compose.yml";
 
+    /// <summary>The folder holding FileHolder.sln and docker-compose.yml, found upwards from the test binaries.</summary>
+    public static string RepositoryRoot { get; } = FindRepositoryRoot();
+
     private static readonly Lazy<string[]> ComposeLines = new(() => File.ReadAllLines(Path.Combine(RepositoryRoot, ComposeFileName)));
 
     /// <summary>The PostgreSQL image of the <c>postgres</c> service.</summary>
@@ -15,9 +18,6 @@ public static class ComposeImages
 
     /// <summary>The Silo storage image of the <c>minio</c> service.</summary>
     public static string Silo => ImageOf("minio");
-
-    /// <summary>The folder holding FileHolder.sln and docker-compose.yml, found upwards from the test binaries.</summary>
-    public static string RepositoryRoot { get; } = FindRepositoryRoot();
 
     /// <summary>
     /// The <c>image:</c> of a top-level service. Services sit two spaces in under <c>services:</c>, their settings

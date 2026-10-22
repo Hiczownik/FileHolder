@@ -28,16 +28,18 @@ public class PinnedImagesTests
         return new TheoryData<string>(images);
     }
 
+    // The app's own images, and the scanners the security workflow runs.
+    private static readonly string[] Dockerfiles =
+    [
+        "src/FileHolder.Api/Dockerfile",
+        "src/fileholder-ui/Dockerfile",
+        ".github/scanners/semgrep/Dockerfile",
+        ".github/scanners/gitleaks/Dockerfile",
+    ];
+
     public static TheoryData<string> DockerfileBaseImages()
     {
-        // The app's own images, and the scanners the security workflow runs.
-        var images = new[]
-            {
-                "src/FileHolder.Api/Dockerfile",
-                "src/fileholder-ui/Dockerfile",
-                ".github/scanners/semgrep/Dockerfile",
-                ".github/scanners/gitleaks/Dockerfile",
-            }
+        var images = Dockerfiles
             .SelectMany(path => File.ReadAllLines(Path.Combine(ComposeImages.RepositoryRoot, path)))
             .Where(line => line.StartsWith("FROM ", StringComparison.Ordinal))
             .Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries)[1]);
