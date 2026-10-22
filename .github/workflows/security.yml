@@ -1,0 +1,53 @@
+name: Security Scans
+
+# Code scanning and secret scanning with free tools: the repository is private, where GitHub's own CodeQL and
+# secret scanning need a paid add-on (#74). Findings fail the job and are listed in its log.
+on:
+    push:
+        branches: [ "main" ]
+    pull_request:
+        branches: [ "main" ]
+    schedule:
+        # Weekly, so new rules and newly known leak patterns are checked against unchanged code too.
+        - cron: '41 4 * * 1'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    semgrep:
+        name: Code Scanning (Semgrep)
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+            - name: Build Pinned Semgrep Image
+              run: docker build -t fileholder-semgrep .github/scanners/semgrep
+            - name: Scan C# and TypeScript
+              run: |
+                # Run as the runner's user, so git inside the container accepts the checkout as its own.
+                # Semgrep's C# parser doesn't know primary constructors yet: files using them are only partly
+                # parsed, which it reports as warnings, not failures.
+                docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src fileholder-semgrep \
+                  semgrep scan \
+                    --config p/csharp --config p/typescript --config p/react --config p/security-audit \
+                    --metrics=off --error \
+                    --exclude node_modules --exclude bin --exclude obj --exclude dist
+
+    gitleaks:
+        name: Secret Scanning (gitleaks)
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository (Full History)
+              uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+              with:
+                  # Every commit, not just the latest: a secret removed later is still in the history.
+                  fetch-depth: 0
+            - name: Build Pinned gitleaks Image
+              run: docker build -t fileholder-gitleaks .github/scanners/gitleaks
+            - name: Scan Every Commit
+              run: |
+                # .gitleaks.toml: gitleaks' default rules, plus the few test values allowed and why.
+                docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" fileholder-gitleaks \
+                  git /repo --config /repo/.gitleaks.toml --redact --no-banner --verbose

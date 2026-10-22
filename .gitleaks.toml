@@ -1,0 +1,14 @@
+# gitleaks: scans every commit for committed secrets (.github/workflows/security.yml). Uses gitleaks' default rules,
+# with only the test values below allowed. Add a value here only when it is provably not a secret, and say why.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Made-up test values that look like keys"
+# Matched against the detected secret itself, so the same text anywhere else is still allowed, nothing more.
+regexes = [
+  # UploadSuccessCard.test.tsx: a sample link key, random characters with no bundle behind them.
+  '''^q3-_ZZ0x9Lm2Wk7Qp4Rt8Vy1Hd6Jb3Nc5Fg0Ks2Ue7Xa$''',
+  # passkey.properties.test.ts: the example in a regex comment showing a passkey's format.
+  '''K7QF-2MXA-9RTB''',
+]

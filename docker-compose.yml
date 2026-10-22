@@ -1,6 +1,6 @@
 # Every image is pinned to an exact version and its digest, so a pull or a fresh CI runner always gets the same
-# image. Update the tag and the digest together. The integration tests read the postgres and silo images from this
-# file (ComposeImages.cs), so they always test against what runs here.
+# image. Dependabot proposes updates, tag and digest together (.github/dependabot.yml). The integration tests read
+# the postgres and silo images from this file (ComposeImages.cs), so they always test against what runs here.
 services:
   postgres:
     image: postgres:17.11-alpine3.24@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb

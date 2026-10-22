@@ -53,6 +53,15 @@ jobs:
               run: |
                 cd src/fileholder-ui
                 npm ci
+            - name: Audit Shipped npm Packages (High and Critical Fail)
+              run: |
+                # Only what ends up in the built app: build and test tools never reach a browser.
+                cd src/fileholder-ui
+                npm audit --omit=dev --audit-level=high
+            - name: Audit All npm Packages (Report Only)
+              run: |
+                cd src/fileholder-ui
+                npm audit || echo "::warning::npm audit reports vulnerabilities in development dependencies"
             - name: Run React Component & Hook Unit Tests (Vitest)
               run: |
                 cd src/fileholder-ui
@@ -87,6 +96,38 @@ jobs:
                 # Only api and ui (plus their dependencies) are started: the tests don't use Prometheus or Grafana.
                 # docker-compose.ci.yml raises the per-address rate limits: every test request comes from this runner.
                 GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build api ui
+            # Image scans: high and critical vulnerabilities that have a fix fail the build. Accepted ones, each with
+            # a reason and an expiry date, are in .trivyignore.
+            - name: Find the Pinned Storage Image
+              id: storage-image
+              run: echo "ref=$(grep -m1 -oE 'pgsty/silo:[^[:space:]]+' docker-compose.yml)" >> "$GITHUB_OUTPUT"
+            - name: Scan API Image (Trivy)
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                version: v0.76.1
+                image-ref: fileholder-api
+                severity: HIGH,CRITICAL
+                ignore-unfixed: true
+                exit-code: '1'
+                trivyignores: .trivyignore
+            - name: Scan UI Image (Trivy)
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                version: v0.76.1
+                image-ref: fileholder-ui
+                severity: HIGH,CRITICAL
+                ignore-unfixed: true
+                exit-code: '1'
+                trivyignores: .trivyignore
+            - name: Scan Storage Image (Trivy)
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                version: v0.76.1
+                image-ref: ${{ steps.storage-image.outputs.ref }}
+                severity: HIGH,CRITICAL
+                ignore-unfixed: true
+                exit-code: '1'
+                trivyignores: .trivyignore
             - name: Wait for API Healthcheck Readiness
               run: |
                 echo "Waiting for .NET 10 API to become healthy..."

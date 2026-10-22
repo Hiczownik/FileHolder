@@ -80,6 +80,18 @@
   * **The UI pages, served by nginx, don't send these headers yet.** Tracked in [#81](https://github.com/Hiczownik/FileHolder/issues/81) and [#82](https://github.com/Hiczownik/FileHolder/issues/82).
 * **Error responses** use RFC 7807 `ProblemDetails`. Internal error messages are only shown in Development.
 * **Logs** name the route (`/api/v1/files/{shareToken}`), never the request path, since a share token opens a bundle without a password. File names and titles stay out of them too: a rejected request's message, which can name a file, is only logged at `Debug`. nginx's access log shows `[token]` in place of the token and leaves out query strings; its error log, whose format can't be changed, still shows the full request when it can't reach the API.
+* **Dependencies** are pinned and checked:
+  * **Pinning:**
+    * Every container image is pinned to a version and digest. A test fails on any that isn't.
+    * Every GitHub Action is pinned to a commit.
+    * Every NuGet version is exact, in `Directory.Packages.props`.
+    * npm installs from `package-lock.json`.
+  * **Dependabot** proposes updates weekly (`.github/dependabot.yml`).
+  * **CI fails** on a high or critical vulnerability with a fix available:
+    * in NuGet packages, transitive ones included (restore);
+    * in npm packages that ship in the app (`npm audit`);
+    * in the API, UI and storage images (Trivy). Accepted exceptions are in `.trivyignore`, each with a reason and an expiry date.
+  * **`security.yml`** runs Semgrep on the C# and TypeScript code, and gitleaks on every commit for committed secrets. These are free tools, since GitHub's own code scanning needs a paid add-on on a private repository.
 
 A written threat model (what each party can see and do, and the known gaps) is planned in [#81](https://github.com/Hiczownik/FileHolder/issues/81). **Please don't report vulnerabilities in public issues;** contact the maintainer privately (a `SECURITY.md` with the process is part of #81).
 

@@ -1,0 +1,7 @@
+# Vulnerabilities the image scans in ci.yml accept for now. Each entry says why, and expires (exp:) so it is
+# looked at again: after that date the scan fails on it until it is fixed or deliberately extended.
+
+# Silo RELEASE.2026-10-18T00-00-00Z (silo and mcli) is built with Go 1.27.2; crypto/x509 is fixed in 1.27.3, and no
+# Silo release has it yet. In this stack Silo and mc only talk plain HTTP inside the compose network, so no
+# certificate is ever checked. Take the next Silo release that is built with a fixed Go.
+CVE-2026-111943 exp:2026-11-21
