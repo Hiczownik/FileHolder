@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 
 namespace FileHolder.Infrastructure.Workers;
 
-public class FileCleanupWorker(IServiceProvider serviceProvider, ILogger<FileCleanupWorker> logger)
+public class FileCleanupWorker(IServiceProvider serviceProvider, PurgeWorkerStatus status, ILogger<FileCleanupWorker> logger)
     : BackgroundService
 {
     private readonly TimeSpan _checkInterval = PurgeTimings.CheckInterval;
@@ -29,9 +29,17 @@ public class FileCleanupWorker(IServiceProvider serviceProvider, ILogger<FileCle
                     logger.LogInformation("Successfully purged {Count} expired file records and storage blobs.",
                         purgedCount);
                 }
+
+                status.RecordSuccess();
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Shutting down: not a failed run.
+                return;
             }
             catch (Exception ex)
             {
+                status.RecordFailure(ex);
                 logger.LogError(ex, "An error occurred while executing the file cleanup background task.");
             }
 

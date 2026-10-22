@@ -142,7 +142,13 @@ docker compose up --build
 
 ### Application Endpoints
 * **Web app**: [http://localhost:3000](http://localhost:3000). This port is published on **all network interfaces**, so other devices on your network can reach it too.
-* **API health check**: [http://localhost:8080/healthz](http://localhost:8080/healthz). Today it only shows the API is up; it doesn't check the database or storage yet ([#80](https://github.com/Hiczownik/FileHolder/issues/80)).
+* **API health check**: [http://localhost:8080/healthz/ready](http://localhost:8080/healthz/ready).
+  * **Statuses:**
+    * *Unhealthy* (503): the database or storage can't be reached.
+    * *Degraded* (still 200): the purge is lagging. The storage lifecycle rule isn't confirmed, the purge worker hasn't completed a run for an hour, or bundles have waited over 2 hours to be deleted.
+  * **Who waits on it:** compose (before starting the UI) and CI.
+  * **Liveness:** [`/healthz/live`](http://localhost:8080/healthz/live) only shows the process is up. `/healthz` is the same as `/healthz/ready`.
+  * **Metrics:** each check's status is also on the metrics port as `fileholder_health_status`, with `fileholder_purge_overdue_groups` and `fileholder_purge_last_success_age_seconds`.
 * **Grafana**: [http://localhost:3001](http://localhost:3001) *(login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*
 * **Storage console (Silo)**: [http://localhost:9001](http://localhost:9001) *(login: `minioadmin` / `minioadmin`)*
 * **Scalar API docs**: only when the API runs in Development (see *Development*). The compose stack runs the API in Production.

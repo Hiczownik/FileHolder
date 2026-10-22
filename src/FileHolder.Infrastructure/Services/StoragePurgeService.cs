@@ -77,18 +77,9 @@ public class StoragePurgeService(
 
     private async Task<int> PurgeExpiredGroupsAsync(DateTime now, CancellationToken ct)
     {
-        // A closed group's last download may still be running: its session can last hours after the group closed,
-        // and a URL issued near either end stays valid a little longer. Storage waits for all of that.
-        var graceCutoff = now - DeletionGracePeriod;
-
         var expiredGroups = await _dbContext.FileGroups
             .Include(g => g.Files)
-            .Where(g => g.StoragePurgedAt == null && (
-                (g.ExpiresAt != null && g.ExpiresAt <= graceCutoff) ||
-                ((g.IsDeleted || (g.MaxDownloads != null && g.DownloadCount >= g.MaxDownloads)) &&
-                 (g.DeletedAt == null || g.DeletedAt <= graceCutoff))
-            ))
-            .Where(g => !_dbContext.DownloadSessions.Any(s => s.FileGroupId == g.Id && s.ExpiresAt > graceCutoff))
+            .DueForPurge(_dbContext, now)
             .OrderBy(g => g.CreatedAt)
             .Take(100)
             .ToListAsync(ct);

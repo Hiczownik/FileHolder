@@ -128,10 +128,16 @@ jobs:
                 ignore-unfixed: true
                 exit-code: '1'
                 trivyignores: .trivyignore
-            - name: Wait for API Healthcheck Readiness
+            - name: Wait for API Readiness
               run: |
-                echo "Waiting for .NET 10 API to become healthy..."
-                timeout 60s bash -c 'until curl -s http://localhost:8080/healthz; do sleep 2; done'
+                # -f: a 503 (database or storage Unhealthy) counts as not ready, not just a closed port.
+                # Compose has already waited on the same check before starting ui; this shows the result.
+                if ! timeout 90s bash -c 'until curl -fsS http://localhost:8080/healthz/ready; do sleep 2; done'; then
+                  echo "::error::The API didn't become ready within 90 s. Its last readiness report:"
+                  curl -sS http://localhost:8080/healthz/ready || true
+                  docker compose logs --tail 50 api
+                  exit 1
+                fi
             - name: Verify Storage Bucket Rejects Anonymous Access
               run: |
                 # Unsigned requests must be denied. A missing key answers 403 (not 404) when the caller
