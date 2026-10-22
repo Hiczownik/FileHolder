@@ -2,26 +2,28 @@ import { Archive } from "lucide-react";
 import { Button } from "../../../shared/components/Button";
 
 interface Props {
-    fileCount: number;
     isDownloading: boolean;
+    /** Another download (a single file) is running; the hook runs one at a time. */
+    disabled?: boolean;
     onDownloadZip: () => void;
     /** Shown while downloading instead of the generic text, e.g. "Decrypting… 640 MB of 1.5 GB". */
     progressText?: string;
 }
 
-export const ZipDownloadButton: React.FC<Props> = ({ fileCount, isDownloading, onDownloadZip, progressText }) => {
+export const ZipDownloadButton: React.FC<Props> = ({ isDownloading, disabled = false, onDownloadZip, progressText }) => {
     return (
         <Button
             type="button"
-            variant="secondary"
-            size="md"
+            variant="primary"
+            size="lg"
             onClick={onDownloadZip}
+            disabled={disabled}
             isLoading={isDownloading}
-            loadingText={progressText ?? "Streaming & Compressing ZIP..."}
-            className="w-full text-accent hover:border-accent/60"
+            loadingText={progressText ?? "Preparing ZIP..."}
+            className="h-[52px] text-base"
         >
-            <Archive className="w-4 h-4" />
-            <span>Download All ({fileCount} Files) as ZIP</span>
+            <Archive aria-hidden="true" className="w-[18px] h-[18px]" />
+            <span>Download all as ZIP</span>
         </Button>
     );
 };

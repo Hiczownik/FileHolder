@@ -13,6 +13,8 @@ import { openShareLinkWithNewKey, putLinkKeyInAddressBar } from './linkKeyFixtur
 const PASSKEY = 'VaultPass123!';
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
+const HTTP_GONE = 410;
+const HTTP_SERVER_ERROR = 500;
 const MANIFEST_FILE_BYTES = 100;
 const SERVER_FILE_BYTES = 128;
 const PAPER_1_BYTES = 100;
@@ -354,6 +356,52 @@ describe('useFileDownload Hook Lifecycle & Cryptographic States', () => {
             await renderLoaded('gone_token');
             expect(linkKeyStore.get('gone_token')).toBeNull();
             expect(unlockSpy).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('a bundle that can no longer be shown', () => {
+        it('is gone once it expired or ran out of downloads (410)', async () => {
+            vi.spyOn(downloadApi, 'getGroupMetadata').mockRejectedValue(
+                httpError(HTTP_GONE, 'This shared file bundle has expired or reached its download limit.'));
+
+            const { result } = await renderLoaded('gone_410');
+
+            expect(result.current.unavailable).toBe('gone');
+        });
+
+        it('is gone when the server marks it expired', async () => {
+            const expired: FileGroupMetadataResponse = {
+                shareToken: 'gone_flag',
+                totalSizeBytes: 0,
+                fileCount: 0,
+                requiresPassword: false,
+                isUnlocked: false,
+                isEncrypted: false,
+                isExpired: true,
+                files: [],
+            };
+            vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue(expired);
+
+            const { result } = await renderLoaded('gone_flag');
+
+            expect(result.current.unavailable).toBe('gone');
+        });
+
+        it('is not found when no bundle has the link (404)', async () => {
+            vi.spyOn(downloadApi, 'getGroupMetadata').mockRejectedValue(httpError(HTTP_NOT_FOUND, 'Not found'));
+
+            const { result } = await renderLoaded('no_such');
+
+            expect(result.current.unavailable).toBe('notFound');
+        });
+
+        it('stays available when loading fails for another reason', async () => {
+            vi.spyOn(downloadApi, 'getGroupMetadata').mockRejectedValue(httpError(HTTP_SERVER_ERROR, 'Boom'));
+
+            const { result } = await renderLoaded('flaky');
+
+            expect(result.current.unavailable).toBeNull();
+            expect(result.current.error).not.toBeNull();
         });
     });
 });

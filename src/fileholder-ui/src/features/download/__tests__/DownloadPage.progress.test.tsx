@@ -39,6 +39,7 @@ const stateWith = (files: FileItemMetadata[], overrides: Partial<HookState>): Ho
     downloadingFileId: null,
     isDownloadingAll: false,
     error: null,
+    unavailable: null,
     lastSaveReport: null,
     downloadProgress: null,
     promptFor: null,

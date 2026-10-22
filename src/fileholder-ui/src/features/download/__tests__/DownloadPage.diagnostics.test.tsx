@@ -25,6 +25,7 @@ vi.mock('../hooks/useFileDownload', () => ({
         downloadingFileId: null,
         isDownloadingAll: false,
         error: null,
+        unavailable: null,
         lastSaveReport: LAST_SAVE,
         downloadProgress: null,
         promptFor: null,
