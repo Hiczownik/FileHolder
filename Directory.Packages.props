@@ -5,7 +5,10 @@
     -->
     <PropertyGroup>
         <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
-        <!-- A version listed here also applies when the package only comes in through another one (see SSH.NET). -->
+        <!--
+          A version listed here also applies when the package only comes in through another one, so a vulnerable
+          transitive package can be pinned to a fixed version here.
+        -->
         <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
     </PropertyGroup>
 
@@ -28,7 +31,8 @@
         <PackageVersion Include="Microsoft.OpenApi" Version="2.13.0" />
         <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
         <!-- Prerelease upstream: the OpenTelemetry Prometheus exporter has no stable release yet. -->
-        <PackageVersion Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.17.0-beta.1" />
+        <!-- Dependabot skips it in the minor-and-patch group, so move it with the other OpenTelemetry packages. -->
+        <PackageVersion Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.20.1-beta.1" />
         <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
         <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.20.1" />
         <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.20.1" />
@@ -47,14 +51,5 @@
         <PackageVersion Include="Testcontainers.PostgreSql" Version="4.16.0" />
         <PackageVersion Include="xunit" Version="2.9.3" />
         <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <!--
-          Transitive pins: packages nothing references directly, held at a version without known vulnerabilities.
-          SSH.NET comes in through Testcontainers, which asks for 2025.1.0 (GHSA-mggc-4xg6-vcxf, GHSA-q939-rpr3-3284,
-          both high). Drop the pin once Testcontainers itself depends on a fixed version.
-        -->
-        <PackageVersion Include="SSH.NET" Version="2026.0.0" />
     </ItemGroup>
 </Project>
