@@ -3,6 +3,7 @@ using Amazon.S3;
 using FileHolder.Api.Configuration;
 using FileHolder.Api.Endpoints;
 using FileHolder.Api.ExceptionHandling;
+using FileHolder.Api.Health;
 using FileHolder.Api.Middleware;
 using FileHolder.Api.RateLimiting;
 using FileHolder.Core.Configuration;
@@ -88,6 +89,8 @@ builder.Services.AddOpenTelemetry()
 
 builder.Services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
 builder.Services.AddHostedService<FileCleanupWorker>();
+// /healthz/live and /healthz/ready, and their metrics (HealthEndpoints, HealthMetrics).
+builder.Services.AddFileHolderHealthChecks();
 // The storage-level backstop behind the purge (StorageSafetyNet).
 builder.Services.AddSingleton<StorageLifecycleStatus>();
 builder.Services.AddHostedService<StorageLifecycleInitializer>();
