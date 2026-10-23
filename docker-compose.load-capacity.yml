@@ -1,0 +1,12 @@
+# Capacity load runs only, layered on docker-compose.yml and docker-compose.load.yml (tests/load/run.ps1 applies it).
+# All k6 traffic comes from one address, so the production per-address limits (RateLimitOptions.cs) would throttle
+# the test itself. These are the highest limits the API accepts. Rate-limit runs (scenario 9) leave this file out to
+# test the production limits. Never use it for a deployment.
+services:
+  api:
+    environment:
+      RateLimits__UploadInitiatePermitLimit: "100000"
+      RateLimits__MultipartPipelinePermitLimit: "100000"
+      RateLimits__ConfirmPermitLimit: "100000"
+      RateLimits__DownloadPermitLimit: "100000"
+      RateLimits__MetadataPermitLimit: "100000"

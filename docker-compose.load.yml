@@ -1,0 +1,8 @@
+# Load tests only, layered on docker-compose.yml (tests/load/run.ps1 applies it). Never use it for a deployment.
+services:
+  api:
+    environment:
+      # Upload and download URLs are signed for this address, and the k6 container sends the storage PUTs and GETs
+      # itself, over the compose network. While this file is applied, uploads from a browser on this machine fail;
+      # start the stack without it again afterwards (`docker compose up -d api`).
+      Storage__PublicBaseUrl: "http://minio:9000"
