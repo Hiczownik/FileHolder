@@ -1,0 +1,12 @@
+apiVersion: 1
+
+# Dashboards kept as JSON next to this file. Grafana has no volume, so changes made in its UI are lost on restart:
+# edit the JSON instead.
+providers:
+  - name: FileHolder
+    folder: FileHolder
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards
