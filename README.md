@@ -134,7 +134,7 @@
 | **Caching** | .NET `HybridCache` | In-memory only (no shared L2 cache), with stampede protection |
 | **Background work** | `BackgroundService` | Storage purge every 30 minutes |
 | **Frontend** | **React 19**, Vite 8, TypeScript 6, Tailwind CSS 4 | axios, react-hook-form, client-zip (ZIPs in the browser), qrcode.react |
-| **Observability** | OpenTelemetry metrics → Prometheus → Grafana; OpenTelemetry traces over OTLP (requests, PostgreSQL, storage); Serilog console logs with trace ids | |
+| **Observability** | OpenTelemetry metrics → Prometheus → Grafana; OpenTelemetry traces → Grafana Tempo → Grafana; Serilog console logs with trace ids | |
 | **Tests** | xUnit, FluentAssertions, NSubstitute, FsCheck, Testcontainers (PostgreSQL); Vitest + Testing Library, fast-check; Playwright (Chromium, Firefox, WebKit) | |
 | **Containers** | Docker Compose, multi-stage builds | |
 
@@ -158,7 +158,7 @@ docker compose up --build
   * **Who waits on it:** compose (before starting the UI) and CI.
   * **Liveness:** [`/healthz/live`](http://localhost:8080/healthz/live) only shows the process is up. `/healthz` is the same as `/healthz/ready`.
   * **Metrics:** each check's status is also on the metrics port as `fileholder_health_status`, with `fileholder_purge_overdue_groups` and `fileholder_purge_last_success_age_seconds`.
-* **Grafana**: [http://localhost:3001](http://localhost:3001) *(login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*
+* **Grafana**: [http://localhost:3001](http://localhost:3001) *(login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*. Prometheus metrics, and Tempo traces (see *Tracing*).
 * **Storage console (Silo)**: [http://localhost:9001](http://localhost:9001) *(login: `minioadmin` / `minioadmin`)*
 * **Scalar API docs**: only when the API runs in Development (see *Development*). The compose stack runs the API in Production.
 
@@ -173,6 +173,19 @@ The default credentials (`minioadmin`, the Postgres password in `appsettings.jso
 * **Docker Desktop (Windows/macOS) hides client addresses:** its port forwarding makes every connection appear to come from one gateway address, so locally all clients still share one rate-limit partition. Linux hosts and real proxies don't have this problem.
 * **Metrics** are served only on port 9464 (`Metrics:Port`), which compose never publishes. Prometheus scrapes `api:9464` over the internal network.
 * **Storage addresses** (`Storage:ServiceUrl` for the API, `Storage:PublicBaseUrl` for browsers) may each be `http://` or `https://`. Upload and download links follow `PublicBaseUrl`'s scheme, so when the app is served over HTTPS, storage must be too, or browsers block the links as mixed content.
+
+### Tracing
+One request, or one purge run, can be followed step by step: where the time went and in what order.
+* **Where:** Grafana ([http://localhost:3001](http://localhost:3001)) → **Explore** → **Tempo**. Search for service `fileholder-api` and a span name such as `POST /api/v1/files/confirm` or `purge.run`, or paste a trace id from a log line (`… trace=<id> span=<id>`).
+* **What a trace holds:**
+  * the request, with its PostgreSQL queries and storage calls (`HEAD`, `PUT` …, from the AWS SDK's HttpClient);
+  * the API's own steps: `confirm.claim` → `confirm.check_sizes` → `confirm.hash_password` → `confirm.copy_single_part_files` → `confirm.persist` → `confirm.cache_write`, `presign`, `password.check` (with its lockout decision), `download_session.open`, `bundle_zip.entry` per file, and `storage.*` around every storage call;
+  * the purge worker's runs, each a trace of its own (`purge.run` and its steps, with counts).
+* **What it never holds:** share tokens, presigned-URL signatures, passwords, `kAuth`, keys, titles or file names, and client addresses unless switched on (see *Security Measures*, *Traces*).
+* **Kept 48 hours** (`docker/tempo/tempo.yaml`), on the `tempo_data` volume. A bundle lasts at most 7 days, and a trace still shows that a bundle was uploaded and downloaded, and when.
+* **Ports:** the API sends traces to `tempo:4317` over the compose network only. Tempo's query port is on loopback (`127.0.0.1:3200`) for tooling.
+* **Check it works:** with the stack up, run `scripts/check-traces.sh` (Git Bash). It sends one request under its own trace id and checks that Tempo has it, without the share token. CI runs it after the browser tests.
+* **Turn it off:** remove `OTEL_EXPORTER_OTLP_ENDPOINT` from the `api` service. Nothing is sent then, and log lines inside a request still carry their trace id.
 
 ### Encrypted Downloads
 * **Opening the link:**
@@ -206,7 +219,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Storage__LifecycleExpiryDays` | unset (10, calculated) | Days after which storage deletes any object. Only for a longer safety net; lower than the calculated value refuses to start |
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Where traces go over OTLP (e.g. `http://tempo:4317`). Unset, nothing is sent; log lines inside a trace still end with `trace=… span=…` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4317` | Where traces go over OTLP. Unset (the default outside compose), nothing is sent; log lines inside a trace still end with `trace=… span=…` |
 | `Tracing__SampleRatio` | 1 (default) | Share of requests traced, 0–1. Lower it (e.g. 0.1) on a deployment that sends traces |
 | `Tracing__RecordClientAddress` | false (default) | Keep the caller's address on request spans, for debugging rate limits or the lockout on a real host |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
@@ -229,7 +242,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `tests/vectors` | Examples both test suites check, so the server's and browser's file-name rules agree |
 | `tests/FileHolder.Tests.Integration` | API and service tests (Testcontainers PostgreSQL) |
 | `tests/load` | k6 load tests, their runner (`run.ps1`) and database checks |
-| `docker/` | Prometheus and Grafana provisioning |
+| `docker/` | Prometheus, Tempo and Grafana configuration |
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
 
 ---

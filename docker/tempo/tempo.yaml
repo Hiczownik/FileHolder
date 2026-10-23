@@ -1,0 +1,35 @@
+# Grafana Tempo, monolithic (-target=all, no Kafka), storing traces on the tempo_data volume.
+# Traces arrive from the API over OTLP on the compose network only (docker-compose.yml publishes just the query port,
+# on loopback). The API redacts them before they leave it (TraceRedactionProcessor, FileHolderTracing).
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+overrides:
+  defaults:
+    compaction:
+      # Traces shouldn't outlive what they describe: a bundle lasts at most 7 days, and a trace still shows that a
+      # bundle was uploaded, unlocked and downloaded, and when. 48 h is enough to debug with.
+      block_retention: 48h
+
+usage_report:
+  reporting_enabled: false
