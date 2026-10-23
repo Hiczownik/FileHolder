@@ -142,6 +142,21 @@ services:
     depends_on:
       - prometheus
 
+  # Load tests (tests/load). Only started on demand: the "load" profile keeps `docker compose up` from running it.
+  # Use tests/load/run.ps1, which also applies docker-compose.load.yml so presigned URLs point at minio:9000.
+  k6:
+    image: grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34
+    profiles: ["load"]
+    environment:
+      # Through nginx, as browsers reach the API, so the API sees the k6 container's address as the client.
+      FILEHOLDER_URL: "http://ui"
+      PROMETHEUS_URL: "http://prometheus:9090"
+    volumes:
+      - ./tests/load:/scripts:ro
+      - ./tests/load/results:/results
+    depends_on:
+      - ui
+
 volumes:
   postgres_data:
   minio_data:

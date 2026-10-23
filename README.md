@@ -218,6 +218,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `tests/FileHolder.Tests.Unit` | Unit and property tests for `FileHolder.Core` (and the API's bundle rules) |
 | `tests/vectors` | Examples both test suites check, so the server's and browser's file-name rules agree |
 | `tests/FileHolder.Tests.Integration` | API and service tests (Testcontainers PostgreSQL) |
+| `tests/load` | k6 load tests, their runner (`run.ps1`) and database checks |
 | `docker/` | Prometheus and Grafana provisioning |
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
 
@@ -293,7 +294,14 @@ npx playwright test --ui
 
 **Network-fault tests:** `e2e/faults` breaks the network on purpose: failed parts, a dropped connection, a download cut off half way. Each test then checks that nothing is left behind or counted twice. They run with the others; to run only them, start the stack with `docker-compose.ci.yml` as well, which raises the rate limits, and use `npx playwright test --project="faults*"`. See [`e2e/faults/README.md`](src/fileholder-ui/e2e/faults/README.md).
 
-### 5. Testing from a Phone (e.g. Safari on iPhone)
+### 5. Load tests (k6)
+k6 scenarios in `tests/load` send many requests at once, and check the rules that only matter under concurrency: exactly `MaxDownloads` sessions however many clients race, password lockout against parallel guesses, unknown tokens never cached, and 429s with a correct `Retry-After`. Run them on demand, in PowerShell:
+```powershell
+./tests/load/run.ps1 4,5,6,9
+```
+The script starts the stack with the load-test compose files, runs k6 in a container, checks the database, Postgres connections and API logs afterwards, and then starts the stack with its usual configuration again. See [`tests/load/README.md`](tests/load/README.md).
+
+### 6. Testing from a Phone (e.g. Safari on iPhone)
 Encrypted downloads are saved differently per browser (see *Encrypted Downloads*), and CI can't run real Safari. To check a phone by hand, it has to reach your local stack **over HTTPS**: Safari only enables service workers and its private file storage (OPFS) on HTTPS, so a plain `http://<your-PC-IP>:3000` test would silently fall back to saving in memory and prove nothing.
 
 1. **Run the current stack.** Older builds don't route the API through the UI: `docker compose up -d --build --force-recreate`. `--force-recreate` matters when upgrading a stack created before the compose network was pinned: otherwise compose recreates the network but only restarts the old containers on it, without their service names (`minio`, `postgres`), and `minio-init` fails with `lookup minio … no such host`. Data is kept in Docker volumes.

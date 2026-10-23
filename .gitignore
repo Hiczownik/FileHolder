@@ -22,6 +22,7 @@ src/fileholder-ui/playwright/.cache/
 TestResults/
 coverage/
 test-results/
+tests/load/results/
 
 .DS_Store
 Thumbs.db
