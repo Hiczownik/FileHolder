@@ -47,4 +47,8 @@ describe('BundleHeader', () => {
     it('shows a plain bundle\'s title as before', () => {
         expect(heading({ ...base, isEncrypted: false, title: 'Holiday photos' })).toBe('Holiday photos');
     });
+
+    it('gives a locked plain bundle a generic heading, since the server withholds its title', () => {
+        expect(heading({ ...base, isEncrypted: false })).toBe('Shared files');
+    });
 });

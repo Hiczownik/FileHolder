@@ -63,7 +63,7 @@
 * **Private storage:** the bucket allows no anonymous access, and every upload and download uses a short-lived presigned URL. CI checks that anonymous requests are refused.
 * **File names:** paths are stripped and unsafe characters replaced. Blocked extensions (`.exe`, `.bat`, `.sh`, `.cmd`, `.dll`, `.ps1`, `.js`, `.msi`, `.jar`, `.lnk`, `.iso` and more) are refused by the server. For encrypted bundles, the recipient's browser checks the decrypted names.
 * **Headers:** content types must match a strict media-type pattern, and download `Content-Disposition` headers are always plain ASCII.
-* **Passwords:** stored as bcrypt hashes. 5 wrong passwords are free (typos happen); each further one locks the bundle for 1, 2, 4, … minutes, up to 1 hour.
+* **Passwords:** until the password is given, a bundle shows only its file count, expiry and downloads left: not its title, file names or sizes. Stored as bcrypt hashes. 5 wrong passwords are free (typos happen); each further one locks the bundle for 1, 2, 4, … minutes, up to 1 hour.
 * **Rate limits per client address** (fixed one-minute windows; a `429` carries `Retry-After`):
 
   | Endpoint | Limit | Setting |
@@ -77,7 +77,7 @@
   These are the defaults; each can be set (1–100,000) with the setting next to it. Only raise them for a test stack where every request comes from one address, as CI's end-to-end tests do (`docker-compose.ci.yml`).
 * **Download counting** is a single conditional database update, so a bundle limited to N downloads can never be downloaded more than N times, however many recipients try at once.
 * **API responses** carry `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` and a Content-Security-Policy.
-  * **The UI pages, served by nginx, don't send these headers yet.** Tracked in [#81](https://github.com/Hiczownik/FileHolder/issues/81) and [#82](https://github.com/Hiczownik/FileHolder/issues/82).
+  * **The UI pages, served by nginx, don't send these headers yet.** Tracked in [#130](https://github.com/Hiczownik/FileHolder/issues/130), a deployment blocker ([#82](https://github.com/Hiczownik/FileHolder/issues/82)).
 * **Error responses** use RFC 7807 `ProblemDetails`. Internal error messages are only shown in Development.
 * **Logs** name the route (`/api/v1/files/{shareToken}`), never the request path, since a share token opens a bundle without a password. File names and titles stay out of them too: a rejected request's message, which can name a file, is only logged at `Debug`. nginx's access log shows `[token]` in place of the token and leaves out query strings; its error log, whose format can't be changed, still shows the full request when it can't reach the API.
 * **Dependencies** are pinned and checked:
@@ -93,7 +93,9 @@
     * in the API, UI and storage images (Trivy). Accepted exceptions are in `.trivyignore`, each with a reason and an expiry date.
   * **`security.yml`** runs Semgrep on the C# and TypeScript code, and gitleaks on every commit for committed secrets. These are free tools, since GitHub's own code scanning needs a paid add-on on a private repository.
 
-A written threat model (what each party can see and do, and the known gaps) is planned in [#81](https://github.com/Hiczownik/FileHolder/issues/81). **Please don't report vulnerabilities in public issues;** contact the maintainer privately (a `SECURITY.md` with the process is part of #81).
+**[Threat model](docs/threat-model.md):** what each party can see and do, the protections with their code, the known gaps and the accepted risks.
+
+**Found a vulnerability?** Please don't open a public issue; see [`SECURITY.md`](SECURITY.md).
 
 ---
 

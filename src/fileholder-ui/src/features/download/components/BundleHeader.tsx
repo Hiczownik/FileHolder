@@ -7,7 +7,10 @@ interface Props {
     metadata: FileGroupMetadataResponse;
 }
 
-/** An encrypted bundle's title is only known once it is unlocked, so until then the heading says what it is. */
+/**
+ * A locked bundle's title is only known once it is unlocked (the server withholds a password-protected bundle's,
+ * and an encrypted one's is still encrypted), so until then the heading says what it is.
+ */
 const headingOf = (metadata: FileGroupMetadataResponse): string => {
     if (metadata.title) return metadata.title;
     return metadata.isEncrypted && !metadata.isUnlocked ? 'Encrypted bundle' : 'Shared files';
