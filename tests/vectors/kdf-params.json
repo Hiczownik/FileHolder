@@ -1,0 +1,235 @@
+{
+  "comment": "Argon2id settings an uploader may store with a passkey bundle (#78). Hand-written; checked by KeyDerivationParamsTests on the server and by the browser.",
+  "cases": [
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": true,
+      "why": "the starting settings"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":16384,\"t\":1,\"p\":1}",
+      "valid": true,
+      "why": "every setting at its minimum"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":262144,\"t\":10,\"p\":4}",
+      "valid": true,
+      "why": "every setting at its maximum"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":19456,\"t\":2,\"p\":1}",
+      "valid": true,
+      "why": "OWASP's smaller recommendation"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":16383,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory below 16 MiB"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":262145,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory above 256 MiB"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":4194304,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "4 GiB of memory"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":0,\"p\":1}",
+      "valid": false,
+      "why": "no passes"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":11,\"p\":1}",
+      "valid": false,
+      "why": "too many passes"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":1000000000,\"p\":1}",
+      "valid": false,
+      "why": "a billion passes"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":0}",
+      "valid": false,
+      "why": "no lanes"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":5}",
+      "valid": false,
+      "why": "too many lanes"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":16,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "Argon2 version 1.0 (0x10)"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":20,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "an unknown version"
+    },
+    {
+      "value": "{\"alg\":\"argon2i\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "Argon2i"
+    },
+    {
+      "value": "{\"alg\":\"argon2d\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "Argon2d"
+    },
+    {
+      "value": "{\"alg\":\"ARGON2ID\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "algorithm in capitals"
+    },
+    {
+      "value": "{\"alg\":\"pbkdf2-sha256\",\"i\":300000}",
+      "valid": false,
+      "why": "PBKDF2, which new bundles no longer use"
+    },
+    {
+      "value": "{\"alg\":\"argon2\\u0069d\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "algorithm written with an escape"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3}",
+      "valid": false,
+      "why": "lanes missing"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1,\"x\":1}",
+      "valid": false,
+      "why": "an extra key"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1,\"m\":4194304}",
+      "valid": false,
+      "why": "memory given twice"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":4194304,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory given twice, the last in range"
+    },
+    {
+      "value": "{\"v\":19,\"alg\":\"argon2id\",\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "keys in another order"
+    },
+    {
+      "value": "{\"alg\": \"argon2id\", \"v\": 19, \"m\": 65536, \"t\": 3, \"p\": 1}",
+      "valid": false,
+      "why": "spaces after colons and commas"
+    },
+    {
+      "value": " {\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "a leading space"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1}\n",
+      "valid": false,
+      "why": "a trailing newline"
+    },
+    {
+      "value": "﻿{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "a byte order mark"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536.0,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory written as 65536.0"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":6.5536e4,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory in exponent notation"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3.5,\"p\":1}",
+      "valid": false,
+      "why": "a fractional pass count"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":065536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "a leading zero (not JSON)"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":\"65536\",\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory as a string"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":true,\"p\":1}",
+      "valid": false,
+      "why": "passes as a boolean"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":null,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory null"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":-65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "negative memory"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":4294967296,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory past 32 bits"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":18446744073709617152,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "memory past 64 bits"
+    },
+    {
+      "value": "{\"alg\":19,\"v\":19,\"m\":65536,\"t\":3,\"p\":1}",
+      "valid": false,
+      "why": "algorithm as a number"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1",
+      "valid": false,
+      "why": "cut off (not JSON)"
+    },
+    {
+      "value": "{}",
+      "valid": false,
+      "why": "an empty object"
+    },
+    {
+      "value": "[]",
+      "valid": false,
+      "why": "an array"
+    },
+    {
+      "value": "null",
+      "valid": false,
+      "why": "null"
+    },
+    {
+      "value": "\"argon2id\"",
+      "valid": false,
+      "why": "a bare string"
+    },
+    {
+      "value": "",
+      "valid": false,
+      "why": "empty"
+    },
+    {
+      "value": "{\"alg\":\"argon2id\",\"v\":19,\"m\":65536,\"t\":3,\"p\":1,\"pad\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}",
+      "valid": false,
+      "why": "over 256 characters"
+    }
+  ]
+}

@@ -411,6 +411,7 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
             metadata.Files.Should().BeEmpty("the cached copy must go with the rows");
             metadata.Title.Should().BeNull();
             metadata.KeySalt.Should().BeNull();
+            metadata.KdfParams.Should().BeNull();
         }
 
         // Scrubbing again finds nothing to change.
@@ -595,6 +596,7 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
             KeySalt = "key-salt",
             EncryptedTitle = "encrypted-title",
             KeyMode = KeyMode.LinkKeyAndPasskey,
+            KdfParams = KeyDerivationParams.Format(65536, 3, 1),
             FailedPasswordAttempts = 3,
             PasswordLockedUntil = DateTime.UtcNow.AddMinutes(5),
             Files = new List<SharedFile>
@@ -625,6 +627,7 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
         record.KeySalt.Should().BeNull();
         record.EncryptedTitle.Should().BeNull();
         record.KeyMode.Should().BeNull();
+        record.KdfParams.Should().BeNull();
         record.MaxDownloads.Should().BeNull();
         record.DownloadCount.Should().Be(0);
         record.FailedPasswordAttempts.Should().Be(0);

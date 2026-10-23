@@ -152,8 +152,8 @@ public class StoragePurgeService(
         await _dbContext.FileGroups
             .Where(g => g.StoragePurgedAt != null && (
                 g.Title != null || g.PasswordHash != null || g.EncryptedManifest != null || g.KeyEnvelope != null ||
-                g.KeySalt != null || g.EncryptedTitle != null || g.KeyMode != null || g.MaxDownloads != null ||
-                g.DownloadCount != 0 || g.FailedPasswordAttempts != 0 || g.PasswordLockedUntil != null))
+                g.KeySalt != null || g.EncryptedTitle != null || g.KeyMode != null || g.KdfParams != null ||
+                g.MaxDownloads != null || g.DownloadCount != 0 || g.FailedPasswordAttempts != 0 || g.PasswordLockedUntil != null))
             .ExecuteUpdateAsync(s => s
                 .SetProperty(g => g.Title, (string?)null)
                 .SetProperty(g => g.PasswordHash, (string?)null)
@@ -162,6 +162,7 @@ public class StoragePurgeService(
                 .SetProperty(g => g.KeySalt, (string?)null)
                 .SetProperty(g => g.EncryptedTitle, (string?)null)
                 .SetProperty(g => g.KeyMode, (KeyMode?)null)
+                .SetProperty(g => g.KdfParams, (string?)null)
                 .SetProperty(g => g.MaxDownloads, (int?)null)
                 .SetProperty(g => g.DownloadCount, 0)
                 .SetProperty(g => g.FailedPasswordAttempts, 0)

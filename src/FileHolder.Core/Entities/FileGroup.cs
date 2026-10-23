@@ -34,6 +34,13 @@ public class FileGroup
     public KeyMode? KeyMode { get; set; }
 
     /// <summary>
+    /// The Argon2id settings the uploader's browser stretched the passkey with (see
+    /// <see cref="Configuration.KeyDerivationParams"/>). Only for <see cref="Entities.KeyMode.LinkKeyAndPasskey"/>
+    /// bundles; stored per bundle so new uploads can use stronger settings without breaking older bundles.
+    /// </summary>
+    public string? KdfParams { get; set; }
+
+    /// <summary>
     /// Wrong passwords since the last correct one. Past a few free attempts, each further one
     /// sets <see cref="PasswordLockedUntil"/>, during which every password is refused.
     /// </summary>
