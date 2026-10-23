@@ -61,7 +61,9 @@ public record FileGroupMetadataResponseDto(
     // Like the manifest, only returned once the bundle is unlocked.
     [property: JsonPropertyName("encryptedTitle")] string? EncryptedTitle = null,
     // Returned while locked too: the download page needs it to know how to unlock.
-    [property: JsonPropertyName("keyMode")] KeyMode? KeyMode = null
+    [property: JsonPropertyName("keyMode")] KeyMode? KeyMode = null,
+    // Like the salt, returned while locked: the passkey has to be stretched before it can unlock anything.
+    [property: JsonPropertyName("kdfParams")] string? KdfParams = null
 );
 
 public record UnlockResult(

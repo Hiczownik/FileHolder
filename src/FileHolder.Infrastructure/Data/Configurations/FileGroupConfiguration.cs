@@ -1,3 +1,4 @@
+using FileHolder.Core.Configuration;
 using FileHolder.Core.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -45,6 +46,10 @@ public class FileGroupConfiguration : IEntityTypeConfiguration<FileGroup>
         builder.Property(g => g.KeyMode)
             .HasConversion<string>()
             .HasMaxLength(32)
+            .IsRequired(false);
+
+        builder.Property(g => g.KdfParams)
+            .HasMaxLength(KeyDerivationParams.MaxLength)
             .IsRequired(false);
 
         builder.Property(g => g.FailedPasswordAttempts)

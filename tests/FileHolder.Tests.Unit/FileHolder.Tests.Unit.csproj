@@ -23,6 +23,8 @@
   <ItemGroup>
     <!-- Shared with the UI's tests: both copies of the file-name rules must give these answers. -->
     <None Include="..\vectors\file-names.json" Link="vectors\file-names.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Also shared with the UI: the browser runs these settings, so it must refuse the same ones the server does (#78). -->
+    <None Include="..\vectors\kdf-params.json" Link="vectors\kdf-params.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

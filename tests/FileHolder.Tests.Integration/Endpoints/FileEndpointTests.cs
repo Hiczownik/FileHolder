@@ -379,7 +379,8 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             EncryptedManifest = "encrypted_manifest_base64",
             KeyEnvelope = "key_envelope_base64",
             KeySalt = "salt_base64",
-            KeyMode = KeyMode.LinkKeyAndPasskey
+            KeyMode = KeyMode.LinkKeyAndPasskey,
+            KdfParams = StartingKdfParams
         };
 
         var confirmResponse = await _client.PostAsJsonAsync("/api/v1/files/confirm", confirmRequest);
@@ -398,6 +399,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         metadata.IsUnlocked.Should().BeFalse();
         metadata.KeySalt.Should().Be("salt_base64");
         metadata.KeyMode.Should().Be(KeyMode.LinkKeyAndPasskey);
+        metadata.KdfParams.Should().Be(StartingKdfParams, "the passkey is stretched before it can unlock anything");
         metadata.KeyEnvelope.Should().BeNull();
         metadata.EncryptedManifest.Should().BeNull();
         metadata.Files.Should().BeEmpty();
@@ -420,6 +422,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         unlockedMetadata.KeyEnvelope.Should().Be("key_envelope_base64");
         unlockedMetadata.KeySalt.Should().Be("salt_base64");
         unlockedMetadata.KeyMode.Should().Be(KeyMode.LinkKeyAndPasskey);
+        unlockedMetadata.KdfParams.Should().Be(StartingKdfParams);
         unlockedMetadata.EncryptedManifest.Should().Be("encrypted_manifest_base64");
         unlockedMetadata.Files.Should().HaveCount(1);
     }
@@ -434,12 +437,21 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             KeyMode = KeyMode.LinkKey
         };
 
+    private static readonly string StartingKdfParams = KeyDerivationParams.Format(65536, 3, 1);
+
+    private async Task<ConfirmUploadRequestDto> PresignPasskeyBundleAsync(string name) =>
+        await PresignEncryptedAsync(name) with { KeyMode = KeyMode.LinkKeyAndPasskey, KdfParams = StartingKdfParams };
+
     [Theory]
     [InlineData(KeyMode.LinkKey)]
     [InlineData(KeyMode.LinkKeyAndPasskey)]
     public async Task KeyMode_IsStored_AndReturnedBeforeAndAfterUnlocking(KeyMode keyMode)
     {
-        var request = await PresignEncryptedAsync($"Key Mode {keyMode}") with { KeyMode = keyMode };
+        var request = await PresignEncryptedAsync($"Key Mode {keyMode}") with
+        {
+            KeyMode = keyMode,
+            KdfParams = keyMode == KeyMode.LinkKeyAndPasskey ? StartingKdfParams : null
+        };
         var shareToken = await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>();
 
         // Sent as a name, not a number, so the UI can read it.
@@ -471,6 +483,57 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
         var metadata = await _client.GetFromJsonAsync<FileGroupMetadataResponseDto>($"/api/v1/files/{shareToken}");
         metadata!.KeyMode.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task KdfParams_AreStoredAsSent_AndReturnedBeforeAndAfterUnlocking()
+    {
+        var strongest = KeyDerivationParams.Format(KeyDerivationParams.MaxMemoryKib, KeyDerivationParams.MaxIterations, KeyDerivationParams.MaxParallelism);
+        var request = await PresignPasskeyBundleAsync("Kdf Params Stored") with { KdfParams = strongest };
+        var shareToken = await (await ConfirmAsync(request)).Content.ReadFromJsonAsync<string>();
+
+        var locked = await _client.GetFromJsonAsync<FileGroupMetadataResponseDto>($"/api/v1/files/{shareToken}");
+        locked!.KdfParams.Should().Be(strongest, "the browser needs them while locked");
+
+        var unlocked = await (await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/unlock",
+            new DownloadRequestDto("k_auth_derived_token_123"))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+        unlocked!.KdfParams.Should().Be(strongest);
+    }
+
+    // The recipient's browser runs these settings, so a hostile uploader must not be able to store costly ones.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("""{"alg":"argon2id","v":19,"m":4194304,"t":3,"p":1}""")]
+    [InlineData("""{"alg":"argon2id","v":19,"m":65536,"t":1000000000,"p":1}""")]
+    [InlineData("""{"alg":"pbkdf2-sha256","i":300000}""")]
+    [InlineData("""{"alg":"argon2id","v":19,"m":65536,"t":3,"p":1,"m":4194304}""")]
+    [InlineData("not json")]
+    public async Task ConfirmUpload_Returns400_WhenAPasskeyBundleHasNoSupportedKdfParams(string? kdfParams)
+    {
+        var request = await PresignPasskeyBundleAsync("Bad Kdf Params");
+
+        (await ConfirmAsync(request with { KdfParams = kdfParams })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenALinkKeyOnlyBundleCarriesKdfParams()
+    {
+        // Nothing is stretched without a passkey, so settings there could only be a mistake.
+        var request = await PresignEncryptedAsync("Link Key With Kdf Params");
+
+        (await ConfirmAsync(request with { KdfParams = StartingKdfParams })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_Returns400_WhenAPlainUploadCarriesKdfParams()
+    {
+        var request = await PresignAndUploadAsync("Plain Kdf Params", [new("plain.pdf", "application/pdf", 1024)], maxDownloads: 5);
+
+        (await ConfirmAsync(request with { KdfParams = StartingKdfParams })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     [Fact]
@@ -1901,6 +1964,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
                 KeySalt = isEncrypted ? "secret-salt" : null,
                 EncryptedTitle = isEncrypted ? "secret-encrypted-title" : null,
                 KeyMode = isEncrypted ? KeyMode.LinkKeyAndPasskey : null,
+                KdfParams = isEncrypted ? """{"alg":"secret-kdf"}""" : null,
                 Files = new List<SharedFile>
                 {
                     new()

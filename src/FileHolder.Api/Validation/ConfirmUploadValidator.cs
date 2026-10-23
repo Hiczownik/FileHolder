@@ -1,5 +1,6 @@
 ﻿using FileHolder.Core.Dtos;
 using FileHolder.Core.Configuration;
+using FileHolder.Core.Entities;
 using FluentValidation;
 using Microsoft.Extensions.Options;
 
@@ -63,9 +64,14 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
             RuleFor(x => x.KeyMode)
                 .NotNull().WithMessage("Key mode is required for encrypted uploads.")
                 .IsInEnum().WithMessage("Key mode is not valid.");
+            // Only a passkey is stretched; a link key is random already (#78).
+            RuleFor(x => x.KdfParams).MustBeSupportedKdfParams().When(x => x.KeyMode == KeyMode.LinkKeyAndPasskey);
+            RuleFor(x => x.KdfParams).Empty().WithMessage("Key derivation settings are only allowed with a passkey.")
+                .When(x => x.KeyMode != KeyMode.LinkKeyAndPasskey);
         }).Otherwise(() =>
         {
             RuleFor(x => x.KeyMode).Null().WithMessage("Key mode is only allowed for encrypted uploads.");
+            RuleFor(x => x.KdfParams).Empty().WithMessage("Key derivation settings are only allowed for encrypted uploads.");
             RuleFor(x => x.EncryptedTitle).Empty().WithMessage("Encrypted title is only allowed for encrypted uploads.");
             RuleFor(x => x.KeySalt).Empty().WithMessage("Key salt is only allowed for encrypted uploads.");
             RuleFor(x => x.KeyEnvelope).Empty().WithMessage("Key envelope is only allowed for encrypted uploads.");

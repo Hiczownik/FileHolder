@@ -94,6 +94,13 @@ public static partial class BundleRules
             .Must(value => value is null || Base64UrlRegex().IsMatch(value))
             .WithMessage($"{name} must be base64url-encoded.");
 
+    // The recipient's browser runs these settings, so only bounded Argon2id ones are stored (KeyDerivationParams).
+    public static IRuleBuilderOptions<T, string?> MustBeSupportedKdfParams<T>(this IRuleBuilder<T, string?> rule) =>
+        rule.NotEmpty().WithMessage("Key derivation settings are required with a passkey.")
+            .Must(KeyDerivationParams.IsValid)
+            .WithMessage(string.Create(CultureInfo.InvariantCulture,
+                $"Key derivation settings must be Argon2id version {KeyDerivationParams.Argon2Version} with {KeyDerivationParams.MinMemoryKib}–{KeyDerivationParams.MaxMemoryKib} KiB of memory, {KeyDerivationParams.MinIterations}–{KeyDerivationParams.MaxIterations} passes and {KeyDerivationParams.MinParallelism}–{KeyDerivationParams.MaxParallelism} lanes."));
+
     // Unpadded base64url, as the browser encodes key material: "q3-_Zx0" matches; "q3+/Zx0=" and "a b" don't.
     [GeneratedRegex(@"^[A-Za-z0-9_-]+$")]
     private static partial Regex Base64UrlRegex();

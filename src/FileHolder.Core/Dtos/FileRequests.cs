@@ -36,7 +36,8 @@ public record ConfirmUploadRequestDto(
     string? KeyEnvelope = null,
     string? KeySalt = null,
     string? EncryptedTitle = null,
-    KeyMode? KeyMode = null
+    KeyMode? KeyMode = null,
+    string? KdfParams = null
 );
 
 public record DownloadRequestDto(
