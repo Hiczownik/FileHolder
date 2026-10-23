@@ -105,6 +105,13 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
   - the API logs route templates, not paths (Serilog override in `Program.cs`);
   - nginx's access log writes `[token]` and drops query strings (`nginx.conf`).
   - File names and titles are logged only at `Debug`.
+- **Traces** (#72) are sent only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. `TraceRedactionProcessor` cleans every span before any exporter sees it:
+  - paths become route templates, and query strings are dropped (presigned-URL signatures, download-session ids);
+  - storage keys keep only their GUID;
+  - client addresses are dropped unless `Tracing__RecordClientAddress` is on. With them, a trace links an address to the bundle it unlocked and downloaded;
+  - bodies (passwords, `kAuth`, keys, manifests) and database parameter values are never recorded.
+  - `TracingTests` checks a whole upload and download against an in-memory exporter.
+  - A trace still shows *that* a bundle was uploaded, unlocked and downloaded, and when, for as long as the trace store keeps it.
 - **Ports:** storage, database, API, Prometheus and Grafana are bound to loopback. Metrics are only on an unpublished port (9464). Grafana needs a password from `.env`.
 - **Supply chain** (#74):
   - images are pinned by digest, actions by SHA, and NuGet versions are exact;
