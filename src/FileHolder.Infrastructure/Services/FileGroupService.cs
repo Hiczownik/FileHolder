@@ -404,9 +404,10 @@ public class FileGroupService
 
         if (group.RequiresPassword && !group.IsExpired(now))
         {
+            // Like the file names and sizes, the title can say what the bundle holds, so only the password reveals it.
             return new FileGroupMetadataResponseDto(
                 group.ShareToken,
-                group.Title,
+                null,
                 0,
                 group.Files.Count,
                 true,

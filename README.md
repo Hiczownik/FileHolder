@@ -63,7 +63,7 @@
 * **Private storage:** the bucket allows no anonymous access, and every upload and download uses a short-lived presigned URL. CI checks that anonymous requests are refused.
 * **File names:** paths are stripped and unsafe characters replaced. Blocked extensions (`.exe`, `.bat`, `.sh`, `.cmd`, `.dll`, `.ps1`, `.js`, `.msi`, `.jar`, `.lnk`, `.iso` and more) are refused by the server. For encrypted bundles, the recipient's browser checks the decrypted names.
 * **Headers:** content types must match a strict media-type pattern, and download `Content-Disposition` headers are always plain ASCII.
-* **Passwords:** stored as bcrypt hashes. 5 wrong passwords are free (typos happen); each further one locks the bundle for 1, 2, 4, … minutes, up to 1 hour.
+* **Passwords:** until the password is given, a bundle shows only its file count, expiry and downloads left: not its title, file names or sizes. Stored as bcrypt hashes. 5 wrong passwords are free (typos happen); each further one locks the bundle for 1, 2, 4, … minutes, up to 1 hour.
 * **Rate limits per client address** (fixed one-minute windows; a `429` carries `Retry-After`):
 
   | Endpoint | Limit | Setting |
