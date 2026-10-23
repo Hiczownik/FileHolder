@@ -5,6 +5,7 @@ import { uploadApi } from '../../api/uploadApi';
 import { STANDARD_MAX_TOTAL_BYTES } from '../../types';
 import { encryptedSize } from '../../../../shared/utils/crypto/streamCipher';
 import { DEFAULT_ARGON2_PARAMS, formatKdfParams } from '../../../../shared/utils/crypto/kdfParams';
+import { PASSKEY_TOO_SHORT_MESSAGE } from '../../services/passkey';
 
 describe('useFileUpload Hook (Vertical Slice)', () => {
   const EXPIRE_IN_HOURS = 24;
@@ -264,6 +265,22 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
 
     expect(presignSpy).not.toHaveBeenCalled();
     expect(result.current.uploadState).toEqual({ status: 'error', message: 'Enter a passkey, or turn off "Also require a passkey".' });
+  });
+
+  it('refuses a passkey shorter than the minimum before sending anything (#78)', async () => {
+    const presignSpy = vi.spyOn(uploadApi, 'getPresignedUrl');
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.upload(
+        { title: '', expireInHours: EXPIRE_IN_HOURS, maxDownloads: MAX_DOWNLOADS, isEncrypted: true, requirePasskey: true, password: 'K7QM-2HXP' },
+        [createDummyFile('doc.txt', SMALL_FILE_BYTES)]
+      );
+    });
+
+    // The server never sees the passkey, so this check is the only one.
+    expect(presignSpy).not.toHaveBeenCalled();
+    expect(result.current.uploadState).toEqual({ status: 'error', message: PASSKEY_TOO_SHORT_MESSAGE });
   });
 
   it('refuses an encrypted upload of a blocked extension before encrypting or calling the server', async () => {

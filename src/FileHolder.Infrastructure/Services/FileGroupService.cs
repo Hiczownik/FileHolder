@@ -229,7 +229,8 @@ public class FileGroupService
             }
 
             var shareToken = CryptoUtils.GenerateShortToken();
-            var passwordHash = CryptoUtils.HashPassword(dto.Password);
+            // An encrypted bundle's "password" is its kAuth, which the validator requires to be 32 random bytes.
+            var passwordHash = dto.IsEncrypted ? CryptoUtils.HashAuthKey(dto.Password!) : CryptoUtils.HashPassword(dto.Password);
 
             var fileGroup = new FileGroup
             {

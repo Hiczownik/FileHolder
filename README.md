@@ -47,12 +47,12 @@
     | Link only (**default**) | the link (or its QR code) | **anyone who has the link**: chat history, synced browser history, extensions, a photo of the QR code |
     | *Also require a passkey* | the link **and** a passkey, sent separately | only someone with both. A leaked link alone is useless, and so is a leaked passkey alone |
 
-    Use the passkey for sensitive files. A bundle's mode can't be changed after upload.
+    Use the passkey for sensitive files. A typed passkey needs at least 10 characters; *Generate* makes one of 14. A bundle's mode can't be changed after upload.
   * **Keys:** the browser creates a random master key and locks it with a key derived from the link key, plus the passkey when there is one. The passkey is stretched with Argon2id (64 MiB of memory, 3 passes, in a background worker), because it's what someone holding the link would have to guess; its settings are stored with the bundle, and both server and browser refuse settings outside fixed limits. `/diagnostics/argon2` times the settings on a device. The random link key isn't stretched. Both then go through HKDF, salted per bundle. Each file gets its own key derived from the master key.
   * **File contents:** encrypted with AES-256-GCM in 4 MiB chunks. Each chunk's position and a last-chunk flag are authenticated, so chunks can't be reordered, dropped or added.
   * **File names and types:** live only in an encrypted manifest. Storage holds `<id>.enc` files.
   * **Title:** encrypted with the master key like the manifest, and only returned once the bundle is unlocked. Until then, the page shows "Encrypted bundle".
-  * **What the server receives:** never the link key or the passkey. It only gets a separate value derived from them, which it checks on unlock like a password (bcrypt, lockout after repeated failures).
+  * **What the server receives:** never the link key or the passkey. It only gets a separate value derived from them, which it checks on unlock like a password, with the same lockout after repeated failures. That value is 32 random bytes, so the server stores its SHA-256 rather than a slow bcrypt hash.
   * **What it can still see:** the number of files, each file's encrypted size (the real size to within 16 bytes per 4 MiB), the expiry, the download limit, how many downloads were used, and whether the bundle needs a passkey. Anyone with the link without its key (or without the passkey) sees the same.
   * **Older encrypted bundles**, which had only a passkey and no key in the link, can no longer be opened. The page says so.
 

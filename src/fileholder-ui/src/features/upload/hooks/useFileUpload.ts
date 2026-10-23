@@ -2,11 +2,8 @@ import { useReducer, useRef } from "react";
 import { keyModeOf, type BundleSummary, type PreparingPhase, type UploadFormValues, type UploadResult, type UploadState } from "../types";
 import { cleanPhotos } from "../services/photoCleaning";
 import { describeUploadError } from "../services/uploadErrors";
-import {
-    executeStandardUploadWorkflow,
-    executeEncryptedUploadWorkflow,
-    PASSKEY_REQUIRED_MESSAGE,
-} from "../services/uploadWorkflow";
+import { executeStandardUploadWorkflow, executeEncryptedUploadWorkflow } from "../services/uploadWorkflow";
+import { passkeyProblem } from "../services/passkey";
 
 type UploadAction =
     | { type: 'START_UPLOAD'; payload: { preparing?: PreparingPhase } }
@@ -43,8 +40,10 @@ export const useFileUpload = () => {
         abortControllerRef.current = new AbortController();
 
         const keyMode = keyModeOf(formValues);
-        if (keyMode === 'LinkKeyAndPasskey' && !formValues.password) {
-            dispatch({ type: 'UPLOAD_ERROR', payload: PASSKEY_REQUIRED_MESSAGE });
+        // Before anything is sent: the server never sees the passkey, so it can't refuse a weak one.
+        const problem = keyMode === 'LinkKeyAndPasskey' ? passkeyProblem(formValues.password) : null;
+        if (problem) {
+            dispatch({ type: 'UPLOAD_ERROR', payload: problem });
             return;
         }
 

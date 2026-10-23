@@ -21,6 +21,9 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 {
     private readonly HttpClient _client = factory.CreateClient();
 
+    // What an encrypted upload sends as its password: a kAuth, 32 bytes as 43 base64url characters.
+    private const string KAuth = "kAuth_derived_in_the_browser_0123456789abcd";
+
     #region Helper Factory Methods
 
     private static CreatePresignedUrlRequestDto CreateValidPresignRequest() => new(
@@ -376,7 +379,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             "E2EE Envelope Vault",
             [new("mock_id.enc", "application/octet-stream", 1024)],
             maxDownloads: 5,
-            password: "k_auth_derived_token_123",
+            password: KAuth,
             isEncrypted: true);
         var confirmRequest = presigned with
         {
@@ -417,7 +420,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         // 3. Unlock with valid kAuth returns unmasked metadata with KeyEnvelope and EncryptedManifest
         var successUnlock = await _client.PostAsJsonAsync(
             $"/api/v1/files/{shareToken}/unlock",
-            new DownloadRequestDto("k_auth_derived_token_123"));
+            new DownloadRequestDto(KAuth));
         successUnlock.StatusCode.Should().Be(HttpStatusCode.OK);
 
         var unlockedMetadata = await successUnlock.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
@@ -433,7 +436,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
     private async Task<ConfirmUploadRequestDto> PresignEncryptedAsync(string name) =>
         (await PresignAndUploadAsync(name, [new("blob.enc", "application/octet-stream", 1024)], maxDownloads: 5,
-            password: "k_auth_derived_token_123", isEncrypted: true)) with
+            password: KAuth, isEncrypted: true)) with
         {
             EncryptedManifest = "encrypted_manifest_base64",
             KeyEnvelope = "key_envelope_base64",
@@ -463,7 +466,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         lockedJson.Should().Contain($"\"keyMode\":\"{keyMode}\"");
 
         var unlocked = await (await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/unlock",
-            new DownloadRequestDto("k_auth_derived_token_123"))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+            new DownloadRequestDto(KAuth))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         unlocked!.KeyMode.Should().Be(keyMode);
     }
 
@@ -500,7 +503,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         locked!.KdfParams.Should().Be(strongest, "the browser needs them while locked");
 
         var unlocked = await (await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/unlock",
-            new DownloadRequestDto("k_auth_derived_token_123"))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+            new DownloadRequestDto(KAuth))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         unlocked!.KdfParams.Should().Be(strongest);
     }
 
@@ -556,7 +559,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         lockedJson.Should().NotContain(encryptedTitle);
 
         var unlocked = await (await _client.PostAsJsonAsync($"/api/v1/files/{shareToken}/unlock",
-            new DownloadRequestDto("k_auth_derived_token_123"))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
+            new DownloadRequestDto(KAuth))).Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         unlocked!.Title.Should().BeNull();
         unlocked.EncryptedTitle.Should().Be(encryptedTitle);
     }
@@ -564,7 +567,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     [Fact]
     public async Task EncryptedUploads_ThatSendAPlainTitle_AreRefused()
     {
-        var presign = new CreatePresignedUrlRequestDto("Tax return 2026", [new("blob.enc", "application/octet-stream", 1024)], 24, 5, "k_auth_derived_token_123", true);
+        var presign = new CreatePresignedUrlRequestDto("Tax return 2026", [new("blob.enc", "application/octet-stream", 1024)], 24, 5, KAuth, true);
         (await _client.PostAsJsonAsync("/api/v1/files/presign", presign)).StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
         var confirm = await PresignEncryptedAsync("Plain Title");
@@ -1324,7 +1327,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             "Oversized Keys",
             [new("blob.enc", "application/octet-stream", 1024)],
             maxDownloads: 5,
-            password: "k_auth_derived_token_123",
+            password: KAuth,
             isEncrypted: true);
         var valid = request with
         {
@@ -1361,7 +1364,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             "Keyless",
             [new("blob.enc", "application/octet-stream", 1024)],
             maxDownloads: 5,
-            password: "k_auth_derived_token_123",
+            password: KAuth,
             isEncrypted: true);
         var valid = request with
         {
@@ -1395,6 +1398,48 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
             .StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
         (await ConfirmAsync(request)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // An encrypted bundle's password is its kAuth, stored with a fast hash, so only kAuth-shaped values are taken (#78).
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("k_auth_derived_token_123")]
+    [InlineData("kAuth_derived_in_the_browser_0123456789abc")]
+    [InlineData("kAuth_derived_in_the_browser_0123456789abcde")]
+    [InlineData("kAuth+derived/in/the/browser/0123456789abcd")]
+    public async Task PresignAndConfirm_Return400_WhenAnEncryptedUploadsPasswordIsNotAKAuth(string? password)
+    {
+        (await _client.PostAsJsonAsync("/api/v1/files/presign",
+                new CreatePresignedUrlRequestDto(null, [new("blob.enc", "application/octet-stream", 1024)], 24, 5, password, true)))
+            .StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var valid = await PresignEncryptedAsync("Not A KAuth");
+        (await ConfirmAsync(valid with { Password = password })).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await ConfirmAsync(valid)).StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task ConfirmUpload_StoresAnEncryptedBundlesKAuthAsSha256_AndAPlainPasswordWithBcrypt()
+    {
+        var encryptedToken = await (await ConfirmAsync(await PresignEncryptedAsync("Sha256 KAuth"))).Content.ReadFromJsonAsync<string>();
+        // Plain passwords keep their rules: 4 characters is still enough.
+        var plainToken = await (await ConfirmAsync(await PresignAndUploadAsync("Bcrypt Password",
+            [new("plain.pdf", "application/pdf", 1024)], maxDownloads: 5, password: "1234"))).Content.ReadFromJsonAsync<string>();
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            (await dbContext.FileGroups.Where(g => g.ShareToken == encryptedToken).Select(g => g.PasswordHash).SingleAsync())
+                .Should().StartWith("sha256:");
+            (await dbContext.FileGroups.Where(g => g.ShareToken == plainToken).Select(g => g.PasswordHash).SingleAsync())
+                .Should().StartWith("$2");
+        }
+
+        (await _client.PostAsJsonAsync($"/api/v1/files/{encryptedToken}/unlock", new DownloadRequestDto(KAuth)))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+        (await _client.PostAsJsonAsync($"/api/v1/files/{encryptedToken}/unlock", new DownloadRequestDto(KAuth[..^1] + "e")))
+            .StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -1781,7 +1826,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
 
     private Task<HttpResponseMessage> PresignAsync(List<FileItemInputDto> files, bool isEncrypted = false) =>
         _client.PostAsJsonAsync("/api/v1/files/presign",
-            new CreatePresignedUrlRequestDto(isEncrypted ? null : "Limits", files, 24, 5, isEncrypted ? "EncryptedPass1" : null, isEncrypted));
+            new CreatePresignedUrlRequestDto(isEncrypted ? null : "Limits", files, 24, 5, isEncrypted ? KAuth : null, isEncrypted));
 
     private List<GetPreSignedUrlRequest> UploadPresignRequests() => factory.MockS3Client.ReceivedCalls()
         .Where(c => c.GetMethodInfo().Name == nameof(Amazon.S3.IAmazonS3.GetPreSignedURL))
