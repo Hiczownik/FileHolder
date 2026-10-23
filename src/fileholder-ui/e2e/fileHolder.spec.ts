@@ -58,7 +58,9 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     const downloaderPage = await downloaderContext.newPage();
 
     await downloaderPage.goto(shareUrl);
-    await expect(downloaderPage.getByRole('heading', { name: 'E2E Deliverables' })).toBeVisible();
+    // Until the password is given, the title stays hidden like the file names.
+    await expect(downloaderPage.getByRole('heading', { name: 'Shared files' })).toBeVisible();
+    await expect(downloaderPage.getByText('E2E Deliverables')).not.toBeVisible();
 
     await expect(downloaderPage.getByText(testFile1.name)).not.toBeVisible();
     await expect(downloaderPage.getByText(testFile2.name)).not.toBeVisible();
@@ -71,6 +73,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await vaultPasswordInput.fill('PlaywrightPass123!');
     await downloaderPage.getByRole('button', { name: /Unlock Files/i }).click();
 
+    await expect(downloaderPage.getByRole('heading', { name: 'E2E Deliverables' })).toBeVisible();
     await expect(downloaderPage.getByText(testFile1.name)).toBeVisible();
     await expect(downloaderPage.getByText(testFile2.name)).toBeVisible();
 

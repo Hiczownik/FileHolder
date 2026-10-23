@@ -258,7 +258,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
     #region 3. Authentication & Download Tests
 
     [Fact]
-    public async Task GetGroupMetadata_MasksFilesAndSizes_WhenBundleIsPasswordProtected()
+    public async Task GetGroupMetadata_MasksTitleFilesAndSizes_WhenBundleIsPasswordProtected()
     {
         var confirmRequest = await PresignAndUploadAsync(
             "Classified Deliverables",
@@ -272,10 +272,13 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         var response = await _client.GetAsync($"/api/v1/files/{shareToken}");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await response.Content.ReadAsStringAsync();
         var metadata = await response.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         metadata.Should().NotBeNull();
         metadata!.RequiresPassword.Should().BeTrue();
         metadata.IsUnlocked.Should().BeFalse();
+        metadata.Title.Should().BeNull();
+        json.Should().NotContain("Classified Deliverables");
         metadata.Files.Should().BeEmpty();
         metadata.TotalSizeBytes.Should().Be(0);
     }
@@ -307,6 +310,7 @@ public class FileEndpointTests(CustomWebApplicationFactory factory) : IClassFixt
         var unlockedMetadata = await successUnlockResponse.Content.ReadFromJsonAsync<FileGroupMetadataResponseDto>();
         unlockedMetadata.Should().NotBeNull();
         unlockedMetadata!.IsUnlocked.Should().BeTrue();
+        unlockedMetadata.Title.Should().Be("Confidential Project");
         unlockedMetadata.Files.Should().HaveCount(1);
         unlockedMetadata.Files[0].FileName.Should().Be("client_contract.pdf");
         unlockedMetadata.TotalSizeBytes.Should().Be(1024);
