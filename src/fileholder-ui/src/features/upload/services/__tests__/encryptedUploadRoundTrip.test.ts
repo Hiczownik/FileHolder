@@ -38,7 +38,12 @@ const linkKeyOf = (shareLink: string): string =>
 
 /** The keys a recipient derives from the share link (and the passkey), plus what the server holds. */
 const recipientKeys = (shareLink: string, confirm: ConfirmUploadRequest, passkey?: string): Promise<KeyDerivationResult> =>
-    cryptoEngine.deriveLinkKeys(linkKeyOf(shareLink), base64Url.decode(confirm.keySalt ?? ''), passkey);
+    cryptoEngine.deriveLinkKeys(
+        linkKeyOf(shareLink),
+        base64Url.decode(confirm.keySalt ?? ''),
+        // Stretched with the settings the uploader stored, as the recipient's browser does.
+        passkey === undefined ? undefined : { passkey, kdfParams: confirm.kdfParams ?? '' }
+    );
 
 const patternFile = (name: string, size: number, seed: number): File =>
     new File([new Uint8Array(size).map((_, i) => (i + seed) % PATTERN_MODULUS)], name, { type: 'application/pdf' });

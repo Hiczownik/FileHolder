@@ -1,5 +1,5 @@
 import { useReducer, useRef } from "react";
-import { keyModeOf, type BundleSummary, type UploadFormValues, type UploadResult, type UploadState } from "../types";
+import { keyModeOf, type BundleSummary, type PreparingPhase, type UploadFormValues, type UploadResult, type UploadState } from "../types";
 import { cleanPhotos } from "../services/photoCleaning";
 import { describeUploadError } from "../services/uploadErrors";
 import {
@@ -9,7 +9,7 @@ import {
 } from "../services/uploadWorkflow";
 
 type UploadAction =
-    | { type: 'START_UPLOAD'; payload: { preparing: boolean } }
+    | { type: 'START_UPLOAD'; payload: { preparing?: PreparingPhase } }
     | { type: 'SET_PROGRESS'; payload: number }
     | { type: 'UPLOAD_SUCCESS'; payload: UploadResult }
     | { type: 'UPLOAD_ERROR'; payload: string }
@@ -50,14 +50,20 @@ export const useFileUpload = () => {
 
         const signal = abortControllerRef.current.signal;
         const stripMetadata = Boolean(formValues.stripImageMetadata);
-        dispatch({ type: 'START_UPLOAD', payload: { preparing: stripMetadata } });
+        // The encrypted workflow reports 0% once the passkey is stretched, which ends that phase.
+        const passkeyPhase: PreparingPhase | undefined = keyMode === 'LinkKeyAndPasskey' ? 'passkey' : undefined;
+        dispatch({ type: 'START_UPLOAD', payload: { preparing: stripMetadata ? 'photos' : passkeyPhase } });
 
         try {
             // Before presign: upload links are signed for each file's exact size, and cleaning changes it.
             const cleaned = stripMetadata ? await cleanPhotos(files, signal) : undefined;
             const toUpload = cleaned?.files ?? files;
-            // Ends the "Preparing files" phase; the upload itself starts at 0%.
-            if (cleaned) dispatch({ type: 'SET_PROGRESS', payload: 0 });
+            // Ends the "Preparing files" phase: next the passkey is stretched, or the upload itself starts at 0%.
+            if (cleaned) {
+                dispatch(passkeyPhase
+                    ? { type: 'START_UPLOAD', payload: { preparing: passkeyPhase } }
+                    : { type: 'SET_PROGRESS', payload: 0 });
+            }
 
             const shareLink = formValues.isEncrypted
                 ? await executeEncryptedUploadWorkflow(

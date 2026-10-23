@@ -9,6 +9,7 @@ import { chunkCount, createStreamParams, encryptChunkRange, MIN_STREAM_CHUNK_SIZ
 import { MAX_IN_MEMORY_BYTES, saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
 import type { FileGroupMetadataResponse } from '../../types';
 import { openShareLinkWithNewKey } from './linkKeyFixture';
+import { FAST_KDF_PARAMS } from '../../../../test/kdf';
 
 vi.mock('../../../../shared/utils/downloadUtils', () => ({
     saveBlobAsFile: vi.fn(),
@@ -69,6 +70,7 @@ const buildBundle = async (files: readonly PlainFile[], claimedSizeOf: (file: Pl
         isEncrypted: true,
         keySalt: cryptoEngine.base64Url.encode(salt),
         keyMode: 'LinkKeyAndPasskey',
+        kdfParams: FAST_KDF_PARAMS,
         isExpired: false,
         files: [],
     };

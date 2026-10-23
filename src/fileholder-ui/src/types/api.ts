@@ -89,6 +89,8 @@ export interface ConfirmUploadRequest {
     encryptedTitle?: string;
     /** Required for encrypted bundles, and only allowed there. */
     keyMode?: KeyMode;
+    /** The passkey's Argon2id settings (kdfParams.ts): required with a passkey, and only allowed there. */
+    kdfParams?: string;
 }
 
 /**
@@ -128,6 +130,11 @@ export interface FileGroupMetadataResponse {
     encryptedTitle?: string | null;
     /** Returned while locked too. Null for plain bundles and for encrypted ones from before link keys. */
     keyMode?: KeyMode | null;
+    /**
+     * Returned while locked too: the passkey's Argon2id settings, for LinkKeyAndPasskey bundles. The uploader wrote
+     * them, so they are checked (parseKdfParams) before use. Missing on passkey bundles from before Argon2id.
+     */
+    kdfParams?: string | null;
 }
 
 export interface DownloadUrlResponse {
