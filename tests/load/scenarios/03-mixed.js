@@ -65,12 +65,18 @@ export function download(data) {
   }
 }
 
-/** Bundles for the recipients: plain ones of the small and medium kinds, downloadable any number of times. */
-export function createDownloadPool(small = 8, medium = 2) {
+/**
+ * Bundles for the recipients: plain ones of the small and medium kinds, downloadable any number of times. They must
+ * outlive the run, or every download after their expiry is (rightly) told they are gone: a 2-hour soak needs 3 hours.
+ */
+export function createDownloadPool(small = 8, medium = 2, expireInHours = 1) {
   const pool = [];
   for (const [kind, count, fileCount, size] of [['small', small, 3, 1 * MB], ['medium', medium, 5, 20 * MB]]) {
     for (let i = 0; i < count; i++) {
-      pool.push({ shareToken: uploadBundle({ title: runTitle(`mixed pool ${kind}`), files: files(fileCount, size, false, kind) }), fileCount });
+      pool.push({
+        shareToken: uploadBundle({ title: runTitle(`mixed pool ${kind}`), expireInHours, files: files(fileCount, size, false, kind) }),
+        fileCount,
+      });
     }
   }
   return pool;

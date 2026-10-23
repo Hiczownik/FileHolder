@@ -51,8 +51,11 @@ export const options = {
   },
 };
 
+// The download pool must outlive the run (whole hours, with one to spare).
+const POOL_EXPIRY_HOURS = Number(__ENV.POOL_EXPIRY_HOURS || 3);
+
 export function setup() {
-  return { pool: createDownloadPool(4, 1), startedAt: Date.now() };
+  return { pool: createDownloadPool(4, 1, POOL_EXPIRY_HOURS), startedAt: Date.now() };
 }
 
 export function teardown(data) {

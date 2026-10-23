@@ -118,6 +118,7 @@ same machine against these. Shared CI runners will be slower and vary more.
 | 2 | API working set, peak over start | +16 MB |
 | 3 | 15 minutes, 180 uploads (30% encrypted) and 900 downloads | 7,490 requests, 0 failed, 0 dropped |
 | 3 | p95: presign / confirm / bundle page / download session | 16 ms / 409 ms / 4.6 ms / 16 ms |
+| 8 | 2-hour soak: 241 uploads, 10,100 requests | 0 failed; API working set 204 MB early on, 210 MB at the end; at most 3 Postgres connections; the purge worker kept up |
 | 7 | 20 simultaneous 1 GiB ZIPs | about 350 MB/s together; first byte p95 110 ms |
 | 7 | API working set, peak over start | +42 MB |
 | 4 | `POST /{token}/downloads` and the download, p95 | 93 ms |
