@@ -56,10 +56,13 @@ export interface UploadResult {
     readonly metadataSummary?: MetadataSummary;
 }
 
+/** Before the upload starts: removing photo metadata, or stretching the passkey into the bundle's keys. */
+export type PreparingPhase = 'photos' | 'passkey';
+
 export type UploadState =
     | { status: 'idle' }
-    /** `preparing`: photo metadata is being removed, before anything is uploaded. */
-    | { status: 'uploading'; progress: number; preparing?: boolean }
+    /** `preparing`: what happens before anything is uploaded (photo metadata removal, then stretching the passkey). */
+    | { status: 'uploading'; progress: number; preparing?: PreparingPhase }
     | ({ status: 'success' } & UploadResult)
     | { status: 'error'; message: string };
 

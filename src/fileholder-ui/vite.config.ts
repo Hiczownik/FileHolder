@@ -10,6 +10,11 @@ const UI_PORT = 3000
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Workers are started as modules (new Worker(..., { type: 'module' })), so they are built as ES modules too, which
+  // keeps only the Argon2id part of hash-wasm in the passkey worker instead of every algorithm it has.
+  worker: {
+    format: 'es'
+  },
   server: {
     port: UI_PORT
   },

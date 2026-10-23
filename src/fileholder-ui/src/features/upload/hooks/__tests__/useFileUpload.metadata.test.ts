@@ -101,7 +101,7 @@ describe('useFileUpload photo metadata removal', () => {
         act(() => {
             uploading = result.current.upload({ ...FORM, stripImageMetadata: true }, [file]);
         });
-        await waitFor(() => expect(result.current.uploadState).toEqual({ status: 'uploading', progress: 0, preparing: true }));
+        await waitFor(() => expect(result.current.uploadState).toEqual({ status: 'uploading', progress: 0, preparing: 'photos' }));
 
         await act(async () => {
             cleaning.resolve({ files: [file], summary: { cleaned: 0, notCleaned: [], motionPhotos: 0 } });

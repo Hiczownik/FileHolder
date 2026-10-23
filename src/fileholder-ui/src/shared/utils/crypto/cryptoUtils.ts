@@ -1,15 +1,23 @@
+import { stretchPasskey } from './argon2';
+import { parseKdfParams } from './kdfParams';
+
 const ALGORITHM = 'AES-GCM';
 const KEY_LENGTH = 256;
 const IV_LENGTH_BYTES = 12;
 const GCM_TAG_BYTES = 16;
 const SALT_BYTES = 16;
 const BASE64_BLOCK_CHARS = 4;
-const PBKDF2_ITERATIONS = 300_000;
 const LINK_KEY_BYTES = 32;
 
 export interface KeyDerivationResult {
   kAuth: string;
   kWrap: CryptoKey;
+}
+
+/** A bundle's passkey, with the stored Argon2id settings (kdfParams.ts) it is stretched with. */
+export interface PasskeyInput {
+  readonly passkey: string;
+  readonly kdfParams: string;
 }
 
 // Base64 padding at the end of a string: matches the "==" in "QQ==", nothing in "QUJD".
@@ -44,23 +52,6 @@ function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
   joined.set(a, 0);
   joined.set(b, a.byteLength);
   return joined;
-}
-
-/** PBKDF2-SHA-256 over a passkey: slow on purpose, so passkeys are expensive to guess. */
-async function stretchPasskey(passkey: string, salt: Uint8Array): Promise<Uint8Array> {
-  const baseKey = await window.crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(passkey),
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  );
-  const bits = await window.crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt: salt as BufferSource, iterations: PBKDF2_ITERATIONS, hash: 'SHA-256' },
-    baseKey,
-    KEY_LENGTH
-  );
-  return new Uint8Array(bits);
 }
 
 /**
@@ -125,15 +116,17 @@ export const cryptoEngine = {
 
   /**
    * The bundle's keys from the link key, and the passkey when the bundle needs one. The link key is random, so it
-   * isn't stretched; the passkey is, since it is what someone holding the link would have to guess.
+   * isn't stretched; the passkey is, with Argon2id, since it is what someone holding the link would have to guess.
+   * The settings are checked before anything runs (an UnsupportedKdfParamsError otherwise): the uploader chose them.
    */
-  async deriveLinkKeys(linkKey: string, salt: Uint8Array, passkey?: string): Promise<KeyDerivationResult> {
+  async deriveLinkKeys(linkKey: string, salt: Uint8Array, withPasskey?: PasskeyInput): Promise<KeyDerivationResult> {
     if (!isWellFormedLinkKey(linkKey)) throw new Error('Malformed link key.');
     const linkKeyBytes = base64Url.decode(linkKey);
-    const ikm = passkey === undefined
-      ? linkKeyBytes
-      : concatBytes(linkKeyBytes, await stretchPasskey(passkey, salt));
-    return splitKeys(ikm, salt);
+    if (withPasskey === undefined) return splitKeys(linkKeyBytes, salt);
+
+    const params = parseKdfParams(withPasskey.kdfParams);
+    const stretched = await stretchPasskey({ passkey: withPasskey.passkey, salt, params });
+    return splitKeys(concatBytes(linkKeyBytes, stretched), salt);
   },
 
   async wrapMasterKey(masterKey: CryptoKey, kWrap: CryptoKey): Promise<string> {

@@ -7,6 +7,7 @@ import {
     STREAM_TAG_BYTES,
     type StreamParams,
 } from "../../../shared/utils/crypto/streamCipher";
+import { DEFAULT_ARGON2_PARAMS, formatKdfParams } from "../../../shared/utils/crypto/kdfParams";
 import type { FileItemMetadata, KeyMode } from "../../download/types";
 
 /**
@@ -35,6 +36,8 @@ export interface PreparedEncryptedPayload {
     /** Goes only in the share link's fragment; never sent to the server. */
     readonly linkKey: string;
     readonly keyMode: KeyMode;
+    /** The Argon2id settings the passkey was stretched with; only with a passkey. */
+    readonly kdfParams?: string;
 }
 
 /**
@@ -50,7 +53,8 @@ export async function prepareEncryptedBundle(
     const salt = cryptoEngine.generateSalt();
     // Separate from the master key, so the master key only ever exists wrapped.
     const linkKey = cryptoEngine.generateLinkKey();
-    const { kAuth, kWrap } = await cryptoEngine.deriveLinkKeys(linkKey, salt, passkey);
+    const withPasskey = passkey === undefined ? undefined : { passkey, kdfParams: formatKdfParams(DEFAULT_ARGON2_PARAMS) };
+    const { kAuth, kWrap } = await cryptoEngine.deriveLinkKeys(linkKey, salt, withPasskey);
     const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap);
 
     const encryptedFiles = await Promise.all(files.map(async (file): Promise<EncryptedFileItem> => {
@@ -86,6 +90,7 @@ export async function prepareEncryptedBundle(
         encryptedTitle: trimmedTitle === '' ? undefined : await cryptoEngine.encryptJson(masterKey, trimmedTitle),
         linkKey,
         keyMode: passkey === undefined ? 'LinkKey' : 'LinkKeyAndPasskey',
+        kdfParams: withPasskey?.kdfParams,
     };
 }
 

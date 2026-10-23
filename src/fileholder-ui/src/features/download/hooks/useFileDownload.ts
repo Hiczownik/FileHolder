@@ -6,6 +6,7 @@ import { downloadSessionStore } from "../services/downloadSessionStore";
 import { linkKeyStore } from "../services/linkKeyStore";
 import { readLinkKey } from "../../../shared/utils/shareLink";
 import { isWellFormedLinkKey } from "../../../shared/utils/crypto/cryptoUtils";
+import { isSupportedKdfParams, UNSUPPORTED_KDF_PARAMS_MESSAGE } from "../../../shared/utils/crypto/kdfParams";
 import { triggerDirectDownload } from "../../../shared/utils/downloadUtils";
 import { describeSaveResult, DownloadCancelledError, memoryOnlyLimitProblem, saveStreamToDisk } from "../../../shared/utils/download/streamSaving";
 import { countingStream, type DownloadProgress } from "../../../shared/utils/download/progress";
@@ -57,6 +58,12 @@ function encryptedLinkProblem(metadata: FileGroupMetadataResponse, linkKey: stri
     if (!metadata.isEncrypted || metadata.isUnlocked || metadata.isExpired) return null;
     // Encrypted bundles from before link keys have no key mode, and can no longer be opened.
     if (!metadata.keyMode) return OLD_FORMAT_MESSAGE;
+    // Passkey bundles from before Argon2id have no settings. Unsupported ones (too costly, say) are refused before the
+    // recipient types anything, since no passkey could open them here.
+    if (metadata.keyMode === 'LinkKeyAndPasskey') {
+        if (!metadata.kdfParams) return OLD_FORMAT_MESSAGE;
+        if (!isSupportedKdfParams(metadata.kdfParams)) return UNSUPPORTED_KDF_PARAMS_MESSAGE;
+    }
     // No /unlock call is made for these, so a cut-off link never uses up the bundle's password attempts.
     if (!linkKey || !isWellFormedLinkKey(linkKey)) return INCOMPLETE_LINK_MESSAGE;
     return null;
@@ -113,7 +120,9 @@ export const useFileDownload = (shareToken?: string) => {
                 throw new Error('Cryptographic salt is missing from file vault.');
             }
 
-            const { kAuth, kWrap } = await bundleDecryptionService.deriveKeys(key, locked.keySalt, token, passkey);
+            // encryptedLinkProblem has already refused passkey bundles without usable settings.
+            const withPasskey = passkey === undefined ? undefined : { passkey, kdfParams: locked.kdfParams ?? '' };
+            const { kAuth, kWrap } = await bundleDecryptionService.deriveKeys(key, locked.keySalt, token, withPasskey);
 
             const unlockedRaw = await downloadApi.unlockGroup(token, kAuth);
 

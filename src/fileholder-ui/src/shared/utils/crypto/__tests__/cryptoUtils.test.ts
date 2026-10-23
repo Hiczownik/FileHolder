@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { cryptoEngine, isWellFormedLinkKey } from '../cryptoUtils';
+import { formatKdfParams, KDF_LIMITS, UnsupportedKdfParamsError } from '../kdfParams';
+import { FAST_KDF_PARAMS, withPasskey } from '../../../../test/kdf';
 
 // Any 32-byte key (link key or kAuth) as unpadded base64url.
 const KEY_BASE64URL_LENGTH = 43;
@@ -41,24 +43,24 @@ describe('link keys (#61)', () => {
     const salt = cryptoEngine.generateSalt();
 
     const linkOnly = [await cryptoEngine.deriveLinkKeys(linkKey, salt), await cryptoEngine.deriveLinkKeys(linkKey, salt)];
-    const withPasskey = [await cryptoEngine.deriveLinkKeys(linkKey, salt, 'pass'), await cryptoEngine.deriveLinkKeys(linkKey, salt, 'pass')];
+    const passkeyMode = [await cryptoEngine.deriveLinkKeys(linkKey, salt, withPasskey('pass')), await cryptoEngine.deriveLinkKeys(linkKey, salt, withPasskey('pass'))];
 
     expect(linkOnly[1].kAuth).toBe(linkOnly[0].kAuth);
     expect(await unwraps(linkOnly[0].kWrap, linkOnly[1].kWrap)).toBe(true);
-    expect(withPasskey[1].kAuth).toBe(withPasskey[0].kAuth);
-    expect(await unwraps(withPasskey[0].kWrap, withPasskey[1].kWrap)).toBe(true);
+    expect(passkeyMode[1].kAuth).toBe(passkeyMode[0].kAuth);
+    expect(await unwraps(passkeyMode[0].kWrap, passkeyMode[1].kWrap)).toBe(true);
   });
 
   it('derives different keys per mode, link key, salt and passkey', async () => {
     const linkKey = cryptoEngine.generateLinkKey();
     const salt = cryptoEngine.generateSalt();
-    const base = await cryptoEngine.deriveLinkKeys(linkKey, salt, 'pass');
+    const base = await cryptoEngine.deriveLinkKeys(linkKey, salt, withPasskey('pass'));
 
     const others = [
       await cryptoEngine.deriveLinkKeys(linkKey, salt),
-      await cryptoEngine.deriveLinkKeys(linkKey, salt, 'Pass'),
-      await cryptoEngine.deriveLinkKeys(cryptoEngine.generateLinkKey(), salt, 'pass'),
-      await cryptoEngine.deriveLinkKeys(linkKey, cryptoEngine.generateSalt(), 'pass'),
+      await cryptoEngine.deriveLinkKeys(linkKey, salt, withPasskey('Pass')),
+      await cryptoEngine.deriveLinkKeys(cryptoEngine.generateLinkKey(), salt, withPasskey('pass')),
+      await cryptoEngine.deriveLinkKeys(linkKey, cryptoEngine.generateSalt(), withPasskey('pass')),
     ];
 
     const kAuths = new Set([base.kAuth, ...others.map((keys) => keys.kAuth)]);
@@ -78,6 +80,38 @@ describe('link keys (#61)', () => {
   });
 });
 
+describe('passkeys stretched with Argon2id (#78)', () => {
+  // Fixed inputs: 32 bytes 0x01..0x20 as the link key, 16 bytes 0xA0..0xAF as the salt.
+  const FIXED_LINK_KEY = 'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA';
+  const FIXED_SALT_FIRST_BYTE = 0xa0;
+  const FIXED_SALT = Uint8Array.from({ length: SALT_BYTES }, (_, i) => FIXED_SALT_FIRST_BYTE + i);
+
+  it('derives the keys it always has for fixed inputs, so the format can\'t change unnoticed', async () => {
+    const { kAuth } = await cryptoEngine.deriveLinkKeys(FIXED_LINK_KEY, FIXED_SALT, withPasskey('correct horse'));
+
+    // Also recomputed outside the app (hash-wasm's Argon2id, then Node's own HKDF) when this was written.
+    expect(kAuth).toBe('CMNyoKtpDuU0sdjZKiIPlQrMIIMbCCFbaehXtzIsgjw');
+  });
+
+  it('refuses unsupported settings before stretching anything', async () => {
+    const tooCostly = { passkey: 'pass', kdfParams: '{"alg":"argon2id","v":19,"m":4194304,"t":3,"p":1}' };
+
+    await expect(cryptoEngine.deriveLinkKeys(cryptoEngine.generateLinkKey(), cryptoEngine.generateSalt(), tooCostly))
+      .rejects.toThrow(UnsupportedKdfParamsError);
+  });
+
+  it('derives different keys with different settings', async () => {
+    const linkKey = cryptoEngine.generateLinkKey();
+    const salt = cryptoEngine.generateSalt();
+    const morePasses = formatKdfParams({ m: KDF_LIMITS.m.min, t: KDF_LIMITS.t.min + 1, p: KDF_LIMITS.p.min });
+
+    const fast = await cryptoEngine.deriveLinkKeys(linkKey, salt, { passkey: 'pass', kdfParams: FAST_KDF_PARAMS });
+    const slower = await cryptoEngine.deriveLinkKeys(linkKey, salt, { passkey: 'pass', kdfParams: morePasses });
+
+    expect(slower.kAuth).not.toBe(fast.kAuth);
+  });
+});
+
 describe('Zero-Knowledge Password Envelope Encryption Engine', () => {
   it('1. Generates salt, derives dual keys (kAuth, kWrap), and executes key wrapping/unwrapping', async () => {
     const password = 'SuperSecretVaultPassphrase123!';
@@ -85,7 +119,7 @@ describe('Zero-Knowledge Password Envelope Encryption Engine', () => {
 
     expect(salt).toHaveLength(SALT_BYTES);
 
-    const { kAuth, kWrap } = await cryptoEngine.deriveLinkKeys(cryptoEngine.generateLinkKey(), salt, password);
+    const { kAuth, kWrap } = await cryptoEngine.deriveLinkKeys(cryptoEngine.generateLinkKey(), salt, withPasskey(password));
     expect(typeof kAuth).toBe('string');
     expect(kAuth).toHaveLength(KEY_BASE64URL_LENGTH);
     expect(kWrap.algorithm.name).toBe('AES-GCM');
@@ -107,8 +141,8 @@ describe('Zero-Knowledge Password Envelope Encryption Engine', () => {
   it('2. Rejects master key unwrapping when wrong wrap key is used', async () => {
     const salt = cryptoEngine.generateSalt();
     const linkKey = cryptoEngine.generateLinkKey();
-    const { kWrap: kWrap1 } = await cryptoEngine.deriveLinkKeys(linkKey, salt, 'PasswordA');
-    const { kWrap: kWrap2 } = await cryptoEngine.deriveLinkKeys(linkKey, salt, 'PasswordB');
+    const { kWrap: kWrap1 } = await cryptoEngine.deriveLinkKeys(linkKey, salt, withPasskey('PasswordA'));
+    const { kWrap: kWrap2 } = await cryptoEngine.deriveLinkKeys(linkKey, salt, withPasskey('PasswordB'));
 
     const masterKey = await cryptoEngine.generateKey();
     const keyEnvelope = await cryptoEngine.wrapMasterKey(masterKey, kWrap1);

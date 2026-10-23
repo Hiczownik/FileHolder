@@ -9,6 +9,8 @@ import { cryptoEngine } from '../../../../shared/utils/crypto/cryptoUtils';
 import { createStreamParams, serializeStreamParams } from '../../../../shared/utils/crypto/streamCipher';
 import type { FileGroupMetadataResponse, KeyMode } from '../../types';
 import { openShareLinkWithNewKey, putLinkKeyInAddressBar } from './linkKeyFixture';
+import { FAST_KDF_PARAMS } from '../../../../test/kdf';
+import { UNSUPPORTED_KDF_PARAMS_MESSAGE } from '../../../../shared/utils/crypto/kdfParams';
 
 const PASSKEY = 'VaultPass123!';
 const HTTP_UNAUTHORIZED = 401;
@@ -49,6 +51,7 @@ const buildEncryptedBundle = async (shareToken: string, keyMode: KeyMode, keys: 
         isEncrypted: true,
         keySalt: cryptoEngine.base64Url.encode(salt),
         keyMode,
+        kdfParams: keyMode === 'LinkKeyAndPasskey' ? FAST_KDF_PARAMS : undefined,
         isExpired: false,
         files: [],
     };
@@ -318,6 +321,26 @@ describe('useFileDownload Hook Lifecycle & Cryptographic States', () => {
             const { result } = await renderLoaded('old_token');
 
             expect(result.current.error).toBe(OLD_FORMAT_MESSAGE);
+            expect(result.current.promptFor).toBeNull();
+            expect(unlockSpy).not.toHaveBeenCalled();
+        });
+
+        // #78: no prompt for these, since no passkey could open them here.
+        it.each([
+            ['without Argon2id settings, from before #78', null, OLD_FORMAT_MESSAGE],
+            ['asking for 4 GiB of memory', '{"alg":"argon2id","v":19,"m":4194304,"t":3,"p":1}', UNSUPPORTED_KDF_PARAMS_MESSAGE],
+            ['with settings spelled differently', '{"alg": "argon2id", "v": 19, "m": 65536, "t": 3, "p": 1}', UNSUPPORTED_KDF_PARAMS_MESSAGE],
+        ])('refuses a passkey bundle %s without asking for the passkey', async (_label, kdfParams, message) => {
+            const salt = cryptoEngine.generateSalt();
+            const keys = await openShareLinkWithNewKey(salt, PASSKEY);
+            const { locked } = await buildEncryptedBundle('kdf_token', 'LinkKeyAndPasskey', keys, salt);
+
+            vi.spyOn(downloadApi, 'getGroupMetadata').mockResolvedValue({ ...locked, kdfParams });
+            const unlockSpy = vi.spyOn(downloadApi, 'unlockGroup');
+
+            const { result } = await renderLoaded('kdf_token');
+
+            expect(result.current.error).toBe(message);
             expect(result.current.promptFor).toBeNull();
             expect(unlockSpy).not.toHaveBeenCalled();
         });

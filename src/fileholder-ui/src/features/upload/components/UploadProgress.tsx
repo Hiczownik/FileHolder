@@ -1,11 +1,18 @@
+import type { PreparingPhase } from "../types";
+
 interface Props {
     progress: number;
-    /** Photo metadata is being removed; nothing has been uploaded yet. */
-    preparing?: boolean;
+    /** Set while nothing has been uploaded yet: photo metadata is being removed, or the passkey stretched. */
+    preparing?: PreparingPhase;
 }
 
-export const UploadProgress: React.FC<Props> = ({ progress, preparing = false }) => {
-    const label = preparing ? 'Preparing files (removing photo metadata)...' : 'Uploading directly to storage...';
+const PREPARING_LABELS: Record<PreparingPhase, string> = {
+    photos: 'Preparing files (removing photo metadata)...',
+    passkey: 'Securing your passkey...',
+};
+
+export const UploadProgress: React.FC<Props> = ({ progress, preparing }) => {
+    const label = preparing ? PREPARING_LABELS[preparing] : 'Uploading directly to storage...';
     return (
         <div className="space-y-2">
             <div className="flex justify-between gap-3 text-sm">

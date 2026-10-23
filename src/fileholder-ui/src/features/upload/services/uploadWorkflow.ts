@@ -196,6 +196,8 @@ export async function executeEncryptedUploadWorkflow(
     // the passkey was turned off is ignored: the field is hidden then, so the uploader no longer sees it.
     const passkey = formValues.requirePasskey ? formValues.password : undefined;
     const prepared = await prepareEncryptedBundle(files, passkey, formValues.title);
+    // Ends the "Securing your passkey" phase.
+    onProgress(0);
 
     const presign = await uploadApi.getPresignedUrl({
         files: prepared.files.map((item) => ({
@@ -285,6 +287,7 @@ export async function executeEncryptedUploadWorkflow(
         keyEnvelope: prepared.keyEnvelope,
         keySalt: prepared.keySalt,
         keyMode: prepared.keyMode,
+        kdfParams: prepared.kdfParams,
     });
 
     return buildShareLink(shareToken, prepared.linkKey);

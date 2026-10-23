@@ -1,4 +1,4 @@
-import { cryptoEngine, base64Url, type KeyDerivationResult } from "../../../shared/utils/crypto/cryptoUtils";
+import { cryptoEngine, base64Url, type KeyDerivationResult, type PasskeyInput } from "../../../shared/utils/crypto/cryptoUtils";
 import type { FileItemMetadata } from "../types";
 import { createDecryptionStream, parseStreamParams, type StreamParams } from "../../../shared/utils/crypto/streamCipher";
 import { isExtensionForbidden, makeFileNamesUnique, sanitizeFileName } from "../../../shared/utils/fileNameSafety";
@@ -112,8 +112,8 @@ export class BundleDecryptionService {
     }
 
     /** The bundle's keys from its link key, and its passkey when it needs one; kAuth is kept for later requests. */
-    public async deriveKeys(linkKey: string, saltBase64Url: string, shareToken: string, passkey?: string): Promise<KeyDerivationResult> {
-        const keys = await cryptoEngine.deriveLinkKeys(linkKey, base64Url.decode(saltBase64Url), passkey);
+    public async deriveKeys(linkKey: string, saltBase64Url: string, shareToken: string, withPasskey?: PasskeyInput): Promise<KeyDerivationResult> {
+        const keys = await cryptoEngine.deriveLinkKeys(linkKey, base64Url.decode(saltBase64Url), withPasskey);
         this.setKAuth(shareToken, keys.kAuth);
         return keys;
     }

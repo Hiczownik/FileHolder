@@ -1,9 +1,10 @@
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useFileUpload } from '../useFileUpload';
 import { uploadApi } from '../../api/uploadApi';
 import { STANDARD_MAX_TOTAL_BYTES } from '../../types';
 import { encryptedSize } from '../../../../shared/utils/crypto/streamCipher';
+import { DEFAULT_ARGON2_PARAMS, formatKdfParams } from '../../../../shared/utils/crypto/kdfParams';
 
 describe('useFileUpload Hook (Vertical Slice)', () => {
   const EXPIRE_IN_HOURS = 24;
@@ -153,6 +154,8 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
       expect(confirmArg.encryptedManifest).toBeDefined();
       expect(typeof confirmArg.encryptedManifest).toBe('string');
       expect(confirmArg.password).not.toBe('VaultPassword123!'); // kAuth token is sent, not raw password
+      // The settings the passkey was stretched with, so recipients stretch it the same way (#78).
+      expect(confirmArg.kdfParams).toBe(formatKdfParams(DEFAULT_ARGON2_PARAMS));
     }
   });
 
@@ -175,6 +178,37 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
 
     expect(result.current.uploadState).toMatchObject({ status: 'success', keyMode: 'LinkKey', passkey: undefined });
     expect(confirmUploadSpy.mock.calls[0][0].keyMode).toBe('LinkKey');
+    // Nothing is stretched without a passkey; the server refuses settings here.
+    expect(confirmUploadSpy.mock.calls[0][0].kdfParams).toBeUndefined();
+  });
+
+  it('says it is securing the passkey until the passkey is stretched, before anything is sent', async () => {
+    let answerPresign: (value: Awaited<ReturnType<typeof uploadApi.getPresignedUrl>>) => void = () => undefined;
+    const presignSpy = vi.spyOn(uploadApi, 'getPresignedUrl')
+      .mockImplementation(() => new Promise((resolve) => { answerPresign = resolve; }));
+    vi.spyOn(uploadApi, 'uploadDirectToS3').mockResolvedValue();
+    vi.spyOn(uploadApi, 'confirmUpload').mockResolvedValue('share_securing');
+    const { result } = renderHook(() => useFileUpload());
+
+    let uploading: Promise<void> = Promise.resolve();
+    act(() => {
+      uploading = result.current.upload(
+        { title: '', expireInHours: EXPIRE_IN_HOURS, maxDownloads: MAX_DOWNLOADS, isEncrypted: true, requirePasskey: true, password: 'K7QM-2HXP-9RTA' },
+        [createDummyFile('doc.txt', SMALL_FILE_BYTES)]
+      );
+    });
+    expect(result.current.uploadState).toEqual({ status: 'uploading', progress: 0, preparing: 'passkey' });
+    expect(presignSpy).not.toHaveBeenCalled();
+
+    // Stretched: the upload proper starts at 0%, with the passkey phase over.
+    await waitFor(() => expect(presignSpy).toHaveBeenCalled());
+    expect(result.current.uploadState).toEqual({ status: 'uploading', progress: 0 });
+
+    await act(async () => {
+      answerPresign({ uploadToken: 'token_securing', items: [{ fileName: 'mock.enc', uploadUrl: 'http://test.url/enc', storageKey: 'uploads/enc_key', uploadMode: 'Single' }] });
+      await uploading;
+    });
+    expect(result.current.uploadState.status).toBe('success');
   });
 
   it('hands the link-ready card a summary of the bundle, and the passkey to send separately', async () => {

@@ -91,7 +91,8 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
   - the manifest and the title (#65) are encrypted with the master key;
   - the master key is wrapped with `kWrap`.
 - **`kAuth` and `kWrap` both come from the link key, or the link key plus the passkey, via HKDF with separate labels** (`splitKeys`, `deriveLinkKeys`). The server only ever receives `kAuth`, and can't derive `kWrap` from it.
-  - The passkey is stretched with PBKDF2-SHA-256, 300,000 iterations (#78 will replace it).
+  - The passkey is stretched with Argon2id, 64 MiB, 3 passes, 1 lane by default (`kdfParams.ts`, `argon2.ts`, in a worker), after NFC normalisation. Each guess at a passkey costs that much memory, which slows GPU guessing far more than PBKDF2 did (#78).
+  - The settings are stored with each bundle (`KdfParams`), so later uploads can use stronger ones. The uploader chooses them and the recipient's browser runs them, so both sides accept only Argon2id 1.3 with 16–256 MiB, 1–10 passes and 1–4 lanes, in one canonical spelling (`KeyDerivationParams`, `parseKdfParams`, shared cases in `tests/vectors/kdf-params.json`). A bundle can't make a recipient's browser run costly settings.
   - Generated passkeys are unbiased (#48): 12 characters from 35 ≈ 61.5 bits (`passkey.ts`).
 - **The link key never leaves the browser:**
   - it lives in the fragment, which isn't sent in requests or in `Referer` (`shareLink.ts`);
@@ -118,7 +119,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 | Gap | Tracked in |
 | :--- | :--- |
 | **No security headers on UI pages.** nginx sends no CSP, `X-Frame-Options`, `nosniff` or `Referrer-Policy`, so the pages can be framed and nothing limits script sources. | #130 (deployment blocker) |
-| **Weak secrets are allowed:** passwords need only 4 characters (`BundleRules`); a typed passkey can be a single character; passkeys use PBKDF2. The lockout limits online guessing. Offline guessing of a passkey also needs the link key. | #78 |
+| **Weak secrets are allowed:** passwords need only 4 characters (`BundleRules`); a typed passkey can be a single character, which Argon2id can't make safe. The lockout limits online guessing. Offline guessing of a passkey also needs the link key. | #78 (part 3: a 10-character passkey minimum) |
 | **Link keys and `kAuth` sit in `sessionStorage`**, so any script running on the origin can read them. That makes the CSP in #130 important. | #130 |
 | **Rate limits are per IP.** Changing IP sidesteps them. On Docker Desktop all clients share one partition (README). The lockout protects passwords, but nothing limits anonymous uploads beyond the per-IP limit. | #82 (upload abuse) |
 | **Committed default credentials** (Postgres password, `minioadmin`), and **the API uses the storage root credentials**. | #82 |
@@ -144,7 +145,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 
 - **Any PR that changes who can see or do what updates this file.** The PR template asks (`.github/pull_request_template.md`).
 - Changes coming that will need an update:
-  - #78: Argon2id for passkeys;
+  - #78 part 3: the passkey minimum, and SHA-256 instead of bcrypt for `kAuth`;
   - #66: the command-line client;
   - the manage link (a second bearer secret);
   - request-files (public-key encryption);

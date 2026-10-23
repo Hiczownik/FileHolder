@@ -8,6 +8,7 @@ import { chunkCount, createStreamParams, encryptChunkRange, MIN_STREAM_CHUNK_SIZ
 import { saveStreamToDisk } from '../../../../shared/utils/download/streamSaving';
 import type { FileGroupMetadataResponse } from '../../types';
 import { openShareLinkWithNewKey } from './linkKeyFixture';
+import { FAST_KDF_PARAMS } from '../../../../test/kdf';
 
 vi.mock('../../../../shared/utils/downloadUtils', () => ({
     saveBlobAsFile: vi.fn(),
@@ -111,6 +112,7 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
             isEncrypted: true,
             keySalt: bundle.keySalt,
             keyMode: 'LinkKeyAndPasskey',
+            kdfParams: FAST_KDF_PARAMS,
             isExpired: false,
             files: [],
         };
@@ -233,6 +235,7 @@ describe('useFileDownload E2EE manifest-to-file matching', () => {
             isEncrypted: true,
             keySalt: bundle.keySalt,
             keyMode: 'LinkKeyAndPasskey',
+            kdfParams: FAST_KDF_PARAMS,
             isExpired: false,
             files: [],
         };
