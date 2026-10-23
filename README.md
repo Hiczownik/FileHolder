@@ -189,7 +189,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 
 | Setting | Compose value | Meaning |
 | :--- | :--- | :--- |
-| `ConnectionStrings__PostgresConnection` | `Host=postgres;…` | PostgreSQL connection string |
+| `ConnectionStrings__PostgresConnection` | `Host=postgres;…;Maximum Pool Size=50` | PostgreSQL connection string. Keep each API instance's pool size well under Postgres' `max_connections` (100), so other instances and tools can still connect |
 | `Storage__ServiceUrl` | `http://minio:9000` | Storage address the **API** uses |
 | `Storage__PublicBaseUrl` | `http://localhost:9000` | Storage address in upload and download links, so it must be reachable from **browsers** |
 | `Storage__AccessKey`, `Storage__SecretKey` | `minioadmin` | Storage credentials (local defaults) |

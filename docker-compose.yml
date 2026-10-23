@@ -75,7 +75,10 @@ services:
     environment:
       # Production: Development would return internal exception messages and expose the API reference.
       ASPNETCORE_ENVIRONMENT: Production
-      ConnectionStrings__PostgresConnection: "Host=postgres;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=fileholder_password"
+      # Npgsql's default pool of 100 equals Postgres' max_connections, so a burst of requests (load scenario 4) left
+      # the API holding every connection for the 5 minutes idle ones are kept: migrations of a second API
+      # instance, psql and other tools were refused. 50 leaves room for a second instance during a rolling deploy.
+      ConnectionStrings__PostgresConnection: "Host=postgres;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=fileholder_password;Maximum Pool Size=50"
       Storage__ServiceUrl: "http://minio:9000"
       Storage__PublicBaseUrl: "http://localhost:9000"
       Storage__AccessKey: "minioadmin"
