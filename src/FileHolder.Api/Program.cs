@@ -6,6 +6,7 @@ using FileHolder.Api.ExceptionHandling;
 using FileHolder.Api.Health;
 using FileHolder.Api.Middleware;
 using FileHolder.Api.RateLimiting;
+using FileHolder.Api.Telemetry;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
@@ -24,9 +25,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Serilog ignores the Logging:LogLevel settings. Without this, ASP.NET Core logs every request's path at
 // Information, and a path holds the share token, which opens a bundle without a password.
+// Lines written inside a trace end with its ids (TraceContextEnricher).
 builder.Host.UseSerilog((ctx, lc) => lc
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-    .WriteTo.Console(formatProvider: System.Globalization.CultureInfo.InvariantCulture));
+    .Enrich.With<TraceContextEnricher>()
+    .WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{" + TraceContextEnricher.PropertyName + ":l}{NewLine}{Exception}",
+        formatProvider: System.Globalization.CultureInfo.InvariantCulture));
 
 builder.Services.AddFileHolderStorageOptions(builder.Configuration);
 
@@ -77,6 +82,8 @@ builder.Services.AddScoped<IMultipartUploadService, MultipartUploadService>();
 builder.Services.AddScoped<IBundleStreamService, BundleStreamService>();
 builder.Services.AddScoped<IStoragePurgeService, StoragePurgeService>();
 
+var metricsPort = builder.Configuration.GetValue("Metrics:Port", 9464);
+
 builder.Services.AddOpenTelemetry()
     .WithMetrics(metrics =>
     {
@@ -86,6 +93,9 @@ builder.Services.AddOpenTelemetry()
             .AddMeter(StorageLifecycleStatus.MeterName)
             .AddPrometheusExporter();
     });
+
+// Traces, sent only when OTEL_EXPORTER_OTLP_ENDPOINT is set (TracingRegistration).
+builder.Services.AddFileHolderTracing(builder.Configuration, builder.Environment, metricsPort);
 
 builder.Services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
 builder.Services.AddHostedService<FileCleanupWorker>();
@@ -151,7 +161,6 @@ app.UseRateLimiter();
 // Metrics are only served on their own port, which compose never publishes, so only Prometheus on the
 // internal network can scrape them. Matched on the port the connection actually arrived on, not the Host
 // header, which clients can set to anything.
-var metricsPort = app.Configuration.GetValue("Metrics:Port", 9464);
 app.UseOpenTelemetryPrometheusScrapingEndpoint(context =>
     context.Connection.LocalPort == metricsPort && context.Request.Path == "/metrics");
 

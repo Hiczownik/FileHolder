@@ -80,6 +80,12 @@
   * **The UI pages, served by nginx, don't send these headers yet.** Tracked in [#130](https://github.com/Hiczownik/FileHolder/issues/130), a deployment blocker ([#82](https://github.com/Hiczownik/FileHolder/issues/82)).
 * **Error responses** use RFC 7807 `ProblemDetails`. Internal error messages are only shown in Development.
 * **Logs** name the route (`/api/v1/files/{shareToken}`), never the request path, since a share token opens a bundle without a password. File names and titles stay out of them too: a rejected request's message, which can name a file, is only logged at `Debug`. nginx's access log shows `[token]` in place of the token and leaves out query strings; its error log, whose format can't be changed, still shows the full request when it can't reach the API.
+* **Traces** (sent only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set) keep out what logs keep out, and more (`TraceRedactionProcessor`):
+  * request paths become their route (`/api/v1/files/{shareToken}/unlock`), and query strings are dropped, so share tokens, presigned-URL signatures and download-session ids never appear;
+  * storage keys keep their GUID and lose the file name (`uploads/{guid}_[name]`);
+  * request and response bodies (passwords, `kAuth`, keys, manifests) are never recorded, and neither are database parameter values;
+  * client addresses are left out unless `Tracing__RecordClientAddress=true`: with them, a trace would say which address unlocked and downloaded which bundle.
+  * A test runs a whole upload and download through an in-memory exporter and checks that none of these reach it.
 * **Dependencies** are pinned and checked:
   * **Pinning:**
     * Every container image is pinned to a version and digest. A test fails on any that isn't.
@@ -127,7 +133,7 @@
 | **Caching** | .NET `HybridCache` | In-memory only (no shared L2 cache), with stampede protection |
 | **Background work** | `BackgroundService` | Storage purge every 30 minutes |
 | **Frontend** | **React 19**, Vite 8, TypeScript 6, Tailwind CSS 4 | axios, react-hook-form, client-zip (ZIPs in the browser), qrcode.react |
-| **Observability** | OpenTelemetry metrics → Prometheus → Grafana; Serilog console logs | |
+| **Observability** | OpenTelemetry metrics → Prometheus → Grafana; OpenTelemetry traces over OTLP (requests, PostgreSQL, storage); Serilog console logs with trace ids | |
 | **Tests** | xUnit, FluentAssertions, NSubstitute, FsCheck, Testcontainers (PostgreSQL); Vitest + Testing Library, fast-check; Playwright (Chromium, Firefox, WebKit) | |
 | **Containers** | Docker Compose, multi-stage builds | |
 
@@ -199,6 +205,9 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Storage__LifecycleExpiryDays` | unset (10, calculated) | Days after which storage deletes any object. Only for a longer safety net; lower than the calculated value refuses to start |
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Where traces go over OTLP (e.g. `http://tempo:4317`). Unset, nothing is sent; log lines inside a trace still end with `trace=… span=…` |
+| `Tracing__SampleRatio` | 1 (default) | Share of requests traced, 0–1. Lower it (e.g. 0.1) on a deployment that sends traces |
+| `Tracing__RecordClientAddress` | false (default) | Keep the caller's address on request spans, for debugging rate limits or the lockout on a real host |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
 | `GRAFANA_ADMIN_PASSWORD` (`.env`) | (yours) | Grafana admin password |
 | UI: `VITE_API_BASE_URL` (build time) | `/api/v1/files` (`.env.production`) | API address the UI calls; `.env.development` uses `http://localhost:8080/api/v1/files` |

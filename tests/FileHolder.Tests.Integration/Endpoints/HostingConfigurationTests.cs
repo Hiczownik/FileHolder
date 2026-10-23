@@ -1,4 +1,5 @@
 using System.Net;
+using FileHolder.Api.Telemetry;
 using FileHolder.Tests.Integration.Fixtures;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
@@ -38,6 +39,17 @@ public class HostingConfigurationTests(CustomWebApplicationFactory factory) : IC
         var response = await metricsFactory.CreateClient().GetAsync("/metrics");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task TheApiWorks_WhenTheTraceStoreIsUnreachable()
+    {
+        using var exporting = factory.WithWebHostBuilder(builder =>
+            builder.UseSetting(TracingRegistration.OtlpEndpointSetting, "http://127.0.0.1:1"));
+        var client = exporting.CreateClient();
+
+        (await client.GetAsync("/healthz/live")).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await client.GetAsync("/api/v1/files/no-such-bundle")).StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
     [Theory]
