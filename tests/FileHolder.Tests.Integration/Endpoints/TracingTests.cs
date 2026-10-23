@@ -5,8 +5,13 @@ using System.Text;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
+using FileHolder.Core.Interfaces;
+using FileHolder.Infrastructure.Data;
+using FileHolder.Infrastructure.Diagnostics;
+using FileHolder.Infrastructure.Services;
 using FileHolder.Tests.Integration.Fixtures;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FileHolder.Tests.Integration.Endpoints;
 
@@ -24,7 +29,8 @@ public class TracingTests : IClassFixture<TracingFactory>
     private const string WrongPassword = "WrongTracingGuess!";
 
     private const string EncryptedFileName = "tracing_secret_blob.enc";
-    private const string KAuth = "k_auth_tracing_secret_456";
+    // A kAuth is 32 bytes as 43 base64url characters.
+    private const string KAuth = "kAuth_tracing_secret_456_0123456789abcdefgh";
     private const string KeyEnvelope = "tracing_secret_key_envelope";
     private const string Manifest = "tracing_secret_manifest";
 
@@ -55,17 +61,23 @@ public class TracingTests : IClassFixture<TracingFactory>
         return await request(_client);
     }
 
-    private async Task<(string ShareToken, Guid FileId, string UploadToken)> UploadPlainBundleAsync()
+    /// <param name="fileCount">Files after the first are named like it, so the leak checks cover them too.</param>
+    private async Task<(string ShareToken, Guid FileId, string UploadToken)> UploadPlainBundleAsync(int fileCount = 1)
     {
-        var files = new List<FileItemInputDto> { new(FileName, "application/pdf", 1024) };
+        var files = Enumerable.Range(0, fileCount)
+            .Select(i => new FileItemInputDto(i == 0 ? FileName : $"{i}_{FileName}", "application/pdf", 1024))
+            .ToList();
         var presign = await (await SendAsync(c => c.PostAsJsonAsync("/api/v1/files/presign",
                 new CreatePresignedUrlRequestDto(Title, files, 24, 10, Password))))
             .Content.ReadFromJsonAsync<PresignedUrlResponseDto>();
-        _factory.SeedS3Object(presign!.Items[0].StorageKey, 1024);
+        foreach (var item in presign!.Items)
+        {
+            _factory.SeedS3Object(item.StorageKey, 1024);
+        }
 
         var confirm = await SendAsync(c => c.PostAsJsonAsync("/api/v1/files/confirm", new ConfirmUploadRequestDto(
             presign.UploadToken, Title,
-            [new ConfirmedFileItemDto(presign.Items[0].StorageKey, FileName, "application/pdf", 1024)],
+            presign.Items.Select((item, i) => new ConfirmedFileItemDto(item.StorageKey, files[i].FileName, "application/pdf", 1024)).ToList(),
             24, 10, Password)));
         confirm.StatusCode.Should().Be(HttpStatusCode.OK);
         var shareToken = (await confirm.Content.ReadFromJsonAsync<string>())!;
@@ -171,17 +183,157 @@ public class TracingTests : IClassFixture<TracingFactory>
         spans.Select(s => s.GetTagItem("url.path")).Should().Contain("/api/v1/files/{shareToken}/unlock");
     }
 
+    private static Activity Request(Activity[] spans, string route) =>
+        spans.Single(s => s.Kind == ActivityKind.Server && s.GetTagItem("http.route") as string == route);
+
+    private static Activity[] Children(Activity[] spans, Activity parent, string? name = null) =>
+        spans.Where(s => s.ParentSpanId == parent.SpanId && (name == null || s.OperationName == name))
+            .OrderBy(s => s.StartTimeUtc)
+            .ToArray();
+
     [Fact]
-    public async Task Confirm_IncludesItsDatabaseQueries()
+    public async Task Confirm_IsBrokenIntoItsSteps_InOrder()
     {
-        await UploadPlainBundleAsync();
+        await UploadPlainBundleAsync(fileCount: 3);
 
         var spans = await _factory.WaitForRequestSpansAsync(_traceId, _requests);
-        var confirm = spans.Single(s => s.Kind == ActivityKind.Server && s.GetTagItem("http.route") as string == "/api/v1/files/confirm");
-        var queries = spans.Where(s => s.ParentSpanId == confirm.SpanId && s.Source.Name == "Npgsql").ToList();
+        var confirm = Request(spans, "/api/v1/files/confirm");
 
-        queries.Should().NotBeEmpty();
-        queries.Should().OnlyContain(q => q.Kind == ActivityKind.Client);
+        Children(spans, confirm).Where(s => s.Source.Name == "FileHolder").Select(s => s.OperationName).Should().Equal(
+            "confirm.claim", "confirm.check_sizes", "confirm.hash_password",
+            "confirm.copy_single_part_files", "confirm.persist", "confirm.cache_write");
+        Children(spans, confirm).Should().Contain(s => s.Source.Name == "Npgsql", "loading the pending uploads is a query");
+
+        var checkSizes = Children(spans, confirm, "confirm.check_sizes").Single();
+        checkSizes.GetTagItem("fileholder.file_count").Should().Be(3);
+        Children(spans, checkSizes, "storage.get_object_size").Should().HaveCount(3)
+            .And.OnlyContain(s => (bool)s.GetTagItem("fileholder.storage.found")!)
+            .And.OnlyContain(s => ((string)s.GetTagItem("fileholder.storage.key")!).EndsWith("_[name]"));
+
+        // Small files are copied, and each copy's size is checked again.
+        var copies = Children(spans, confirm, "confirm.copy_single_part_files").Single();
+        copies.GetTagItem("fileholder.copied_file_count").Should().Be(3);
+        Children(spans, copies, "storage.copy_object").Should().HaveCount(3)
+            .And.OnlyContain(s => ((string)s.GetTagItem("fileholder.storage.destination_key")!).StartsWith("files/"));
+        Children(spans, copies, "storage.get_object_size").Should().HaveCount(3);
+
+        Children(spans, confirm, "confirm.hash_password").Single()
+            .GetTagItem("fileholder.password_kind").Should().Be("password");
+        Children(spans, confirm, "confirm.persist").Single().Status.Should().Be(ActivityStatusCode.Unset);
+    }
+
+    [Fact]
+    public async Task ARefusedConfirm_MarksTheFailingStep_WithTheExceptionTypeOnly()
+    {
+        var files = new List<FileItemInputDto> { new(FileName, "application/pdf", 1024) };
+        var presign = await (await SendAsync(c => c.PostAsJsonAsync("/api/v1/files/presign",
+                new CreatePresignedUrlRequestDto(Title, files, 24, 10, Password))))
+            .Content.ReadFromJsonAsync<PresignedUrlResponseDto>();
+        // Stored at a different size than presign approved.
+        _factory.SeedS3Object(presign!.Items[0].StorageKey, 999);
+
+        (await SendAsync(c => c.PostAsJsonAsync("/api/v1/files/confirm", new ConfirmUploadRequestDto(
+            presign.UploadToken, Title,
+            [new ConfirmedFileItemDto(presign.Items[0].StorageKey, FileName, "application/pdf", 1024)],
+            24, 10, Password)))).StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var spans = await _factory.WaitForRequestSpansAsync(_traceId, _requests);
+        var checkSizes = Children(spans, Request(spans, "/api/v1/files/confirm"), "confirm.check_sizes").Single();
+
+        checkSizes.Status.Should().Be(ActivityStatusCode.Error);
+        checkSizes.StatusDescription.Should().BeNull("an exception message can name a file");
+        checkSizes.GetTagItem("error.type").Should().Be("FileHolder.Core.Exceptions.InvalidRequestException");
+        checkSizes.Events.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task PasswordChecks_RecordTheLockoutDecision_NotTheAttempt()
+    {
+        var (shareToken, _, _) = await UploadPlainBundleAsync();
+
+        // The upload's own unlock attempts (one wrong, one right) reset the count, so these start from zero.
+        for (var i = 0; i < PasswordLockout.FreeAttempts + 2; i++)
+        {
+            await SendAsync(c => c.PostAsJsonAsync($"/api/v1/files/{shareToken}/unlock", new DownloadRequestDto(WrongPassword)));
+        }
+
+        var spans = await _factory.WaitForRequestSpansAsync(_traceId, _requests);
+        var decisions = spans
+            .Where(s => s.OperationName == "password.check")
+            .OrderBy(s => s.StartTimeUtc)
+            .Select(s => s.GetTagItem("fileholder.password.decision") as string)
+            .ToList();
+
+        decisions.Should().Equal(
+            [
+                PasswordAttemptGuard.Decisions.FreeAttemptUsed, PasswordAttemptGuard.Decisions.Correct,
+                .. Enumerable.Repeat(PasswordAttemptGuard.Decisions.FreeAttemptUsed, PasswordLockout.FreeAttempts),
+                PasswordAttemptGuard.Decisions.LockoutApplied, PasswordAttemptGuard.Decisions.RefusedLockedOut
+            ]);
+        spans.Where(s => s.OperationName == "password.check")
+            .Count(s => Children(spans, s, "password.verify").Length == 1)
+            .Should().Be(PasswordLockout.FreeAttempts + 3, "a locked-out guess is refused before bcrypt runs");
+    }
+
+    [Fact]
+    public async Task ADownload_RecordsItsSessionAndEachZipEntry_ByIndex()
+    {
+        var (shareToken, fileId, _) = await UploadPlainBundleAsync(fileCount: 2);
+        await DownloadAsync(shareToken, fileId, Password);
+
+        var spans = await _factory.WaitForRequestSpansAsync(_traceId, _requests);
+
+        var open = Children(spans, Request(spans, "/api/v1/files/{shareToken}/downloads"), "download_session.open").Single();
+        open.GetTagItem("fileholder.outcome").Should().Be("Success");
+        Children(spans, open, "password.check").Should().ContainSingle();
+        Children(spans, open, "download_session.consume_download").Single()
+            .GetTagItem("fileholder.download_consumed").Should().Be(true);
+
+        var zip = Children(spans, Request(spans, "/api/v1/files/{shareToken}/download-all"), "bundle_zip.stream").Single();
+        zip.GetTagItem("fileholder.file_count").Should().Be(2);
+        var entries = Children(spans, zip, "bundle_zip.entry");
+        entries.Select(e => e.GetTagItem("fileholder.zip.entry_index")).Should().Equal(0, 1);
+        entries.Should().OnlyContain(e => Children(spans, e, "storage.open_read_stream").Length == 1);
+    }
+
+    [Fact]
+    public async Task APurgeRun_IsATraceOfItsOwn_WithItsSteps()
+    {
+        var storageKey = $"uploads/{Guid.NewGuid():N}_tracing_secret_purged.pdf";
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.FileGroups.Add(new FileGroup
+            {
+                ShareToken = "trace_" + Guid.NewGuid().ToString("N")[..8],
+                Title = Title,
+                ExpiresAt = DateTime.UtcNow.AddHours(-2),
+                Files = [new SharedFile { OriginalFileName = FileName, StorageKey = storageKey, ContentType = "application/pdf", SizeBytes = 1024 }]
+            });
+            await db.SaveChangesAsync();
+        }
+
+        ActivityTraceId runTraceId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            // What FileCleanupWorker does each run.
+            using var run = FileHolderTracing.StartRoot("purge.run");
+            runTraceId = run!.TraceId;
+            await scope.ServiceProvider.GetRequiredService<IStoragePurgeService>().PurgeExpiredFilesAsync();
+        }
+
+        var spans = _factory.Spans.Snapshot().Where(s => s.TraceId == runTraceId).ToArray();
+        var root = spans.Single(s => s.OperationName == "purge.run");
+        root.ParentSpanId.Should().Be(default(ActivitySpanId));
+
+        Children(spans, root).Where(s => s.Source.Name == "FileHolder").Select(s => s.OperationName).Should().Equal(
+            "purge.abort_expired_uploads", "purge.abandoned_uploads", "purge.expired_groups", "purge.tombstones");
+        var groups = Children(spans, root, "purge.expired_groups").Single();
+        ((int)groups.GetTagItem("fileholder.purge.found_group_count")!).Should().BeGreaterThanOrEqualTo(1);
+        groups.GetTagItem("fileholder.purge.failed_object_count").Should().Be(0);
+        Children(spans, groups, "storage.delete_objects").Should().ContainSingle();
+
+        string.Join("\n", spans.Select(Render)).Should().NotContainEquivalentOf("tracing_secret");
     }
 
     [Fact]

@@ -84,6 +84,7 @@
   * request paths become their route (`/api/v1/files/{shareToken}/unlock`), and query strings are dropped, so share tokens, presigned-URL signatures and download-session ids never appear;
   * storage keys keep their GUID and lose the file name (`uploads/{guid}_[name]`);
   * request and response bodies (passwords, `kAuth`, keys, manifests) are never recorded, and neither are database parameter values;
+  * the API's own spans (confirm steps, storage calls, password checks, download sessions, ZIP entries, purge runs) carry counts, outcomes and GUIDs only: a ZIP entry is its index, and a password check is its decision (`free_attempt_used`, `lockout_applied`…), never the attempt;
   * client addresses are left out unless `Tracing__RecordClientAddress=true`: with them, a trace would say which address unlocked and downloaded which bundle.
   * A test runs a whole upload and download through an in-memory exporter and checks that none of these reach it.
 * **Dependencies** are pinned and checked:

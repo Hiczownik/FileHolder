@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using FileHolder.Api.Telemetry;
+using FileHolder.Infrastructure.Diagnostics;
 using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
@@ -18,7 +19,7 @@ public sealed class TracingTests : IDisposable
     {
         _listener = new ActivityListener
         {
-            ShouldListenTo = source => source == _source,
+            ShouldListenTo = source => source == _source || source == FileHolderTracing.Source,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded
         };
         ActivitySource.AddActivityListener(_listener);
@@ -177,6 +178,59 @@ public sealed class TracingTests : IDisposable
     [Fact]
     public void ARatioOfZero_StartsNoTrace() =>
         Decide(ActivityKind.Server, ratio: 0).Should().Be(SamplingDecision.Drop);
+
+    #endregion
+
+    #region Own spans
+
+    [Fact]
+    public void Steps_AreOnlyRecordedInsideATrace()
+    {
+        FileHolderTracing.StartStep("storage.get_object_size").Should().BeNull("a health check's call starts no trace");
+
+        using var request = _source.StartActivity("request", ActivityKind.Server)!;
+        using var step = FileHolderTracing.StartStep("storage.get_object_size");
+
+        step.Should().NotBeNull();
+        step!.ParentSpanId.Should().Be(request.SpanId);
+        step.Kind.Should().Be(ActivityKind.Internal);
+    }
+
+    [Fact]
+    public void Roots_StartATraceOfTheirOwn()
+    {
+        using var run = FileHolderTracing.StartRoot("purge.run");
+
+        run.Should().NotBeNull();
+        run!.ParentSpanId.Should().Be(default(ActivitySpanId));
+        run.Kind.Should().Be(ActivityKind.Internal, "the sampler starts traces at internal spans, not at outgoing calls");
+    }
+
+    [Fact]
+    public async Task FailedSteps_RecordTheExceptionType_NotItsMessage()
+    {
+        using var request = _source.StartActivity("request", ActivityKind.Server)!;
+        Activity? step = null;
+
+        var work = () => FileHolderTracing.StepAsync("confirm.check_sizes", activity =>
+        {
+            step = activity;
+            throw new InvalidOperationException("File size mismatch for holiday.jpg");
+        });
+
+        await work.Should().ThrowAsync<InvalidOperationException>();
+        step!.Status.Should().Be(ActivityStatusCode.Error);
+        step.StatusDescription.Should().BeNull();
+        step.GetTagItem("error.type").Should().Be("System.InvalidOperationException");
+        step.IsStopped.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData($"uploads/{Guid}_holiday photo.jpg", $"uploads/{Guid}_[name]")]
+    [InlineData($"uploads/{Guid}.enc", $"uploads/{Guid}.enc")]
+    [InlineData("files/0123456789abcdef0123456789abcdef", "files/0123456789abcdef0123456789abcdef")]
+    public void StorageKeys_KeepOnlyTheirGuid(string key, string expected) =>
+        FileHolderTracing.RedactStorageKeys(key).Should().Be(expected);
 
     #endregion
 

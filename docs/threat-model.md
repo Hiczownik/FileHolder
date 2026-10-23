@@ -111,6 +111,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
   - storage keys keep only their GUID;
   - client addresses are dropped unless `Tracing__RecordClientAddress` is on. With them, a trace links an address to the bundle it unlocked and downloaded;
   - bodies (passwords, `kAuth`, keys, manifests) and database parameter values are never recorded.
+  - The API's own spans (`FileHolderTracing`) carry counts, outcomes and GUIDs only. A failed step records the exception's type, not its message, which can name a file.
   - `TracingTests` checks a whole upload and download against an in-memory exporter.
   - A trace still shows *that* a bundle was uploaded, unlocked and downloaded, and when, for as long as the trace store keeps it.
 - **Ports:** storage, database, API, Prometheus and Grafana are bound to loopback. Metrics are only on an unpublished port (9464). Grafana needs a password from `.env`.
