@@ -3,6 +3,7 @@ using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Interfaces;
 using FileHolder.Infrastructure.Data;
+using FileHolder.Infrastructure.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
 
@@ -20,7 +21,16 @@ public class DownloadSessionService(
     private readonly IDateTimeProvider _dateTimeProvider = dateTimeProvider;
     private readonly IPasswordAttemptGuard _passwordGuard = passwordGuard;
 
-    public async Task<OpenDownloadSessionResult> OpenSessionAsync(string shareToken, string? password, CancellationToken ct = default)
+    /// <summary>A <c>download_session.open</c> span, tagged with its status.</summary>
+    public Task<OpenDownloadSessionResult> OpenSessionAsync(string shareToken, string? password, CancellationToken ct = default) =>
+        FileHolderTracing.StepAsync("download_session.open", async activity =>
+        {
+            var result = await OpenSessionInSpanAsync(shareToken, password, ct);
+            activity?.SetTag("fileholder.outcome", result.Status.ToString());
+            return result;
+        });
+
+    private async Task<OpenDownloadSessionResult> OpenSessionInSpanAsync(string shareToken, string? password, CancellationToken ct)
     {
         // Share tokens are only unique among live groups, so prefer the live one if a deleted group reused it.
         var group = await _dbContext.FileGroups
@@ -54,6 +64,7 @@ public class DownloadSessionService(
             return new OpenDownloadSessionResult(OpenDownloadSessionStatus.InvalidPassword, null);
         }
 
+        using var consumeActivity = FileHolderTracing.StartStep("download_session.consume_download");
         await using var tx = await _dbContext.Database.BeginTransactionAsync(ct);
 
         // Single conditional UPDATE: the row lock it takes serializes concurrent openers, and Postgres
@@ -71,6 +82,7 @@ public class DownloadSessionService(
                     ? (DateTime?)now
                     : g.DeletedAt), ct);
 
+        consumeActivity?.SetTag("fileholder.download_consumed", consumed > 0);
         if (consumed == 0)
         {
             await tx.RollbackAsync(ct);
@@ -98,6 +110,7 @@ public class DownloadSessionService(
         _dbContext.DownloadSessions.Add(session);
         await _dbContext.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        consumeActivity?.Stop();
 
         await _cache.RemoveAsync($"file_group:{shareToken}", CancellationToken.None);
 
