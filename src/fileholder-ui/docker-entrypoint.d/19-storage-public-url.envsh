@@ -1,0 +1,28 @@
+#!/bin/sh
+# Sourced by the nginx image's entrypoint just before it fills in /etc/nginx/templates (20-envsubst-on-templates.sh).
+# STORAGE_PUBLIC_URL goes into the Content-Security-Policy's connect-src (nginx.conf.template). With a wrong address
+# every upload and download would be blocked, so the container refuses to start instead of running without it.
+
+storage_public_url="${STORAGE_PUBLIC_URL:-}"
+storage_public_url="${storage_public_url%/}"
+
+# A bare origin (scheme, host, optional port), like the API's Storage__PublicBaseUrl. Anything else, such as a path,
+# a space or a ';', would break the policy or add sources to it. Matches the first three lines, rejects the last two:
+# https://regex101.com/?regex=%5Ehttps%3F%3A%2F%2F%28%5BA-Za-z0-9.-%5D%2B%7C%5C%5B%5B0-9A-Fa-f%3A%5D%2B%5C%5D%29%28%3A%5B0-9%5D%7B1%2C5%7D%29%3F%24&flags=gm&testString=http%3A%2F%2Flocalhost%3A9000%0Ahttps%3A%2F%2Fpc.tailnet.ts.net%3A8443%0Ahttp%3A%2F%2F%5B%3A%3A1%5D%3A9000%0Ahttp%3A%2F%2Flocalhost%3A9000%2Fbucket%0Ahttp%3A%2F%2Fa%3B%20script-src%20*
+storage_public_url_valid=false
+case "$storage_public_url" in
+    # grep matches line by line, so anything outside these characters (a newline above all) is refused first.
+    *[!A-Za-z0-9.:/\[\]-]*) ;;
+    *)
+        if printf '%s' "$storage_public_url" | grep -Eq '^https?://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$'; then
+            storage_public_url_valid=true
+        fi
+        ;;
+esac
+
+if [ "$storage_public_url_valid" != true ]; then
+    echo "19-storage-public-url.envsh: STORAGE_PUBLIC_URL must be the storage address browsers use, the same as the API's Storage__PublicBaseUrl (e.g. http://localhost:9000); got '${STORAGE_PUBLIC_URL:-}'" >&2
+    exit 1
+fi
+
+export STORAGE_PUBLIC_URL="$storage_public_url"
