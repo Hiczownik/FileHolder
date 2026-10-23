@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Text.RegularExpressions;
+using FileHolder.Infrastructure.Diagnostics;
 using Microsoft.Extensions.Options;
 using OpenTelemetry;
 
@@ -17,10 +17,8 @@ namespace FileHolder.Api.Telemetry;
 /// </list>
 /// Request and response bodies (passwords, kAuth, keys, manifests) are never recorded in the first place.
 /// </summary>
-public sealed partial class TraceRedactionProcessor(IOptions<TracingOptions> options) : BaseProcessor<Activity>
+public sealed class TraceRedactionProcessor(IOptions<TracingOptions> options) : BaseProcessor<Activity>
 {
-    public const string RedactedName = "[name]";
-
     public override void OnEnd(Activity data)
     {
         if (data.GetTagItem("url.path") is not null)
@@ -52,10 +50,6 @@ public sealed partial class TraceRedactionProcessor(IOptions<TracingOptions> opt
     {
         var end = url.IndexOfAny(['?', '#']);
         var withoutQuery = end >= 0 ? url[..end] : url;
-        return StorageKeyFileName().Replace(withoutQuery, "$1_" + RedactedName);
+        return FileHolderTracing.RedactStorageKeys(withoutQuery);
     }
-
-    // The name after a storage key's GUID, also when the underscore arrives percent-encoded.
-    [GeneratedRegex("(uploads/[0-9a-fA-F]{32})(?:_|%5[fF])[^/]*")]
-    private static partial Regex StorageKeyFileName();
 }

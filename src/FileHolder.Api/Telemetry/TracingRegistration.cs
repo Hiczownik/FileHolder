@@ -1,4 +1,5 @@
 using System.Reflection;
+using FileHolder.Infrastructure.Diagnostics;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using OpenTelemetry.Resources;
@@ -9,9 +10,6 @@ namespace FileHolder.Api.Telemetry;
 public static class TracingRegistration
 {
     public const string ServiceName = "fileholder-api";
-
-    /// <summary>The API's own spans (confirm, presign, purge batches…) come from an ActivitySource of this name.</summary>
-    public const string SourceName = "FileHolder";
 
     public const string OtlpEndpointSetting = "OTEL_EXPORTER_OTLP_ENDPOINT";
 
@@ -39,7 +37,7 @@ public static class TracingRegistration
                     .AddAttributes([new("deployment.environment.name", environment.EnvironmentName)]))
                 .SetSampler(sp => new ParentBasedSampler(
                     new RequestRootSampler(sp.GetRequiredService<IOptions<TracingOptions>>().Value.SampleRatio)))
-                .AddSource(SourceName)
+                .AddSource(FileHolderTracing.SourceName)
                 .AddAspNetCoreInstrumentation(options => options.Filter = context =>
                     context.Connection.LocalPort != metricsPort && !context.Request.Path.StartsWithSegments("/healthz"))
                 // The AWS SDK sends its storage requests through HttpClient, so these are the storage calls.

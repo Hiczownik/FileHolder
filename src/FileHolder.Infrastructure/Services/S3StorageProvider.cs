@@ -1,13 +1,19 @@
+using System.Diagnostics;
 using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Interfaces;
 using FileHolder.Core.Security;
+using FileHolder.Infrastructure.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
 namespace FileHolder.Infrastructure.Services;
 
+/// <summary>
+/// Each storage call is a <c>storage.*</c> span that records the key's GUID, never its file name (see
+/// <see cref="FileHolderTracing"/>). Presigning is computed locally, so it has none.
+/// </summary>
 public class S3StorageProvider(
     [FromKeyedServices("InternalS3")] IAmazonS3 internalClient,
     [FromKeyedServices("PresignS3")] IAmazonS3 presignClient,
@@ -15,6 +21,7 @@ public class S3StorageProvider(
     : IS3StorageProvider
 {
     private const int MaxKeysPerDeleteRequest = 1000;
+    private const string KeyTag = "fileholder.storage.key";
 
     private readonly IAmazonS3 _internalClient = internalClient;
     private readonly IAmazonS3 _presignClient = presignClient;
@@ -23,6 +30,9 @@ public class S3StorageProvider(
     // Browsers block plain-HTTP requests from an HTTPS page, so presigned URLs use the public address's scheme.
     private readonly Protocol _publicProtocol =
         S3ClientFactory.IsPlainHttp(options.Value.PublicBaseUrl) ? Protocol.HTTP : Protocol.HTTPS;
+
+    private static Activity? TagKey(Activity? activity, string storageKey) =>
+        activity?.SetTag(KeyTag, FileHolderTracing.RedactStorageKeys(storageKey));
 
     public string GeneratePresignedUploadUrl(string storageKey, long contentLength, DateTime expiresAt)
     {
@@ -80,91 +90,115 @@ public class S3StorageProvider(
         return _presignClient.GetPreSignedURL(request);
     }
 
-    public async Task<string> InitiateMultipartUploadAsync(string storageKey, string contentType, CancellationToken ct = default)
-    {
-        var response = await _internalClient.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
+    public Task<string> InitiateMultipartUploadAsync(string storageKey, string contentType, CancellationToken ct = default) =>
+        FileHolderTracing.StepAsync("storage.initiate_multipart_upload", async activity =>
         {
-            BucketName = _options.BucketName,
-            Key = storageKey,
-            ContentType = contentType
-        }, ct);
-
-        return response.UploadId;
-    }
-
-    public async Task CompleteMultipartUploadAsync(string storageKey, string uploadId, IEnumerable<(int PartNumber, string ETag)> parts,
-        CancellationToken ct = default)
-    {
-        var partETags = parts
-            .OrderBy(p => p.PartNumber)
-            .Select(p => new PartETag { PartNumber = p.PartNumber, ETag = p.ETag.Trim('\"') })
-            .ToList();
-
-        var completeRequest = new CompleteMultipartUploadRequest
-        {
-            BucketName = _options.BucketName,
-            Key = storageKey,
-            UploadId = uploadId,
-            PartETags = partETags
-        };
-
-        await _internalClient.CompleteMultipartUploadAsync(completeRequest, ct);
-    }
-
-    public async Task AbortMultipartUploadAsync(string storageKey, string uploadId, CancellationToken ct = default)
-    {
-        try
-        {
-            await _internalClient.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+            TagKey(activity, storageKey);
+            var response = await _internalClient.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest
             {
                 BucketName = _options.BucketName,
                 Key = storageKey,
-                UploadId = uploadId
+                ContentType = contentType
             }, ct);
-        }
-        catch (AmazonS3Exception)
-        {
-            // Ignored: Multipart upload may have already been aborted or completed
-        }
-    }
 
-    public async Task<long?> GetObjectSizeAsync(string storageKey, CancellationToken ct = default)
-    {
-        try
-        {
-            var metadata = await _internalClient.GetObjectMetadataAsync(_options.BucketName, storageKey, ct);
-            return metadata.ContentLength;
-        }
-        catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            return null;
-        }
-    }
+            return response.UploadId;
+        });
 
-    public async Task CopyObjectAsync(string sourceKey, string destinationKey, CancellationToken ct = default)
-    {
-        await _internalClient.CopyObjectAsync(new CopyObjectRequest
+    public Task CompleteMultipartUploadAsync(string storageKey, string uploadId, IEnumerable<(int PartNumber, string ETag)> parts,
+        CancellationToken ct = default) =>
+        FileHolderTracing.StepAsync("storage.complete_multipart_upload", async activity =>
         {
-            SourceBucket = _options.BucketName,
-            SourceKey = sourceKey,
-            DestinationBucket = _options.BucketName,
-            DestinationKey = destinationKey
-        }, ct);
-    }
+            var partETags = parts
+                .OrderBy(p => p.PartNumber)
+                .Select(p => new PartETag { PartNumber = p.PartNumber, ETag = p.ETag.Trim('\"') })
+                .ToList();
+            TagKey(activity, storageKey)?.SetTag("fileholder.storage.part_count", partETags.Count);
 
-    public async Task<Stream> OpenReadStreamAsync(string storageKey, CancellationToken ct = default)
-    {
-        var request = new GetObjectRequest
+            var completeRequest = new CompleteMultipartUploadRequest
+            {
+                BucketName = _options.BucketName,
+                Key = storageKey,
+                UploadId = uploadId,
+                PartETags = partETags
+            };
+
+            await _internalClient.CompleteMultipartUploadAsync(completeRequest, ct);
+        });
+
+    public Task AbortMultipartUploadAsync(string storageKey, string uploadId, CancellationToken ct = default) =>
+        FileHolderTracing.StepAsync("storage.abort_multipart_upload", async activity =>
         {
-            BucketName = _options.BucketName,
-            Key = storageKey
-        };
+            TagKey(activity, storageKey);
+            try
+            {
+                await _internalClient.AbortMultipartUploadAsync(new AbortMultipartUploadRequest
+                {
+                    BucketName = _options.BucketName,
+                    Key = storageKey,
+                    UploadId = uploadId
+                }, ct);
+            }
+            catch (AmazonS3Exception)
+            {
+                // Ignored: Multipart upload may have already been aborted or completed
+                activity?.SetTag("fileholder.storage.already_finished", true);
+            }
+        });
 
-        var response = await _internalClient.GetObjectAsync(request, ct);
-        return response.ResponseStream;
-    }
+    public Task<long?> GetObjectSizeAsync(string storageKey, CancellationToken ct = default) =>
+        FileHolderTracing.StepAsync("storage.get_object_size", async activity =>
+        {
+            TagKey(activity, storageKey);
+            try
+            {
+                var metadata = await _internalClient.GetObjectMetadataAsync(_options.BucketName, storageKey, ct);
+                activity?.SetTag("fileholder.storage.found", true);
+                return (long?)metadata.ContentLength;
+            }
+            catch (AmazonS3Exception ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                activity?.SetTag("fileholder.storage.found", false);
+                return null;
+            }
+        });
 
-    public async Task<IReadOnlySet<string>> DeleteObjectsAsync(IEnumerable<string> storageKeys, CancellationToken ct = default)
+    public Task CopyObjectAsync(string sourceKey, string destinationKey, CancellationToken ct = default) =>
+        FileHolderTracing.StepAsync("storage.copy_object", async activity =>
+        {
+            TagKey(activity, sourceKey)?.SetTag("fileholder.storage.destination_key", FileHolderTracing.RedactStorageKeys(destinationKey));
+            await _internalClient.CopyObjectAsync(new CopyObjectRequest
+            {
+                SourceBucket = _options.BucketName,
+                SourceKey = sourceKey,
+                DestinationBucket = _options.BucketName,
+                DestinationKey = destinationKey
+            }, ct);
+        });
+
+    /// <summary>The span covers opening the object; reading it belongs to the caller's span (e.g. a ZIP entry's).</summary>
+    public Task<Stream> OpenReadStreamAsync(string storageKey, CancellationToken ct = default) =>
+        FileHolderTracing.StepAsync("storage.open_read_stream", async activity =>
+        {
+            TagKey(activity, storageKey);
+            var request = new GetObjectRequest
+            {
+                BucketName = _options.BucketName,
+                Key = storageKey
+            };
+
+            var response = await _internalClient.GetObjectAsync(request, ct);
+            return response.ResponseStream;
+        });
+
+    public Task<IReadOnlySet<string>> DeleteObjectsAsync(IEnumerable<string> storageKeys, CancellationToken ct = default) =>
+        FileHolderTracing.StepAsync("storage.delete_objects", async activity =>
+        {
+            var failedKeys = await DeleteInChunksAsync(storageKeys, activity, ct);
+            activity?.SetTag("fileholder.storage.failed_count", failedKeys.Count);
+            return failedKeys;
+        });
+
+    private async Task<IReadOnlySet<string>> DeleteInChunksAsync(IEnumerable<string> storageKeys, Activity? activity, CancellationToken ct)
     {
         var failedKeys = new HashSet<string>(StringComparer.Ordinal);
 
@@ -172,6 +206,7 @@ public class S3StorageProvider(
             .Where(k => !string.IsNullOrWhiteSpace(k))
             .Distinct(StringComparer.Ordinal)
             .ToList();
+        activity?.SetTag("fileholder.storage.key_count", keysList.Count);
 
         // S3 DeleteObjects accepts at most 1000 keys per request. Missing keys are reported as
         // deleted by S3, so anything in DeleteErrors is a genuine failure.

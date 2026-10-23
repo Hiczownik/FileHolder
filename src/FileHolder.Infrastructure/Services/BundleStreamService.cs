@@ -3,6 +3,7 @@ using System.IO.Pipelines;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
 using FileHolder.Core.Security;
+using FileHolder.Infrastructure.Diagnostics;
 
 namespace FileHolder.Infrastructure.Services;
 
@@ -78,7 +79,11 @@ public class BundleStreamService(
 
         // Storage is never deleted here: other recipients' sessions may still be using it.
         // The purge worker removes it once every session and presigned URL has expired.
-        await StreamArchiveInternalAsync(fileEntries, destinationStream, ct);
+        await FileHolderTracing.StepAsync("bundle_zip.stream", async activity =>
+        {
+            activity?.SetTag("fileholder.file_count", fileEntries.Count);
+            await StreamArchiveInternalAsync(fileEntries, destinationStream, ct);
+        });
 
         return new StreamZipResult(StreamZipStatus.Success, bundleTitle);
     }
@@ -100,17 +105,26 @@ public class BundleStreamService(
             {
                 await using var pipeStream = pipe.Writer.AsStream(leaveOpen: true);
                 await using var zipArchive = new ZipArchive(pipeStream, ZipArchiveMode.Create, leaveOpen: true);
-                foreach (var file in fileList)
+                for (var index = 0; index < fileList.Count; index++)
                 {
+                    var file = fileList[index];
                     linkedCts.Token.ThrowIfCancellationRequested();
 
                     var compressionLevel = DetermineCompressionLevel(file.OriginalFileName);
-                    var entry = zipArchive.CreateEntry(file.OriginalFileName, compressionLevel);
 
-                    await using var entryStream = await entry.OpenAsync(linkedCts.Token);
-                    await using var s3Stream = await _storageProvider.OpenReadStreamAsync(file.StorageKey, linkedCts.Token);
+                    // The entry's index, never its name: entry names are the bundle's file names.
+                    await FileHolderTracing.StepAsync("bundle_zip.entry", async activity =>
+                    {
+                        activity?.SetTag("fileholder.zip.entry_index", index)
+                            .SetTag("fileholder.zip.compression", compressionLevel.ToString());
 
-                    await s3Stream.CopyToAsync(entryStream, 65536, linkedCts.Token);
+                        var entry = zipArchive.CreateEntry(file.OriginalFileName, compressionLevel);
+
+                        await using var entryStream = await entry.OpenAsync(linkedCts.Token);
+                        await using var s3Stream = await _storageProvider.OpenReadStreamAsync(file.StorageKey, linkedCts.Token);
+
+                        await s3Stream.CopyToAsync(entryStream, 65536, linkedCts.Token);
+                    });
                 }
             }
             catch (Exception ex)

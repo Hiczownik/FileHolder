@@ -5,6 +5,7 @@ using FileHolder.Core.Exceptions;
 using FileHolder.Core.Interfaces;
 using FileHolder.Core.Security;
 using FileHolder.Infrastructure.Data;
+using FileHolder.Infrastructure.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
 
@@ -59,6 +60,11 @@ public class FileGroupService
 
     public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto)
     {
+        using var activity = FileHolderTracing.StartStep("presign")
+            ?.SetTag("fileholder.file_count", dto.Files.Count)
+            .SetTag("fileholder.multipart_file_count", dto.Files.Count(f => IsMultipart(f.SizeBytes)))
+            .SetTag("fileholder.encrypted", dto.IsEncrypted);
+
         var uploadToken = Guid.NewGuid().ToString("N");
         var items = new List<PresignedItemDto>();
         var now = _dateTimeProvider.UtcNow;
@@ -135,8 +141,9 @@ public class FileGroupService
 
             await _dbContext.SaveChangesAsync();
         }
-        catch
+        catch (Exception ex)
         {
+            activity.RecordFailure(ex);
             await AbortQuietlyAsync(startedUploads);
             throw;
         }
@@ -200,7 +207,8 @@ public class FileGroupService
 
         // Everything above only reads the database. Claimed before the storage checks, copies and bcrypt, so
         // parallel confirms of one upload token can't each do that work and have all but one thrown away.
-        var claimId = await ClaimPendingUploadsAsync(dto.UploadToken, pendingUploads.Count, now);
+        var claimId = await FileHolderTracing.StepAsync("confirm.claim",
+            _ => ClaimPendingUploadsAsync(dto.UploadToken, pendingUploads.Count, now));
 
         // A single-file PUT URL stays valid after confirm, so the uploader could overwrite the checked object.
         // Those files are served from a copy under a key no URL was issued for, and its size is checked on
@@ -211,26 +219,36 @@ public class FileGroupService
 
         try
         {
-            foreach (var item in dto.Files)
+            // One storage call per file, one after another: a trace shows what that costs for a large bundle.
+            await FileHolderTracing.StepAsync("confirm.check_sizes", async activity =>
             {
-                var pending = pendingByKey[item.StorageKey];
-
-                // The presigned URL doesn't limit size, so the stored object is checked against what presign approved.
-                var remoteSize = await _storageProvider.GetObjectSizeAsync(pending.StorageKey);
-                if (remoteSize is null)
+                activity?.SetTag("fileholder.file_count", dto.Files.Count);
+                foreach (var item in dto.Files)
                 {
-                    throw new ResourceNotFoundException($"Uploaded object for {item.FileName} was not found in storage.");
-                }
+                    var pending = pendingByKey[item.StorageKey];
 
-                if (remoteSize.Value != pending.SizeBytes)
-                {
-                    throw new InvalidRequestException($"File size mismatch for {item.FileName}");
+                    // The presigned URL doesn't limit size, so the stored object is checked against what presign approved.
+                    var remoteSize = await _storageProvider.GetObjectSizeAsync(pending.StorageKey);
+                    if (remoteSize is null)
+                    {
+                        throw new ResourceNotFoundException($"Uploaded object for {item.FileName} was not found in storage.");
+                    }
+
+                    if (remoteSize.Value != pending.SizeBytes)
+                    {
+                        throw new InvalidRequestException($"File size mismatch for {item.FileName}");
+                    }
                 }
-            }
+            });
 
             var shareToken = CryptoUtils.GenerateShortToken();
             // An encrypted bundle's "password" is its kAuth, which the validator requires to be 32 random bytes.
-            var passwordHash = dto.IsEncrypted ? CryptoUtils.HashAuthKey(dto.Password!) : CryptoUtils.HashPassword(dto.Password);
+            string? passwordHash;
+            using (FileHolderTracing.StartStep("confirm.hash_password")
+                       ?.SetTag("fileholder.password_kind", dto.IsEncrypted ? "kauth" : string.IsNullOrWhiteSpace(dto.Password) ? "none" : "password"))
+            {
+                passwordHash = dto.IsEncrypted ? CryptoUtils.HashAuthKey(dto.Password!) : CryptoUtils.HashPassword(dto.Password);
+            }
 
             var fileGroup = new FileGroup
             {
@@ -248,72 +266,81 @@ public class FileGroupService
                 KdfParams = dto.KdfParams
             };
 
-            foreach (var item in dto.Files)
+            await FileHolderTracing.StepAsync("confirm.copy_single_part_files", async activity =>
             {
-                var pending = pendingByKey[item.StorageKey];
-                var servedKey = pending.StorageKey;
-
-                if (!IsMultipart(pending.SizeBytes))
+                foreach (var item in dto.Files)
                 {
-                    servedKey = $"files/{Guid.NewGuid():N}";
-                    await _storageProvider.CopyObjectAsync(pending.StorageKey, servedKey);
-                    copiedKeys.Add(servedKey);
+                    var pending = pendingByKey[item.StorageKey];
+                    var servedKey = pending.StorageKey;
 
-                    var copiedSize = await _storageProvider.GetObjectSizeAsync(servedKey);
-                    if (copiedSize != pending.SizeBytes)
+                    if (!IsMultipart(pending.SizeBytes))
                     {
-                        throw new InvalidRequestException($"File size mismatch for {item.FileName}");
+                        servedKey = $"files/{Guid.NewGuid():N}";
+                        await _storageProvider.CopyObjectAsync(pending.StorageKey, servedKey);
+                        copiedKeys.Add(servedKey);
+
+                        var copiedSize = await _storageProvider.GetObjectSizeAsync(servedKey);
+                        if (copiedSize != pending.SizeBytes)
+                        {
+                            throw new InvalidRequestException($"File size mismatch for {item.FileName}");
+                        }
                     }
+
+                    fileGroup.Files.Add(new SharedFile
+                    {
+                        OriginalFileName = pending.FileName,
+                        StorageKey = servedKey,
+                        ContentType = pending.ContentType,
+                        SizeBytes = pending.SizeBytes
+                    });
                 }
 
-                fileGroup.Files.Add(new SharedFile
-                {
-                    OriginalFileName = pending.FileName,
-                    StorageKey = servedKey,
-                    ContentType = pending.ContentType,
-                    SizeBytes = pending.SizeBytes
-                });
-            }
+                activity?.SetTag("fileholder.copied_file_count", copiedKeys.Count);
+            });
 
-            await using var tx = await _dbContext.Database.BeginTransactionAsync();
-
-            // Deleting the rows makes the token single-use. Only this confirm's claim is deleted: if it outlived
-            // ConfirmClaimLifetime and another confirm took the rows over, this one loses instead.
-            int claimed = await _dbContext.PendingUploads
-                .Where(p => p.UploadToken == dto.UploadToken && p.ClaimId == claimId)
-                .ExecuteDeleteAsync();
-
-            if (claimed != pendingUploads.Count)
+            await FileHolderTracing.StepAsync("confirm.persist", async _ =>
             {
-                await tx.RollbackAsync();
-                throw new ConflictException("This upload was confirmed by another request.");
-            }
+                await using var tx = await _dbContext.Database.BeginTransactionAsync();
 
-            // The copied originals are left to the abandoned-upload purge, which deletes them once their PUT
-            // URL has expired (see UploadTimings.SinglePutUrlLifetime). Deleting them now would let the uploader
-            // put a fresh object there that nothing tracks. The new token was never handed out, so no confirm
-            // can claim these rows.
-            var purgeToken = Guid.NewGuid().ToString("N");
-            foreach (var pending in pendingUploads.Where(p => !IsMultipart(p.SizeBytes)))
-            {
-                _dbContext.PendingUploads.Add(new PendingUpload
+                // Deleting the rows makes the token single-use. Only this confirm's claim is deleted: if it outlived
+                // ConfirmClaimLifetime and another confirm took the rows over, this one loses instead.
+                int claimed = await _dbContext.PendingUploads
+                    .Where(p => p.UploadToken == dto.UploadToken && p.ClaimId == claimId)
+                    .ExecuteDeleteAsync();
+
+                if (claimed != pendingUploads.Count)
                 {
-                    UploadToken = purgeToken,
-                    StorageKey = pending.StorageKey,
-                    FileName = pending.FileName,
-                    ContentType = pending.ContentType,
-                    SizeBytes = pending.SizeBytes,
-                    IsEncrypted = pending.IsEncrypted,
-                    CreatedAt = now,
-                    ExpiresAt = now
-                });
-            }
+                    await tx.RollbackAsync();
+                    throw new ConflictException("This upload was confirmed by another request.");
+                }
 
-            _dbContext.FileGroups.Add(fileGroup);
-            await _dbContext.SaveChangesAsync();
-            await tx.CommitAsync();
+                // The copied originals are left to the abandoned-upload purge, which deletes them once their PUT
+                // URL has expired (see UploadTimings.SinglePutUrlLifetime). Deleting them now would let the uploader
+                // put a fresh object there that nothing tracks. The new token was never handed out, so no confirm
+                // can claim these rows.
+                var purgeToken = Guid.NewGuid().ToString("N");
+                foreach (var pending in pendingUploads.Where(p => !IsMultipart(p.SizeBytes)))
+                {
+                    _dbContext.PendingUploads.Add(new PendingUpload
+                    {
+                        UploadToken = purgeToken,
+                        StorageKey = pending.StorageKey,
+                        FileName = pending.FileName,
+                        ContentType = pending.ContentType,
+                        SizeBytes = pending.SizeBytes,
+                        IsEncrypted = pending.IsEncrypted,
+                        CreatedAt = now,
+                        ExpiresAt = now
+                    });
+                }
 
-            await _cache.SetAsync($"file_group:{shareToken}", fileGroup);
+                _dbContext.FileGroups.Add(fileGroup);
+                await _dbContext.SaveChangesAsync();
+                await tx.CommitAsync();
+            });
+
+            await FileHolderTracing.StepAsync("confirm.cache_write",
+                async _ => await _cache.SetAsync($"file_group:{shareToken}", fileGroup));
 
             return shareToken;
         }
