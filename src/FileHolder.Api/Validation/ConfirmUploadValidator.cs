@@ -80,6 +80,7 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
 
         RuleFor(x => x.ExpireInHours).MustBeValidExpiry();
         RuleFor(x => x.MaxDownloads).MustBeValidMaxDownloads();
-        RuleFor(x => x.Password).MustBeValidPassword();
+        When(x => x.IsEncrypted, () => RuleFor(x => x.Password).MustBeAuthKey())
+            .Otherwise(() => RuleFor(x => x.Password).MustBeValidPassword());
     }
 }

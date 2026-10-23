@@ -17,6 +17,26 @@ const randomPasskeyChars = (count: number, chars: string = ''): string => {
     return randomPasskeyChars(count, chars + drawn);
 };
 
+/**
+ * The fewest characters a typed passkey may have. Argon2id makes each guess costly, but a short passkey still falls
+ * to a few million guesses (#78). The server never sees the passkey, so only the browser can check this.
+ */
+export const MIN_PASSKEY_LENGTH = 10;
+
+export const PASSKEY_REQUIRED_MESSAGE = 'Enter a passkey, or turn off "Also require a passkey".';
+export const PASSKEY_TOO_SHORT_MESSAGE = `Use a passkey of at least ${MIN_PASSKEY_LENGTH} characters, or generate one.`;
+
+/**
+ * Why `passkey` can't protect a bundle, or null when it can. Characters are counted as the recipient types them:
+ * after NFC normalisation (as Argon2id gets it), so "é" counts once however it was entered, and without spaces at
+ * either end.
+ */
+export function passkeyProblem(passkey: string | undefined): string | null {
+    const typed = (passkey ?? '').normalize('NFC').trim();
+    if (typed.length === 0) return PASSKEY_REQUIRED_MESSAGE;
+    return Array.from(typed).length < MIN_PASSKEY_LENGTH ? PASSKEY_TOO_SHORT_MESSAGE : null;
+}
+
 /** A passkey that is easy to read out and type: three groups of four, like "K7QF-2MXA-9RTB". About 61.5 bits. */
 export function generateReadablePasskey(): string {
     return Array.from({ length: PASSKEY_SEGMENT_COUNT }, () => randomPasskeyChars(PASSKEY_SEGMENT_LENGTH)).join('-');

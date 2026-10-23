@@ -105,6 +105,19 @@ public static partial class BundleRules
     [GeneratedRegex(@"^[A-Za-z0-9_-]+$")]
     private static partial Regex Base64UrlRegex();
 
+    // An encrypted bundle sends its kAuth as the password: 32 bytes from HKDF, as unpadded base64url. Only that shape
+    // is accepted, since it is stored with a fast hash (CryptoUtils.HashAuthKey) that only suits random values.
+    public static IRuleBuilderOptions<T, string?> MustBeAuthKey<T>(this IRuleBuilder<T, string?> rule) =>
+        rule.NotEmpty().WithMessage("Encrypted uploads must send their derived key.")
+            .Must(value => value is null || AuthKeyRegex().IsMatch(value))
+            .WithMessage("The derived key of an encrypted upload must be 43 base64url characters.");
+
+    // Exactly 43 base64url characters, as 32 bytes encode unpadded: "q3-_" followed by 39 more matches; a 42-character
+    // value, one with "=" padding, or "k_auth_derived_token_123" doesn't.
+    // https://regex101.com/?regex=%5E%5BA-Za-z0-9_-%5D%7B43%7D%24&testString=q3-_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%0Ak_auth_derived_token_123
+    [GeneratedRegex(@"^[A-Za-z0-9_-]{43}$")]
+    private static partial Regex AuthKeyRegex();
+
     public static IRuleBuilderOptions<T, string?> MustBeValidPassword<T>(this IRuleBuilder<T, string?> rule) =>
         // Whitespace-only is refused, not treated as "no password": CryptoUtils.HashPassword stores no hash for it,
         // so the bundle would quietly end up unprotected although the uploader asked for a password.

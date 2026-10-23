@@ -38,6 +38,31 @@ public class PasswordHashingTests
         CryptoUtils.VerifyPassword("", hash).Should().BeFalse();
     }
 
+    private const string KAuth = "kAuth_derived_in_the_browser_0123456789abcd";
+
+    [Fact]
+    public void HashAuthKey_StoresATaggedSha256_ThatVerifiesOnlyThatKey()
+    {
+        var hash = CryptoUtils.HashAuthKey(KAuth);
+
+        // Not bcrypt (#78): kAuth is random, so a slow hash only costs the server.
+        hash.Should().StartWith("sha256:").And.NotStartWith("$2");
+        CryptoUtils.VerifyPassword(KAuth, hash).Should().BeTrue();
+        CryptoUtils.VerifyPassword(KAuth[..^1] + "e", hash).Should().BeFalse();
+        CryptoUtils.VerifyPassword("", hash).Should().BeFalse();
+    }
+
+    [Fact]
+    public void VerifyPassword_StillChecksBcryptHashes_NextToAuthKeyHashes()
+    {
+        // Plain bundles keep bcrypt; a typed password must stay slow to guess offline.
+        var bcrypt = CryptoUtils.HashPassword(KAuth);
+
+        bcrypt.Should().StartWith("$2");
+        CryptoUtils.VerifyPassword(KAuth, bcrypt).Should().BeTrue();
+        CryptoUtils.VerifyPassword(KAuth, CryptoUtils.HashAuthKey("another_kAuth_derived_in_browser_0123456789")).Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

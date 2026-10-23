@@ -71,6 +71,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 ### Access control
 - **Locked bundles show only file count, expiry and downloads left.** Title, names and sizes appear only after unlocking (`GetGroupMetadataByTokenAsync`, PR #131).
 - **Passwords are stored as bcrypt** (work factor 11) **over SHA-256**, so passwords longer than 72 bytes aren't silently cut short (`CryptoUtils.HashPassword`, #53).
+- **An encrypted bundle's `kAuth` is stored as a tagged SHA-256** (`sha256:…`, `CryptoUtils.HashAuthKey`) and compared in constant time (#78). Presign and confirm accept only a `kAuth`-shaped value for encrypted uploads: 43 base64url characters (`MustBeAuthKey`). It's 32 random bytes, so a slow hash adds nothing against guessing, and bcrypt would cost 100–200 ms of CPU per unlock attempt. Plain bundles keep bcrypt.
 - **Per-bundle password lockout:**
   - 5 free attempts, then 1, 2, 4 … minutes, up to 1 h;
   - a verification hold, so parallel guesses can't be checked side by side (`PasswordLockout`).
@@ -119,7 +120,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 | Gap | Tracked in |
 | :--- | :--- |
 | **No security headers on UI pages.** nginx sends no CSP, `X-Frame-Options`, `nosniff` or `Referrer-Policy`, so the pages can be framed and nothing limits script sources. | #130 (deployment blocker) |
-| **Weak secrets are allowed:** passwords need only 4 characters (`BundleRules`); a typed passkey can be a single character, which Argon2id can't make safe. The lockout limits online guessing. Offline guessing of a passkey also needs the link key. | #78 (part 3: a 10-character passkey minimum) |
+| **Short passwords are allowed** on plain bundles: 4 characters (`BundleRules`). The lockout limits online guessing, and bcrypt slows offline guessing. **Passkeys need 10 characters** (`passkeyProblem`, #78), but only the browser can check that, since the server never sees a passkey. A modified client could skip the check, weakening only its own bundle. Offline guessing of a passkey also needs the link key. | Accepted |
 | **Link keys and `kAuth` sit in `sessionStorage`**, so any script running on the origin can read them. That makes the CSP in #130 important. | #130 |
 | **Rate limits are per IP.** Changing IP sidesteps them. On Docker Desktop all clients share one partition (README). The lockout protects passwords, but nothing limits anonymous uploads beyond the per-IP limit. | #82 (upload abuse) |
 | **Committed default credentials** (Postgres password, `minioadmin`), and **the API uses the storage root credentials**. | #82 |
@@ -145,7 +146,6 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 
 - **Any PR that changes who can see or do what updates this file.** The PR template asks (`.github/pull_request_template.md`).
 - Changes coming that will need an update:
-  - #78 part 3: the passkey minimum, and SHA-256 instead of bcrypt for `kAuth`;
   - #66: the command-line client;
   - the manage link (a second bearer secret);
   - request-files (public-key encryption);

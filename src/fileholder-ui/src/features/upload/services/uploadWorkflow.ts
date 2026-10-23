@@ -13,8 +13,8 @@ import { formatSize } from "../../../shared/utils/formatSize";
 import { createConcurrencyLimiter } from "../../../shared/utils/concurrencyLimiter";
 import { abortError } from "./rateLimitRetry";
 import { buildShareLink } from "../../../shared/utils/shareLink";
+import { passkeyProblem } from "./passkey";
 
-export const PASSKEY_REQUIRED_MESSAGE = 'Enter a passkey, or turn off "Also require a passkey".';
 
 const PERCENT_COMPLETE = 100;
 // Progress stops short of 100% until every file has finished uploading.
@@ -178,8 +178,9 @@ export async function executeEncryptedUploadWorkflow(
     onProgress: (percent: number) => void,
     signal?: AbortSignal
 ): Promise<string> {
-    if (formValues.requirePasskey && !formValues.password) {
-        throw new Error(PASSKEY_REQUIRED_MESSAGE);
+    const problem = formValues.requirePasskey ? passkeyProblem(formValues.password) : null;
+    if (problem) {
+        throw new Error(problem);
     }
 
     // The server only sees "{uuid}.enc" here, so it can't reject these; recipients would refuse the bundle.

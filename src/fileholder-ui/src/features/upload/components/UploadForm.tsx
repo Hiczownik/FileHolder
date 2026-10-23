@@ -8,7 +8,7 @@ import { Button } from "../../../shared/components/Button";
 import { StatusAlert } from "../../../shared/components/StatusAlert";
 import { Switch } from "../../../shared/components/Switch";
 import { mergeSelectedFiles } from "../services/selectedFiles";
-import { generateReadablePasskey } from "../services/passkey";
+import { generateReadablePasskey, MIN_PASSKEY_LENGTH } from "../services/passkey";
 
 interface Props {
     uploadState: UploadState;
@@ -198,7 +198,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                         </Button>
                     </div>
                     <p id="bundle-password-hint" className={`${HINT} mt-1.5`}>
-                        Send it in a different message or app from the link.
+                        At least {MIN_PASSKEY_LENGTH} characters. Send it in a different message or app from the link.
                     </p>
                 </div>
             ) : (
