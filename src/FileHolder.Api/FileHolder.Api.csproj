@@ -27,6 +27,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Local `dotnet run` reads the passwords from user secrets, outside the repository (README, Development). -->
+    <UserSecretsId>fileholder-api-6f1c2d4e</UserSecretsId>
   </PropertyGroup>
 
 </Project>

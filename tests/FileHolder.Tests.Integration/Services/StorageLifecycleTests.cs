@@ -16,7 +16,10 @@ using NSubstitute.ExceptionExtensions;
 
 namespace FileHolder.Tests.Integration.Services;
 
-/// <summary>The storage safety net (#69): the lifecycle rule the API puts on the bucket, against real Silo storage.</summary>
+/// <summary>
+/// The storage safety net (#69): the lifecycle rule the API puts on the bucket, against real Silo storage. Put in place
+/// as the API's own storage user, so its policy is shown to allow it; read back as the storage admin.
+/// </summary>
 public class StorageLifecycleTests(SiloFixture silo) : IClassFixture<SiloFixture>
 {
     private static readonly TimeSpan ConfirmTimeout = TimeSpan.FromSeconds(30);
@@ -44,7 +47,7 @@ public class StorageLifecycleTests(SiloFixture silo) : IClassFixture<SiloFixture
     [Fact]
     public async Task ApplyAsync_PutsTheExpiryRuleOnTheBucket_AsStorageReadsItBack()
     {
-        var applied = await NewInitializer(silo.Client, NewStatus()).ApplyAsync();
+        var applied = await NewInitializer(silo.ApiClient, NewStatus()).ApplyAsync();
 
         applied.ExpiryDays.Should().Be(StorageSafetyNet.LifecycleExpiryDays);
         var stored = await silo.Client.GetLifecycleConfigurationAsync(new GetLifecycleConfigurationRequest { BucketName = SiloFixture.BucketName });
@@ -55,7 +58,7 @@ public class StorageLifecycleTests(SiloFixture silo) : IClassFixture<SiloFixture
     [Fact]
     public async Task ApplyingTheRuleAgain_LeavesOneRule()
     {
-        var initializer = NewInitializer(silo.Client, NewStatus());
+        var initializer = NewInitializer(silo.ApiClient, NewStatus());
 
         await initializer.ApplyAsync();
         await initializer.ApplyAsync();
@@ -68,7 +71,7 @@ public class StorageLifecycleTests(SiloFixture silo) : IClassFixture<SiloFixture
     public async Task AtStartup_TheRuleIsConfirmed_AndTheMetricReportsItsDays()
     {
         var status = NewStatus();
-        using var initializer = NewInitializer(silo.Client, status);
+        using var initializer = NewInitializer(silo.ApiClient, status);
 
         await initializer.StartAsync(CancellationToken.None);
         await WaitUntil(() => status.ConfirmedExpiryDays > 0);
@@ -122,7 +125,7 @@ public class StorageLifecycleTests(SiloFixture silo) : IClassFixture<SiloFixture
     {
         var longer = StorageSafetyNet.LifecycleExpiryDays + 5;
 
-        var applied = await NewInitializer(silo.Client, NewStatus(), longer).ApplyAsync();
+        var applied = await NewInitializer(silo.ApiClient, NewStatus(), longer).ApplyAsync();
 
         applied.ExpiryDays.Should().Be(longer);
     }
@@ -149,9 +152,16 @@ public class StorageLifecycleTests(SiloFixture silo) : IClassFixture<SiloFixture
 /// <summary>How the "Storage" section's lifecycle setting is checked, without starting the API.</summary>
 public class StorageLifecycleOptionsTests
 {
+    // Required, with no default, so every resolve needs them; the values don't matter here.
+    private static readonly Dictionary<string, string?> Credentials = new()
+    {
+        ["Storage:AccessKey"] = "test-access-key",
+        ["Storage:SecretKey"] = "test-secret-key",
+    };
+
     private static StorageOptions Resolve(Dictionary<string, string?> settings)
     {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(Credentials).AddInMemoryCollection(settings).Build();
         var services = new ServiceCollection().AddFileHolderStorageOptions(configuration);
         return services.BuildServiceProvider().GetRequiredService<IOptions<StorageOptions>>().Value;
     }

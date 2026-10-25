@@ -141,9 +141,26 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>, IAsyn
     /// <summary>Configuration settings for the test API, on top of its own (e.g. "RateLimits:ConfirmPermitLimit").</summary>
     protected virtual IReadOnlyDictionary<string, string?> Settings => new Dictionary<string, string?>();
 
+    /// <summary>
+    /// What a deployment always sets and appsettings.json leaves out: storage credentials (the SDK is mocked, so any
+    /// will do) and the origin the rate-limit tests call from cross-origin. The connection string is added in
+    /// <see cref="ConfigureWebHost"/>, once the container is up.
+    /// </summary>
+    public const string CrossOrigin = "http://localhost:5173";
+
+    private static readonly Dictionary<string, string?> RequiredSettings = new()
+    {
+        ["Storage:AccessKey"] = "test-access-key",
+        ["Storage:SecretKey"] = "test-secret-key",
+        [$"{FileHolder.Api.Configuration.CorsRegistration.AllowedOriginsSection}:0"] = CrossOrigin,
+    };
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.ConfigureAppConfiguration(config => config.AddInMemoryCollection(Settings));
+        builder.ConfigureAppConfiguration(config => config
+            .AddInMemoryCollection(RequiredSettings)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ConnectionStrings:PostgresConnection"] = _postgresContainer.GetConnectionString() })
+            .AddInMemoryCollection(Settings));
 
         builder.ConfigureServices(services =>
         {

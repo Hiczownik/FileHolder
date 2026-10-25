@@ -58,7 +58,10 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection")
+        ?? throw new InvalidOperationException(
+            "ConnectionStrings:PostgresConnection is not set. Compose builds it from POSTGRES_PASSWORD in .env; " +
+            "for a local `dotnet run`, set it with dotnet user-secrets (README, Development).")));
 
 // The API's own connection to storage.
 builder.Services.AddKeyedSingleton<IAmazonS3>("InternalS3", (sp, _) =>
@@ -128,17 +131,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 
 builder.Services.AddFileHolderRateLimits(builder.Configuration);
 
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowReactApp", policy =>
-    {
-        policy.WithOrigins("http://localhost:3000", "http://localhost:5173")
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              // So the browser can read how long to wait after a 429 (see RateLimitPolicies.WriteRetryAfterAsync).
-              .WithExposedHeaders("Retry-After");
-    });
-});
+builder.Services.AddFileHolderCors(builder.Configuration);
 
 var app = builder.Build();
 
@@ -146,16 +139,12 @@ using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await dbContext.Database.MigrateAsync(CancellationToken.None);
-    await dbContext.Database.ExecuteSqlRawAsync(@"
-        ALTER TABLE ""FileGroups"" ADD COLUMN IF NOT EXISTS ""KeyEnvelope"" text;
-        ALTER TABLE ""FileGroups"" ADD COLUMN IF NOT EXISTS ""KeySalt"" character varying(64);
-    ", CancellationToken.None);
 }
 
 app.UseExceptionHandler();
 app.UseForwardedHeaders();
 app.UseSecurityHeaders();
-app.UseCors("AllowReactApp");
+app.UseCors(CorsRegistration.PolicyName);
 app.UseRateLimiter();
 
 // Metrics are only served on their own port, which compose never publishes, so only Prometheus on the

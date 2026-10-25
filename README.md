@@ -142,10 +142,30 @@
 
 ## ⚡ Quick Start
 
-Make sure [Docker Desktop](https://www.docker.com/products/docker-desktop/) is running. Then set a Grafana admin password in a `.env` file next to `docker-compose.yml` (compose refuses to start without one; git ignores the file), and start the stack:
+Make sure [Docker Desktop](https://www.docker.com/products/docker-desktop/) is running. Then create a `.env` file next to `docker-compose.yml` with the stack's passwords, and start it. Compose refuses to start while any password is missing, and git ignores the file. `.env.example` lists what goes in it.
 
+PowerShell:
+```powershell
+function New-Secret { $b = New-Object byte[] 16; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); ($b | ForEach-Object { $_.ToString('x2') }) -join '' }
+@(
+  "GRAFANA_ADMIN_PASSWORD=$(New-Secret)"
+  "POSTGRES_PASSWORD=$(New-Secret)"
+  "STORAGE_ROOT_USER=fileholder-admin"
+  "STORAGE_ROOT_PASSWORD=$(New-Secret)"
+  "STORAGE_API_SECRET_KEY=$(New-Secret)"
+) | Set-Content -Encoding ascii .env
+docker compose up --build
+```
+
+Bash:
 ```bash
-echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 16)" > .env
+cat > .env <<EOF
+GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 16)
+POSTGRES_PASSWORD=$(openssl rand -hex 16)
+STORAGE_ROOT_USER=fileholder-admin
+STORAGE_ROOT_PASSWORD=$(openssl rand -hex 16)
+STORAGE_API_SECRET_KEY=$(openssl rand -hex 16)
+EOF
 docker compose up --build
 ```
 
@@ -159,10 +179,19 @@ docker compose up --build
   * **Liveness:** [`/healthz/live`](http://localhost:8080/healthz/live) only shows the process is up. `/healthz` is the same as `/healthz/ready`.
   * **Metrics:** each check's status is also on the metrics port as `fileholder_health_status`, with `fileholder_purge_overdue_groups` and `fileholder_purge_last_success_age_seconds`.
 * **Grafana**: [http://localhost:3001](http://localhost:3001) *(login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*. Prometheus metrics, and Tempo traces (see *Tracing*).
-* **Storage console (Silo)**: [http://localhost:9001](http://localhost:9001) *(login: `minioadmin` / `minioadmin`)*
+* **Storage console (Silo)**: [http://localhost:9001](http://localhost:9001) *(login: your `STORAGE_ROOT_USER` / `STORAGE_ROOT_PASSWORD`)*
 * **Scalar API docs**: only when the API runs in Development (see *Development*). The compose stack runs the API in Production.
 
-The default credentials (`minioadmin`, the Postgres password in `appsettings.json` and `docker-compose.yml`) are for local use only. Replacing them is part of [#82](https://github.com/Hiczownik/FileHolder/issues/82).
+### Passwords and Storage Users
+* **No password is committed.** `docker-compose.yml` reads them all from `.env`, and `appsettings.json` has none.
+* **The API has its own storage user,** `fileholder-api`, which `minio-init` creates on every start. `docker/silo/api-policy.json` limits it to the one bucket: its objects, multipart uploads, and the safety net's lifecycle rule. It can't change the bucket's access policy or touch other buckets. The storage admin (`STORAGE_ROOT_*`) is only used by `minio-init` and the storage console.
+* **Changing a password:**
+  * `GRAFANA_ADMIN_PASSWORD`, `STORAGE_ROOT_*` and `STORAGE_API_SECRET_KEY`: edit `.env` and run `docker compose up -d`. Storage keeps its data under new admin credentials, and `minio-init` updates the API user's secret.
+  * `POSTGRES_PASSWORD` only takes effect when the `postgres_data` volume is first created. To change it on an existing volume, change it in the database first, then in `.env`, then run `docker compose up -d`:
+    ```powershell
+    docker compose exec postgres psql -U fileholder_user -d fileholder_db -c "ALTER USER fileholder_user PASSWORD 'the-new-password'"
+    ```
+* **Upgrading a stack from before these passwords existed:** its Postgres volume still has the old password, `fileholder_password`. Either put `POSTGRES_PASSWORD=fileholder_password` in `.env` and change it as above, or start from empty volumes with `docker compose down -v` (deletes the local database and stored files).
 
 ### Networking & Rate Limits
 * **The browser talks to the API through the UI's nginx** (`http://localhost:3000/api/...`).
@@ -212,21 +241,22 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 
 | Setting | Compose value | Meaning |
 | :--- | :--- | :--- |
-| `ConnectionStrings__PostgresConnection` | `Host=postgres;…;Maximum Pool Size=50` | PostgreSQL connection string. Keep each API instance's pool size well under Postgres' `max_connections` (100), so other instances and tools can still connect |
+| `ConnectionStrings__PostgresConnection` | `Host=postgres;…;Password=<POSTGRES_PASSWORD>;Maximum Pool Size=50` | PostgreSQL connection string. Required: the API refuses to start without one. Keep each API instance's pool size well under Postgres' `max_connections` (100), so other instances and tools can still connect |
 | `Storage__ServiceUrl` | `http://minio:9000` | Storage address the **API** uses |
 | `Storage__PublicBaseUrl` | `http://localhost:9000` | Storage address in upload and download links, so it must be reachable from **browsers** |
-| `Storage__AccessKey`, `Storage__SecretKey` | `minioadmin` | Storage credentials (local defaults) |
+| `Storage__AccessKey`, `Storage__SecretKey` | `fileholder-api`, `STORAGE_API_SECRET_KEY` from `.env` | The API's own storage user (see *Passwords and Storage Users*). Required: the API refuses to start without them |
 | `Storage__BucketName` | `fileholder-bucket` | Bucket for all files |
 | `UploadLimits__MaxBundleSizeBytes` | 5 GB (default) | Largest bundle. Keep in sync with the UI |
 | `RateLimits__*PermitLimit` | see *Rate limits* (defaults) | Requests per client address per minute, per endpoint group. Raise only for single-address test stacks |
 | `Storage__LifecycleExpiryDays` | unset (10, calculated) | Days after which storage deletes any object. Only for a longer safety net; lower than the calculated value refuses to start |
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
+| `Cors__AllowedOrigins__<n>` | `http://localhost:3000` | Origins whose pages may call the API cross-origin, e.g. `https://fileholder.app`. None by default: through nginx the browser calls the API same-origin, which needs no CORS. Scheme, host and port only, with no trailing slash, or the API refuses to start |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4317` | Where traces go over OTLP. Unset (the default outside compose), nothing is sent; log lines inside a trace still end with `trace=… span=…` |
 | `Tracing__SampleRatio` | 1 (default) | Share of requests traced, 0–1. Lower it (e.g. 0.1) on a deployment that sends traces |
 | `Tracing__RecordClientAddress` | false (default) | Keep the caller's address on request spans, for debugging rate limits or the lockout on a real host |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
-| `GRAFANA_ADMIN_PASSWORD` (`.env`) | (yours) | Grafana admin password |
+| `.env`: `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `STORAGE_ROOT_USER`, `STORAGE_ROOT_PASSWORD`, `STORAGE_API_SECRET_KEY` | (yours) | The stack's passwords (see *Quick Start* and `.env.example`) |
 | UI: `STORAGE_PUBLIC_URL` | `http://localhost:9000` | The same address as `Storage__PublicBaseUrl`, without a path. The UI's Content-Security-Policy allows connections to it; without a valid one the container doesn't start |
 | UI: `VITE_API_BASE_URL` (build time) | `/api/v1/files` (`.env.production`) | API address the UI calls; `.env.development` uses `http://localhost:8080/api/v1/files` |
 
@@ -256,9 +286,15 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 * **API in Development** (Scalar docs, detailed errors): run the `http` launch profile from Rider, or `dotnet run --project src/FileHolder.Api`.
   * It listens on [http://localhost:5273](http://localhost:5273). The docs are at [http://localhost:5273/scalar/v1](http://localhost:5273/scalar/v1).
   * It uses `appsettings.json`, which expects Postgres on `localhost:5432` and storage on `localhost:9000`. The compose stack publishes both on loopback.
+  * **It needs the passwords,** which aren't in `appsettings.json`. Store them once as user secrets (kept in your user profile, outside the repository), with the values from your `.env`:
+    ```powershell
+    dotnet user-secrets --project src/FileHolder.Api set "ConnectionStrings:PostgresConnection" "Host=localhost;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=<POSTGRES_PASSWORD>"
+    dotnet user-secrets --project src/FileHolder.Api set "Storage:AccessKey" "fileholder-api"
+    dotnet user-secrets --project src/FileHolder.Api set "Storage:SecretKey" "<STORAGE_API_SECRET_KEY>"
+    ```
   * **It applies migrations at startup** to whatever database it connects to.
 * **UI dev server:** `cd src/fileholder-ui && npm install && npm run dev`.
-  * It wants port 3000, which the compose `ui` container already uses, so run `docker compose stop ui` first. Otherwise Vite picks another port, and the API's CORS policy only allows `http://localhost:3000` and `http://localhost:5173`.
+  * It wants port 3000, which the compose `ui` container already uses, so run `docker compose stop ui` first. Otherwise Vite picks another port, and the compose API only allows `http://localhost:3000` cross-origin (`Cors__AllowedOrigins__0`).
   * It calls the API at `http://localhost:8080` (the compose API).
 * **Checks before a PR:** `npm run lint` and `npm run build` in `src/fileholder-ui`, plus the tests below.
 

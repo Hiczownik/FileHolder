@@ -70,13 +70,21 @@ jobs:
               run: |
                cd src/fileholder-ui
                npx playwright install --with-deps chromium firefox webkit
+            - name: Create the Compose Secrets
+              run: |
+                # Compose refuses to start without these (.env.example). CI never logs in anywhere, so throwaway
+                # random ones are enough; .env is only on this runner.
+                {
+                  echo "GRAFANA_ADMIN_PASSWORD=$(openssl rand -hex 16)"
+                  echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+                  echo "STORAGE_ROOT_USER=ci-admin"
+                  echo "STORAGE_ROOT_PASSWORD=$(openssl rand -hex 16)"
+                  echo "STORAGE_API_SECRET_KEY=$(openssl rand -hex 16)"
+                } > .env
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
             - name: Build API & UI Images (Layer-Cached)
               uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
-              env:
-                # Never used for the build; compose just refuses to parse the file without it.
-                GRAFANA_ADMIN_PASSWORD: unused
               with:
                 source: .
                 files: docker-compose.yml
@@ -92,13 +100,12 @@ jobs:
                   ui.cache-to=type=gha,scope=ui,mode=max
             - name: Start Docker Compose Stack
               run: |
-                # Compose requires a Grafana password; CI never logs in, so a throwaway one is enough.
                 # Only api, ui and tempo (plus their dependencies) are started: the tests don't use Prometheus or Grafana,
                 # and tempo receives the API's traces for the trace check after the browser tests.
                 # docker-compose.ci.yml raises the per-address rate limits: every test request comes from this runner.
                 # Compose starts ui only once the API's health check (/healthz/ready) passes, and fails if it never does;
                 # then the readiness report says which check failed.
-                if ! GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build api ui tempo; then
+                if ! docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build api ui tempo; then
                   echo "::error::The stack didn't start. The API's readiness report:"
                   curl -sS http://localhost:8080/healthz/ready || true
                   echo
@@ -162,7 +169,8 @@ jobs:
               run: |
                 # The API puts the lifecycle rule in place in the background just after it starts, so allow it a moment.
                 mc() { docker exec fileholder-minio mc "$@"; }
-                mc alias set local http://localhost:9000 minioadmin minioadmin > /dev/null
+                # The storage container has the admin credentials in its environment.
+                docker exec fileholder-minio sh -c 'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"' > /dev/null
                 for attempt in $(seq 1 30); do
                   rules=$(mc ilm export local/fileholder-bucket 2>/dev/null || true)
                   echo "$rules" | grep -q '"ID":"fileholder-safety-net"' && echo "$rules" | grep -q '"Expiration":{"Days":' && break

@@ -1,6 +1,9 @@
 # Every image is pinned to an exact version and its digest, so a pull or a fresh CI runner always gets the same
 # image. Dependabot proposes updates, tag and digest together (.github/dependabot.yml). The integration tests read
 # the postgres and silo images from this file (ComposeImages.cs), so they always test against what runs here.
+#
+# No password is written here: compose reads them from a .env file next to this one, which git ignores, and refuses
+# to start without them. .env.example lists them, and the README (Quick Start) has a command that generates them.
 services:
   postgres:
     image: postgres:17.11-alpine3.24@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
@@ -8,7 +11,8 @@ services:
     environment:
       POSTGRES_DB: fileholder_db
       POSTGRES_USER: fileholder_user
-      POSTGRES_PASSWORD: fileholder_password
+      # Only applied when the postgres_data volume is first created; changing it later needs an ALTER USER (README).
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
     # Loopback only: the API reaches Postgres over the compose network; this is just for local tooling.
     ports:
       - "127.0.0.1:5432:5432"
@@ -28,8 +32,9 @@ services:
     container_name: fileholder-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      # The storage admin. Only minio-init and the storage console use it; the API has its own user (below).
+      MINIO_ROOT_USER: ${STORAGE_ROOT_USER:?Set STORAGE_ROOT_USER in .env (see .env.example)}
+      MINIO_ROOT_PASSWORD: ${STORAGE_ROOT_PASSWORD:?Set STORAGE_ROOT_PASSWORD in .env (see .env.example)}
       MINIO_API_CORS_ALLOW_ORIGINS: "*"
       # Storage aborts multipart uploads left incomplete this long (default 24h). It must stay above the longest an
       # upload may legitimately wait for confirm, plus the purge's grace and interval: about 25.5h (UploadTimings,
@@ -54,13 +59,25 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${STORAGE_ROOT_USER:?Set STORAGE_ROOT_USER in .env (see .env.example)}
+      MINIO_ROOT_PASSWORD: ${STORAGE_ROOT_PASSWORD:?Set STORAGE_ROOT_PASSWORD in .env (see .env.example)}
+      STORAGE_API_SECRET_KEY: ${STORAGE_API_SECRET_KEY:?Set STORAGE_API_SECRET_KEY in .env (see .env.example)}
+    volumes:
+      - ./docker/silo/api-policy.json:/policies/api-policy.json:ro
     # The bucket must stay private: all access goes through presigned URLs. Setting the policy to
     # "none" explicitly also revokes public access on existing minio_data volumes.
+    # The API gets its own user, limited by docker/silo/api-policy.json to what it does with this one bucket:
+    # objects, multipart uploads and the safety net's lifecycle rule. Every step is safe to repeat, so a changed
+    # secret or policy is applied on the next start. The integration tests use the same policy (SiloFixture).
     entrypoint: >
       /bin/sh -c "
-      mc alias set myminio http://minio:9000 minioadmin minioadmin &&
+      mc alias set myminio http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" &&
       mc mb myminio/fileholder-bucket --ignore-existing &&
-      mc anonymous set none myminio/fileholder-bucket
+      mc anonymous set none myminio/fileholder-bucket &&
+      mc admin policy create myminio fileholder-api /policies/api-policy.json &&
+      mc admin user add myminio fileholder-api \"$$STORAGE_API_SECRET_KEY\" &&
+      mc admin policy attach myminio fileholder-api --user fileholder-api
       "
 
   api:
@@ -78,15 +95,19 @@ services:
       # Npgsql's default pool of 100 equals Postgres' max_connections, so a burst of requests (load scenario 4) left
       # the API holding every connection for the 5 minutes idle ones are kept: migrations of a second API
       # instance, psql and other tools were refused. 50 leaves room for a second instance during a rolling deploy.
-      ConnectionStrings__PostgresConnection: "Host=postgres;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=fileholder_password;Maximum Pool Size=50"
+      ConnectionStrings__PostgresConnection: "Host=postgres;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)};Maximum Pool Size=50"
       Storage__ServiceUrl: "http://minio:9000"
       # Keep in step with the ui container's STORAGE_PUBLIC_URL below.
       Storage__PublicBaseUrl: "http://localhost:9000"
-      Storage__AccessKey: "minioadmin"
-      Storage__SecretKey: "minioadmin"
+      # The API's own storage user, created by minio-init (not the storage admin).
+      Storage__AccessKey: "fileholder-api"
+      Storage__SecretKey: ${STORAGE_API_SECRET_KEY:?Set STORAGE_API_SECRET_KEY in .env (see .env.example)}
       Storage__BucketName: "fileholder-bucket"
       # X-Forwarded-For is honoured only from the ui container's nginx, pinned to this address below.
       ForwardedHeaders__KnownProxies__0: "172.30.250.10"
+      # Browsers normally call the API through nginx, same-origin, which needs no CORS. This allows the Vite dev
+      # server (npm run dev, port 3000 once the ui container is stopped) to call this API on port 8080.
+      Cors__AllowedOrigins__0: "http://localhost:3000"
       # Traces go to Tempo over the compose network. Not a dependency: if Tempo is down the API still serves, and
       # only traces are lost. Unset it to send none (see README, Tracing).
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
