@@ -14,13 +14,23 @@ public static partial class BundleRules
 {
     public const int MaxFilesPerBundle = 50;
 
+    private static readonly string[] SizeUnits = ["Bytes", "KB", "MB", "GB"];
+
     /// <summary>
-    /// "5 GB" for 5 GiB, matching how the UI formats sizes.
+    /// "5 GB" for 5 GiB and "250 MB" for 250 MiB, in binary units with up to two decimals, as the UI's formatSize.
     /// </summary>
-    public static string FormatSize(long bytes) =>
-        bytes % (1024L * 1024 * 1024) == 0
-            ? string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024L * 1024 * 1024)} GB")
-            : string.Create(CultureInfo.InvariantCulture, $"{bytes / (1024.0 * 1024 * 1024):0.##} GB");
+    public static string FormatSize(long bytes)
+    {
+        double value = bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < SizeUnits.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return string.Create(CultureInfo.InvariantCulture, $"{value:0.##} {SizeUnits[unit]}");
+    }
 
     /// <summary>
     /// Total size of the bundle's files, against the configured limit. Upload URLs are signed for these sizes,
@@ -71,11 +81,20 @@ public static partial class BundleRules
 
     // Required: the purge only removes a bundle's storage once it expires or runs out of downloads,
     // so a bundle with neither limit would keep its files forever.
-    public static IRuleBuilderOptions<T, int?> MustBeValidExpiry<T>(this IRuleBuilder<T, int?> rule) =>
+    public static IRuleBuilderOptions<T, int?> MustBeValidExpiry<T>(this IRuleBuilder<T, int?> rule, UploadLimitsOptions limits) =>
         rule.NotNull().WithMessage("Expiration time is required.")
-            .InclusiveBetween(BundleLimits.MinExpiryHours, BundleLimits.MaxExpiryHours)
+            .InclusiveBetween(BundleLimits.MinExpiryHours, limits.MaxExpiryHours)
             .WithMessage(string.Create(CultureInfo.InvariantCulture,
-                $"Expiration time must be between {BundleLimits.MinExpiryHours} hour and {BundleLimits.MaxExpiryHours} hours ({BundleLimits.MaxExpiry.TotalDays:0.#} days)."));
+                $"Expiration time must be between {BundleLimits.MinExpiryHours} hour and {DescribeHours(limits.MaxExpiryHours)}."));
+
+    /// <summary>"168 hours (7 days)", "24 hours (1 day)", "12 hours", "1 hour".</summary>
+    public static string DescribeHours(int hours)
+    {
+        var text = string.Create(CultureInfo.InvariantCulture, $"{hours} hour{(hours == 1 ? "" : "s")}");
+        return hours >= 24
+            ? string.Create(CultureInfo.InvariantCulture, $"{text} ({hours / 24.0:0.#} day{(hours == 24 ? "" : "s")})")
+            : text;
+    }
 
     public static IRuleBuilderOptions<T, int?> MustBeValidMaxDownloads<T>(this IRuleBuilder<T, int?> rule) =>
         rule.InclusiveBetween(1, 1000)

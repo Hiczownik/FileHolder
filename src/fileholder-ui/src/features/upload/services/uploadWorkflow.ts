@@ -1,6 +1,7 @@
 import type { PresignedItem } from "../../download/types";
 import { uploadApi } from "../api/uploadApi";
-import { STANDARD_MAX_TOTAL_BYTES, type UploadFormValues } from "../types";
+import type { UploadFormValues } from "../types";
+import { loadUploadLimits } from "./uploadLimits";
 import {
     assertPartsAlignWithChunks,
     encryptCiphertextRange,
@@ -80,11 +81,12 @@ async function uploadAllOrStop(
     throw failures[0];
 }
 
-/** Fails before anything is uploaded, with the same limit the server enforces at presign. */
-function assertWithinBundleLimit(files: readonly File[]): void {
+/** Fails before anything is uploaded, with the same limit the server enforces at presign (as it reported it). */
+async function assertWithinBundleLimit(files: readonly File[]): Promise<void> {
+    const { maxBundleSizeBytes } = await loadUploadLimits();
     const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
-    if (totalBytes > STANDARD_MAX_TOTAL_BYTES) {
-        throw new Error(`The bundle cannot be larger than ${formatSize(STANDARD_MAX_TOTAL_BYTES)} in total; these files add up to ${formatSize(totalBytes)}.`);
+    if (totalBytes > maxBundleSizeBytes) {
+        throw new Error(`The bundle cannot be larger than ${formatSize(maxBundleSizeBytes)} in total; these files add up to ${formatSize(totalBytes)}.`);
     }
 }
 
@@ -94,7 +96,7 @@ export async function executeStandardUploadWorkflow(
     onProgress: (percent: number) => void,
     signal?: AbortSignal 
 ): Promise<string> {
-    assertWithinBundleLimit(files);
+    await assertWithinBundleLimit(files);
 
     const presign = await uploadApi.getPresignedUrl({
         title: formValues.title || undefined,
@@ -189,7 +191,7 @@ export async function executeEncryptedUploadWorkflow(
         throw new Error(`Forbidden file extension detected. Executable files and scripts are not allowed: ${blocked.map((file) => file.name).join(', ')}.`);
     }
 
-    assertWithinBundleLimit(files);
+    await assertWithinBundleLimit(files);
 
     // Nothing is encrypted yet: each file is encrypted part by part as it uploads, so memory doesn't grow
     // with file size. The encrypted sizes are known up front, so the upload URLs can be signed for them.

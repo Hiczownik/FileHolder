@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { stubUploadLimits } from '../../../../test/uploadLimits';
 import { executeStandardUploadWorkflow } from '../uploadWorkflow';
 import { uploadApi } from '../../api/uploadApi';
 import type { CreatePresignedUrlRequest, PresignedItem } from '../../../download/types';
@@ -49,6 +50,7 @@ const waitOrCancel = (ms: number, signal?: AbortSignal): Promise<void> =>
 describe('a bundle upload that fails or is cancelled part way', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        stubUploadLimits();
         mockPresign();
         vi.spyOn(uploadApi, 'completeMultipartUpload').mockResolvedValue(true);
         vi.spyOn(uploadApi, 'abortMultipartUpload').mockResolvedValue(true);

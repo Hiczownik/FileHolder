@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { stubUploadLimits } from '../../../../test/uploadLimits';
 import { executeEncryptedUploadWorkflow } from '../uploadWorkflow';
 import { uploadApi } from '../../api/uploadApi';
 import type { PresignedItem } from '../../../download/types';
@@ -15,6 +16,7 @@ const FORM_VALUES = { title: 'Many Files', expireInHours: EXPIRE_IN_HOURS, maxDo
 describe('encrypted upload of many files', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        stubUploadLimits();
     });
 
     it('encrypts and sends only a few files at a time, however many the bundle has', async () => {

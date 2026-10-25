@@ -1,8 +1,9 @@
 namespace FileHolder.Core.Configuration;
 
 /// <summary>
-/// How long a bundle may be set to live. The validators enforce it, and the storage safety net is sized from it
-/// (<see cref="StorageSafetyNet"/>), so raising it raises the storage lifecycle rule too.
+/// The longest and shortest a bundle can ever be set to live. A deployment can lower the maximum with
+/// UploadLimits:MaxExpiryHours (<see cref="UploadLimitsOptions.MaxExpiryHours"/>), which the validators enforce and
+/// the storage safety net is sized from (<see cref="StorageSafetyNet"/>).
 /// </summary>
 public static class BundleLimits
 {

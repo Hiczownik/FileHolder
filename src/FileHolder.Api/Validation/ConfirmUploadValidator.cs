@@ -78,7 +78,7 @@ public class ConfirmUploadValidator : AbstractValidator<ConfirmUploadRequestDto>
             RuleFor(x => x.EncryptedManifest).Empty().WithMessage("Encrypted manifest is only allowed for encrypted uploads.");
         });
 
-        RuleFor(x => x.ExpireInHours).MustBeValidExpiry();
+        RuleFor(x => x.ExpireInHours).MustBeValidExpiry(limits);
         RuleFor(x => x.MaxDownloads).MustBeValidMaxDownloads();
         When(x => x.IsEncrypted, () => RuleFor(x => x.Password).MustBeAuthKey())
             .Otherwise(() => RuleFor(x => x.Password).MustBeValidPassword());

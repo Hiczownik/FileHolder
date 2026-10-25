@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { UploadFormValues, UploadState } from "../types";
 import { useForm, useWatch } from "react-hook-form";
 import { KeyRound, MapPinOff, ShieldCheck } from "lucide-react";
@@ -9,13 +9,15 @@ import { StatusAlert } from "../../../shared/components/StatusAlert";
 import { Switch } from "../../../shared/components/Switch";
 import { mergeSelectedFiles } from "../services/selectedFiles";
 import { generateReadablePasskey, MIN_PASSKEY_LENGTH } from "../services/passkey";
+import { DEFAULT_UPLOAD_LIMITS, defaultExpiry, describeHours, expiryChoices, type UploadLimits } from "../services/uploadLimits";
 
 interface Props {
     uploadState: UploadState;
     onUpload: (formValues: UploadFormValues, files: File[]) => void;
+    /** The deployment's limits (useUploadLimits): the expiries offered and the drop area's hint. */
+    limits?: UploadLimits;
 }
 
-const DEFAULT_EXPIRE_IN_HOURS = 24;
 const DEFAULT_MAX_DOWNLOADS = 10;
 
 const FIELD_LABEL = "block text-sm font-medium mb-1.5";
@@ -23,16 +25,16 @@ const OPTIONAL = "font-normal text-muted";
 const FIELD = "w-full h-11 px-3 rounded-[10px] border border-line-strong bg-surface text-fg outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40";
 const HINT = "text-[13px] text-muted";
 
-export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
+export const UploadForm: React.FC<Props> = ({ uploadState, onUpload, limits = DEFAULT_UPLOAD_LIMITS }) => {
     const [files, setFiles] = useState<File[]>([]);
     // Shown until the next pick, so a file left out is never dropped without a word.
     const [skippedNames, setSkippedNames] = useState<string[]>([]);
     const isUploading = uploadState.status === "uploading";
 
-    const { register, handleSubmit, control, setValue } = useForm<UploadFormValues>({
+    const { register, handleSubmit, control, setValue, getValues } = useForm<UploadFormValues>({
         defaultValues: {
             title: '',
-            expireInHours: DEFAULT_EXPIRE_IN_HOURS,
+            expireInHours: defaultExpiry(limits),
             maxDownloads: DEFAULT_MAX_DOWNLOADS,
             password: '',
             isEncrypted: false,
@@ -41,6 +43,14 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
             stripImageMetadata: true,
         },
     });
+
+    // The server's limits can arrive after the form is shown. A choice they no longer allow moves down to the longest
+    // one they do, rather than staying selected only to be refused at upload.
+    useEffect(() => {
+        if (Number(getValues('expireInHours')) > limits.maxExpiryHours) {
+            setValue('expireInHours', defaultExpiry(limits));
+        }
+    }, [limits, getValues, setValue]);
 
     const isEncrypted = useWatch({ control, name: 'isEncrypted' }) ?? false;
     const requirePasskey = useWatch({ control, name: 'requirePasskey' }) ?? false;
@@ -85,6 +95,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                     onFilesSelect={handleFilesSelect}
                     onRemoveFile={handleRemoveFile}
                     stripMetadata={stripImageMetadata}
+                    limits={limits}
                 />
 
                 {skippedNames.length > 0 && (
@@ -130,11 +141,9 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload }) => {
                 <div>
                     <label htmlFor="expire-in-hours" className={FIELD_LABEL}>Expires after</label>
                     <select id="expire-in-hours" {...register('expireInHours')} className={`${FIELD} px-2.5`}>
-                        <option value={1}>1 hour</option>
-                        <option value={12}>12 hours</option>
-                        <option value={24}>24 hours</option>
-                        <option value={72}>3 days</option>
-                        <option value={168}>7 days</option>
+                        {expiryChoices(limits).map((hours) => (
+                            <option key={hours} value={hours}>{describeHours(hours)}</option>
+                        ))}
                     </select>
                 </div>
                 <div>

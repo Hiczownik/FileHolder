@@ -68,7 +68,11 @@ public class TracingFactory : CustomWebApplicationFactory
 /// which made request spans go missing now and then. Classes in this collection run on their own, after the rest.
 /// </summary>
 [CollectionDefinition(Name, DisableParallelization = true)]
-public sealed class TracingCollection
+public sealed class TracingCollectionDefinition
 {
     public const string Name = "Tracing";
+
+    private TracingCollectionDefinition()
+    {
+    }
 }

@@ -162,7 +162,9 @@ public class StorageLifecycleOptionsTests
     private static StorageOptions Resolve(Dictionary<string, string?> settings)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(Credentials).AddInMemoryCollection(settings).Build();
-        var services = new ServiceCollection().AddFileHolderStorageOptions(configuration);
+        var services = new ServiceCollection()
+            .Configure<UploadLimitsOptions>(configuration.GetSection(UploadLimitsOptions.SectionName))
+            .AddFileHolderStorageOptions(configuration);
         return services.BuildServiceProvider().GetRequiredService<IOptions<StorageOptions>>().Value;
     }
 
@@ -178,6 +180,28 @@ public class StorageLifecycleOptionsTests
         var longer = (StorageSafetyNet.LifecycleExpiryDays + 20).ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         Resolve(new() { ["Storage:LifecycleExpiryDays"] = longer }).EffectiveLifecycleExpiryDays.Should().Be(StorageSafetyNet.LifecycleExpiryDays + 20);
+    }
+
+    [Fact]
+    public void AShorterMaximumBundleLifetime_ShortensTheCalculatedExpiry()
+    {
+        Resolve(new() { ["UploadLimits:MaxExpiryHours"] = "24" }).EffectiveLifecycleExpiryDays.Should().Be(4);
+    }
+
+    [Fact]
+    public void WithAShorterMaximumBundleLifetime_ASettingAboveTheNewCalculation_IsAccepted()
+    {
+        // 5 days would be refused under the default 7-day maximum (10 days), but bundles of at most 24 h need only 4.
+        Resolve(new() { ["UploadLimits:MaxExpiryHours"] = "24", ["Storage:LifecycleExpiryDays"] = "5" })
+            .EffectiveLifecycleExpiryDays.Should().Be(5);
+    }
+
+    [Fact]
+    public void WithAShorterMaximumBundleLifetime_ASettingBelowTheNewCalculation_IsRefused()
+    {
+        var resolve = () => Resolve(new() { ["UploadLimits:MaxExpiryHours"] = "24", ["Storage:LifecycleExpiryDays"] = "3" });
+
+        resolve.Should().Throw<OptionsValidationException>().WithMessage("*Storage:LifecycleExpiryDays is below 4*still live*");
     }
 
     [Fact]

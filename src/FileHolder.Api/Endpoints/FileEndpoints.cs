@@ -1,11 +1,14 @@
 ﻿using FileHolder.Api.RateLimiting;
 using FileHolder.Api.Validation;
+using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Interfaces;
 using FileHolder.Core.Security;
+using FileHolder.Infrastructure.Services;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.Extensions.Options;
 
 namespace FileHolder.Api.Endpoints;
 
@@ -15,6 +18,11 @@ public static class FileEndpoints
     {
         var group = app.MapGroup("/api/v1/files")
             .WithTags("Files");
+
+        // A literal segment, so it wins over /{shareToken} (and share tokens are 8 characters, never "limits").
+        group.MapGet("/limits", GetUploadLimits)
+            .RequireRateLimiting(RateLimitPolicies.Metadata)
+            .WithName("GetUploadLimits");
 
         group.MapPost("/presign", GetPresignedUploadUrl)
             .AddEndpointFilter<ValidationFilter<CreatePresignedUrlRequestDto>>()
@@ -69,10 +77,32 @@ public static class FileEndpoints
             .WithName("StreamBundleZipForSession");
     }
 
-    public static async Task<Ok<PresignedUrlResponseDto>> GetPresignedUploadUrl(
-        CreatePresignedUrlRequestDto dto,
-        IFileGroupService fileGroupService)
+    public static Ok<UploadLimitsResponseDto> GetUploadLimits(IOptions<UploadLimitsOptions> uploadLimits)
     {
+        var limits = uploadLimits.Value;
+        return TypedResults.Ok(new UploadLimitsResponseDto(
+            limits.MaxBundleSizeBytes, BundleRules.MaxFilesPerBundle, BundleLimits.MinExpiryHours, limits.MaxExpiryHours));
+    }
+
+    public static async Task<Results<Ok<PresignedUrlResponseDto>, ProblemHttpResult>> GetPresignedUploadUrl(
+        CreatePresignedUrlRequestDto dto,
+        IFileGroupService fileGroupService,
+        StorageQuota storageQuota,
+        HttpContext context,
+        ILogger<StorageQuota> logger)
+    {
+        // Validation has already capped each bundle at the size limit, so this sum can't overflow.
+        if (!await storageQuota.HasRoomForAsync(dto.Files.Sum(f => f.SizeBytes), context.RequestAborted))
+        {
+            logger.LogWarning("Refused a presign: the global storage quota is full.");
+            // Space comes back as the purge removes expired bundles, so try again after its next run.
+            context.Response.Headers.RetryAfter = ((int)PurgeTimings.CheckInterval.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return TypedResults.Problem(
+                detail: "FileHolder's storage is full right now, so new uploads are paused. Space frees up as shared files expire; please try again later.",
+                statusCode: StatusCodes.Status503ServiceUnavailable,
+                title: "Storage Full");
+        }
+
         var response = await fileGroupService.CreatePresignedUploadUrlAsync(dto);
         return TypedResults.Ok(response);
     }

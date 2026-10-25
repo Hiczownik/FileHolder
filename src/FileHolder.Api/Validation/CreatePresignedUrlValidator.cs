@@ -30,7 +30,7 @@ public class CreatePresignedUrlValidator : AbstractValidator<CreatePresignedUrlR
             file.RuleFor(f => f.SizeBytes).MustBeValidFileSize();
         });
 
-        RuleFor(x => x.ExpireInHours).MustBeValidExpiry();
+        RuleFor(x => x.ExpireInHours).MustBeValidExpiry(limits);
         RuleFor(x => x.MaxDownloads).MustBeValidMaxDownloads();
         When(x => x.IsEncrypted, () => RuleFor(x => x.Password).MustBeAuthKey())
             .Otherwise(() => RuleFor(x => x.Password).MustBeValidPassword());
