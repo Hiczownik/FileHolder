@@ -134,6 +134,9 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      # Kept across restarts, and across the recreation that switching to and from docker-compose.load.yml causes,
+      # so a load run's metrics can still be looked at afterwards.
+      - prometheus_data:/prometheus
     depends_on:
       - api
 
@@ -173,6 +176,9 @@ services:
       # Through nginx, as browsers reach the API, so the API sees the k6 container's address as the client.
       FILEHOLDER_URL: "http://ui"
       PROMETHEUS_URL: "http://prometheus:9090"
+      # For `-o experimental-prometheus-rw` (run.ps1): k6's metrics next to the API's own, in the same Prometheus.
+      K6_PROMETHEUS_RW_SERVER_URL: "http://prometheus:9090/api/v1/write"
+      K6_PROMETHEUS_RW_TREND_STATS: "p(50),p(95),p(99),max"
     volumes:
       - ./tests/load:/scripts:ro
       - ./tests/load/results:/results
@@ -182,6 +188,7 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  prometheus_data:
   tempo_data:
 
 networks:

@@ -6,3 +6,11 @@ services:
       # itself, over the compose network. While this file is applied, uploads from a browser on this machine fail;
       # start the stack without it again afterwards (`docker compose up -d api`).
       Storage__PublicBaseUrl: "http://minio:9000"
+
+  prometheus:
+    # The image's own arguments, plus a receiver for k6's metrics (`-o experimental-prometheus-rw`). Only while load
+    # testing: otherwise anything on the compose network could write metrics.
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-remote-write-receiver"

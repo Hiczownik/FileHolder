@@ -30,30 +30,41 @@ public class StoragePurgeService(
     private readonly ILogger<StoragePurgeService> _logger = logger;
 
 
+    // Rows taken per batch. Each queue takes batches while they come back full and get something done, for up to
+    // PurgeTimings.MaxQueueTimePerRun. Rows whose delete failed stay due and are tried again in the next batch, so
+    // one that keeps failing can't hold the rest back.
+    private const int MultipartSessionBatch = 50;
+    private const int AbandonedUploadBatch = 500;
+    private const int GroupBatch = 100;
+
+    /// <summary>
+    /// Runs <paramref name="batch"/> until a batch comes back short or gets nothing done, or the queue's time is up.
+    /// Real time, not the injected clock: the clock is the purge's notion of "now", which stays fixed for the run.
+    /// </summary>
+    private static async Task<int> DrainAsync(Func<Task<(int Taken, int Done)>> batch, int batchSize)
+    {
+        var elapsed = Stopwatch.StartNew();
+        int done = 0;
+        (int Taken, int Done) result;
+        do
+        {
+            result = await batch();
+            done += result.Done;
+        } while (result.Taken == batchSize && result.Done > 0 && elapsed.Elapsed < PurgeTimings.MaxQueueTimePerRun);
+
+        return done;
+    }
+
     public async Task<int> PurgeExpiredFilesAsync(CancellationToken ct = default)
     {
         var now = _dateTimeProvider.UtcNow;
 
-        await FileHolderTracing.StepAsync("purge.abort_expired_uploads", async activity =>
+        // One span per queue, over all its batches; the counts on it add up across them.
+        await FileHolderTracing.StepAsync("purge.abort_expired_uploads", activity => DrainAsync(async () =>
         {
-            var expiredSessions = await _dbContext.MultipartUploadSessions
-                .Where(s => !s.IsCompleted && !s.IsAborted && s.ExpiresAt <= now)
-                .Take(50)
-                .ToListAsync(ct);
-            activity?.SetTag("fileholder.purge.aborted_upload_count", expiredSessions.Count);
-
-            foreach (var session in expiredSessions)
-            {
-                await _storageProvider.AbortMultipartUploadAsync(session.StorageKey, session.UploadId, ct);
-                session.IsAborted = true;
-                session.FinishedAt = now;
-            }
-
-            if (expiredSessions.Count > 0)
-            {
-                await _dbContext.SaveChangesAsync(ct);
-            }
-        });
+            int aborted = await AbortExpiredMultipartUploadsAsync(activity, now, ct);
+            return (aborted, aborted);
+        }, MultipartSessionBatch));
 
         // Finished sessions are never read again, but they hold the file's name.
         await _dbContext.MultipartUploadSessions
@@ -64,9 +75,11 @@ public class StoragePurgeService(
             .Where(s => s.ExpiresAt <= now - DownloadTimings.ExpiredSessionRetention)
             .ExecuteDeleteAsync(ct);
 
-        await FileHolderTracing.StepAsync("purge.abandoned_uploads", activity => PurgeAbandonedUploadsAsync(activity, now, ct));
+        await FileHolderTracing.StepAsync("purge.abandoned_uploads",
+            activity => DrainAsync(() => PurgeAbandonedUploadsAsync(activity, now, ct), AbandonedUploadBatch));
 
-        int purgedCount = await FileHolderTracing.StepAsync("purge.expired_groups", activity => PurgeExpiredGroupsAsync(activity, now, ct));
+        int purgedCount = await FileHolderTracing.StepAsync("purge.expired_groups",
+            activity => DrainAsync(() => PurgeExpiredGroupsAsync(activity, now, ct), GroupBatch));
 
         // The tombstone's last job is answering "expired" for a while; deleting it cascades to its download sessions.
         int deletedTombstones = await FileHolderTracing.StepAsync("purge.tombstones", async activity =>
@@ -86,13 +99,45 @@ public class StoragePurgeService(
         return purgedCount;
     }
 
-    private async Task<int> PurgeExpiredGroupsAsync(Activity? activity, DateTime now, CancellationToken ct)
+    /// <summary>Adds to a count tag that earlier batches of the same queue started.</summary>
+    private static void AddToTag(Activity? activity, string name, int count) =>
+        activity?.SetTag(name, (activity.GetTagItem(name) as int? ?? 0) + count);
+
+    /// <summary>Aborts one batch of multipart uploads that expired unfinished. Returns how many it aborted.</summary>
+    private async Task<int> AbortExpiredMultipartUploadsAsync(Activity? activity, DateTime now, CancellationToken ct)
+    {
+        var expiredSessions = await _dbContext.MultipartUploadSessions
+            .Where(s => !s.IsCompleted && !s.IsAborted && s.ExpiresAt <= now)
+            .Take(MultipartSessionBatch)
+            .ToListAsync(ct);
+        AddToTag(activity, "fileholder.purge.aborted_upload_count", expiredSessions.Count);
+
+        foreach (var session in expiredSessions)
+        {
+            await _storageProvider.AbortMultipartUploadAsync(session.StorageKey, session.UploadId, ct);
+            session.IsAborted = true;
+            session.FinishedAt = now;
+        }
+
+        if (expiredSessions.Count > 0)
+        {
+            await _dbContext.SaveChangesAsync(ct);
+        }
+
+        return expiredSessions.Count;
+    }
+
+    /// <summary>
+    /// Purges one batch of bundles due for it. Returns how many it took and how many it purged; a bundle whose files
+    /// couldn't all be deleted isn't purged, and stays due.
+    /// </summary>
+    private async Task<(int Taken, int Done)> PurgeExpiredGroupsAsync(Activity? activity, DateTime now, CancellationToken ct)
     {
         var expiredGroups = await _dbContext.FileGroups
             .Include(g => g.Files)
             .DueForPurge(_dbContext, now)
             .OrderBy(g => g.CreatedAt)
-            .Take(100)
+            .Take(GroupBatch)
             .ToListAsync(ct);
 
         var allKeysToDelete = expiredGroups
@@ -101,9 +146,9 @@ public class StoragePurgeService(
             .ToList();
 
         var failedKeys = await _storageProvider.DeleteObjectsAsync(allKeysToDelete, ct);
-        activity?.SetTag("fileholder.purge.found_group_count", expiredGroups.Count)
-            .SetTag("fileholder.purge.object_count", allKeysToDelete.Count)
-            .SetTag("fileholder.purge.failed_object_count", failedKeys.Count);
+        AddToTag(activity, "fileholder.purge.found_group_count", expiredGroups.Count);
+        AddToTag(activity, "fileholder.purge.object_count", allKeysToDelete.Count);
+        AddToTag(activity, "fileholder.purge.failed_object_count", failedKeys.Count);
 
         int purgedCount = 0;
         foreach (var group in expiredGroups)
@@ -119,7 +164,7 @@ public class StoragePurgeService(
             purgedCount++;
         }
 
-        activity?.SetTag("fileholder.purge.purged_group_count", purgedCount);
+        AddToTag(activity, "fileholder.purge.purged_group_count", purgedCount);
 
         // Recording the purge and scrubbing the group share a transaction, so a group is never left purged
         // with its details still there. Runs even with nothing new to purge: the scrub covers every purged group.
@@ -138,18 +183,18 @@ public class StoragePurgeService(
 
         if (expiredGroups.Count == 0)
         {
-            return 0;
+            return (0, 0);
         }
 
         if (failedKeys.Count > 0)
         {
-            _logger.LogWarning("Failed to delete {FailedCount} storage objects across {GroupCount} groups; they will be retried on the next run.",
+            _logger.LogWarning("Failed to delete {FailedCount} storage objects across {GroupCount} groups; they will be retried.",
                 failedKeys.Count, expiredGroups.Count - purgedCount);
         }
 
         _logger.LogInformation("Purged {GroupCount} expired groups and deleted {KeyCount} storage objects.",
             purgedCount, allKeysToDelete.Count - failedKeys.Count);
-        return purgedCount;
+        return (expiredGroups.Count, purgedCount);
     }
 
     /// <summary>
@@ -186,10 +231,11 @@ public class StoragePurgeService(
     }
 
     /// <summary>
-    /// Deletes objects that were presigned but never confirmed into a bundle. Confirm removes a file's
-    /// pending row, so any row left past its expiry (plus a grace period) belongs to nobody.
+    /// Deletes one batch of objects that were presigned but never confirmed into a bundle. Confirm removes a file's
+    /// pending row, so any row left past its expiry (plus a grace period) belongs to nobody. Returns how many rows
+    /// it took and how many it removed; those whose object couldn't be deleted stay.
     /// </summary>
-    private async Task PurgeAbandonedUploadsAsync(Activity? activity, DateTime now, CancellationToken ct)
+    private async Task<(int Taken, int Done)> PurgeAbandonedUploadsAsync(Activity? activity, DateTime now, CancellationToken ct)
     {
         var cutoff = now - UploadTimings.PendingUploadPurgeGrace;
 
@@ -197,13 +243,13 @@ public class StoragePurgeService(
             .AsNoTracking()
             .Where(p => p.ExpiresAt <= cutoff)
             .OrderBy(p => p.ExpiresAt)
-            .Take(500)
+            .Take(AbandonedUploadBatch)
             .ToListAsync(ct);
-        activity?.SetTag("fileholder.purge.found_upload_count", abandoned.Count);
+        AddToTag(activity, "fileholder.purge.found_upload_count", abandoned.Count);
 
         if (abandoned.Count == 0)
         {
-            return;
+            return (0, 0);
         }
 
         var failedKeys = await _storageProvider.DeleteObjectsAsync(abandoned.Select(p => p.StorageKey), ct);
@@ -213,7 +259,7 @@ public class StoragePurgeService(
             .Where(p => !failedKeys.Contains(p.StorageKey))
             .Select(p => p.Id)
             .ToList();
-        activity?.SetTag("fileholder.purge.failed_object_count", failedKeys.Count);
+        AddToTag(activity, "fileholder.purge.failed_object_count", failedKeys.Count);
 
         await _dbContext.PendingUploads
             .Where(p => removedIds.Contains(p.Id))
@@ -221,10 +267,11 @@ public class StoragePurgeService(
 
         if (failedKeys.Count > 0)
         {
-            _logger.LogWarning("Failed to delete {FailedCount} abandoned upload objects; they will be retried on the next run.",
+            _logger.LogWarning("Failed to delete {FailedCount} abandoned upload objects; they will be retried.",
                 failedKeys.Count);
         }
 
         _logger.LogInformation("Deleted {Count} abandoned uploads that were never confirmed.", removedIds.Count);
+        return (abandoned.Count, removedIds.Count);
     }
 }

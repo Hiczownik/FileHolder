@@ -231,6 +231,59 @@ public class StoragePurgeTests(CustomWebApplicationFactory factory)
         }
     }
 
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_DeletesABacklogOfAbandonedUploadsLargerThanABatch_InOneRun()
+    {
+        // 500 a batch: one batch a run fell behind as soon as more than 1,000 files an hour were uploaded.
+        var id = Guid.NewGuid().ToString("N");
+        var pastGrace = DateTime.UtcNow - UploadTimings.PendingUploadPurgeGrace - TimeSpan.FromMinutes(5);
+
+        using (var seedScope = factory.Services.CreateScope())
+        {
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.PendingUploads.AddRange(Enumerable.Range(0, 1200)
+                .Select(i => NewPendingUpload($"uploads/backlog_{id}_{i}.pdf", pastGrace)));
+            await dbContext.SaveChangesAsync();
+        }
+
+        await RunPurgeAsync();
+
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await verifyContext.PendingUploads.CountAsync(p => p.StorageKey.Contains(id))).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PurgeExpiredFilesAsync_PurgesABacklogOfBundlesLargerThanABatch_InOneRun()
+    {
+        var id = Guid.NewGuid().ToString("N")[..8];
+        var expired = DateTime.UtcNow - StoragePurgeService.DeletionGracePeriod - TimeSpan.FromMinutes(5);
+
+        var groups = Enumerable.Range(0, 250).Select(i => new FileGroup
+        {
+            ShareToken = $"bk{id}{i:D3}",
+            ExpiresAt = expired,
+            Files = new List<SharedFile>
+            {
+                new() { OriginalFileName = "file.pdf", StorageKey = $"files/backlog_{id}_{i}", ContentType = "application/pdf", SizeBytes = 1024 }
+            }
+        }).ToList();
+
+        using (var seedScope = factory.Services.CreateScope())
+        {
+            var dbContext = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            dbContext.FileGroups.AddRange(groups);
+            await dbContext.SaveChangesAsync();
+        }
+
+        await RunPurgeAsync();
+
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var ids = groups.Select(g => g.Id).ToList();
+        (await verifyContext.FileGroups.CountAsync(g => ids.Contains(g.Id) && g.StoragePurgedAt == null)).Should().Be(0);
+    }
+
     private static PendingUpload NewPendingUpload(string storageKey, DateTime expiresAt) => new()
     {
         UploadToken = Guid.NewGuid().ToString("N"),
