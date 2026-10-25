@@ -31,12 +31,18 @@ public static class StorageSafetyNet
     /// <summary>The fewest whole days that cover an unconfirmed upload's lifetime.</summary>
     public static int AbandonedUploadDaysFor(TimeSpan age) => (int)Math.Ceiling(age.TotalDays);
 
-    /// <summary>≈ 192 h 40 min with today's timings.</summary>
-    public static TimeSpan CurrentMaxObjectAge => MaxObjectAge(
+    /// <summary>The oldest a legitimate object can get with today's timings, when bundles live at most <paramref name="maxExpiry"/>.</summary>
+    public static TimeSpan MaxObjectAgeForMaxExpiry(TimeSpan maxExpiry) => MaxObjectAge(
         UploadTimings.PendingUploadLifetime,
-        BundleLimits.MaxExpiry,
+        maxExpiry,
         DownloadTimings.StorageDeletionGracePeriod,
         PurgeTimings.CheckInterval);
+
+    /// <summary>Days after which storage deletes any object, when bundles live at most <paramref name="maxExpiry"/>: 4 for 24 h.</summary>
+    public static int LifecycleExpiryDaysForMaxExpiry(TimeSpan maxExpiry) => LifecycleExpiryDaysFor(MaxObjectAgeForMaxExpiry(maxExpiry));
+
+    /// <summary>≈ 192 h 40 min with today's timings and the longest expiry allowed (7 days).</summary>
+    public static TimeSpan CurrentMaxObjectAge => MaxObjectAgeForMaxExpiry(BundleLimits.MaxExpiry);
 
     /// <summary>≈ 25 h 30 min with today's timings.</summary>
     public static TimeSpan CurrentMaxUnconfirmedUploadAge => MaxUnconfirmedUploadAge(
@@ -44,7 +50,7 @@ public static class StorageSafetyNet
         UploadTimings.PendingUploadPurgeGrace,
         PurgeTimings.CheckInterval);
 
-    /// <summary>Days after which storage deletes any object: 10 with today's timings.</summary>
+    /// <summary>Days after which storage deletes any object: 10 with today's timings and the longest expiry allowed.</summary>
     public static int LifecycleExpiryDays => LifecycleExpiryDaysFor(CurrentMaxObjectAge);
 
     /// <summary>

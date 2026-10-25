@@ -25,11 +25,23 @@ public class StorageOptions
 
     /// <summary>
     /// Days after which storage deletes any object (the safety net's lifecycle rule). Leave unset to use
-    /// <see cref="StorageSafetyNet.LifecycleExpiryDays"/>, calculated from the app's timings. A value below that would
-    /// let storage delete files of bundles that are still live, so the API refuses to start with one.
+    /// <see cref="CalculatedLifecycleExpiryDays"/>. A value below that would let storage delete files of bundles that
+    /// are still live, so the API refuses to start with one.
     /// </summary>
     public int? LifecycleExpiryDays { get; set; }
 
+    private int _calculatedLifecycleExpiryDays = StorageSafetyNet.LifecycleExpiryDays;
+
+    /// <summary>
+    /// The expiry calculated from the app's timings and the longest a bundle may live (UploadLimits:MaxExpiryHours),
+    /// set by <see cref="UseMaxExpiryHours"/>. Not read from configuration.
+    /// </summary>
+    public int CalculatedLifecycleExpiryDays => _calculatedLifecycleExpiryDays;
+
+    /// <summary>Sizes the calculated expiry for bundles that live at most <paramref name="maxExpiryHours"/>.</summary>
+    public void UseMaxExpiryHours(int maxExpiryHours) =>
+        _calculatedLifecycleExpiryDays = StorageSafetyNet.LifecycleExpiryDaysForMaxExpiry(TimeSpan.FromHours(maxExpiryHours));
+
     /// <summary>The lifecycle expiry in effect: the configured one, or the calculated one.</summary>
-    public int EffectiveLifecycleExpiryDays => LifecycleExpiryDays ?? StorageSafetyNet.LifecycleExpiryDays;
+    public int EffectiveLifecycleExpiryDays => LifecycleExpiryDays ?? CalculatedLifecycleExpiryDays;
 }

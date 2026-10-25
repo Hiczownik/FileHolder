@@ -25,6 +25,48 @@ public class BundleRulesTests
         }
     }
 
+    public sealed record Expiry(int? Hours);
+
+    private sealed class ExpiryValidator : AbstractValidator<Expiry>
+    {
+        public ExpiryValidator(int maxExpiryHours) =>
+            RuleFor(x => x.Hours).MustBeValidExpiry(new UploadLimitsOptions { MaxExpiryHours = maxExpiryHours });
+    }
+
+    [Theory]
+    [InlineData(24, 24, true)]
+    [InlineData(24, 25, false)]
+    [InlineData(168, 168, true)]
+    [InlineData(168, 169, false)]
+    [InlineData(24, 0, false)]
+    public void Expiry_IsCheckedAgainstTheConfiguredMaximum(int maxExpiryHours, int hours, bool valid)
+    {
+        new ExpiryValidator(maxExpiryHours).Validate(new Expiry(hours)).IsValid.Should().Be(valid);
+    }
+
+    [Theory]
+    [InlineData(168, "Expiration time must be between 1 hour and 168 hours (7 days).")]
+    [InlineData(24, "Expiration time must be between 1 hour and 24 hours (1 day).")]
+    [InlineData(36, "Expiration time must be between 1 hour and 36 hours (1.5 days).")]
+    [InlineData(12, "Expiration time must be between 1 hour and 12 hours.")]
+    [InlineData(1, "Expiration time must be between 1 hour and 1 hour.")]
+    public void Expiry_ExplainsTheConfiguredMaximum(int maxExpiryHours, string message)
+    {
+        new ExpiryValidator(maxExpiryHours).Validate(new Expiry(maxExpiryHours + 1)).Errors.Should().ContainSingle()
+            .Which.ErrorMessage.Should().Be(message);
+    }
+
+    [Theory]
+    [InlineData(5L * 1024 * 1024 * 1024, "5 GB")]
+    [InlineData(250L * 1024 * 1024, "250 MB")]
+    [InlineData(1536L * 1024 * 1024, "1.5 GB")]
+    [InlineData(1024, "1 KB")]
+    [InlineData(10, "10 Bytes")]
+    public void FormatSize_UsesTheLargestFittingUnit_LikeTheUi(long bytes, string expected)
+    {
+        BundleRules.FormatSize(bytes).Should().Be(expected);
+    }
+
     // Found by the property tests (#70): with a configured limit near long.MaxValue, files that each fit added up past
     // it, and the checked sum threw an OverflowException (a 500) instead of rejecting the bundle.
     [Theory]

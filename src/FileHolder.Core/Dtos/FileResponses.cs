@@ -75,6 +75,17 @@ public record UnlockResult(
     DateTime? LockedUntil = null
 );
 
+/// <summary>
+/// What an upload may be on this deployment (UploadLimits), so the UI checks a bundle before uploading it and offers
+/// only the expiries the server accepts. The server still enforces every limit itself.
+/// </summary>
+public record UploadLimitsResponseDto(
+    [property: JsonPropertyName("maxBundleSizeBytes")] long MaxBundleSizeBytes,
+    [property: JsonPropertyName("maxFilesPerBundle")] int MaxFilesPerBundle,
+    [property: JsonPropertyName("minExpiryHours")] int MinExpiryHours,
+    [property: JsonPropertyName("maxExpiryHours")] int MaxExpiryHours
+);
+
 public record DownloadUrlResponseDto(
     [property: JsonPropertyName("downloadUrl")] string DownloadUrl
 );

@@ -44,7 +44,7 @@ public class HealthEndpointsTests(HealthChecksFactory factory) : IClassFixture<H
     private static readonly string[] AllChecks =
     [
         HealthCheckNames.Database, HealthCheckNames.Storage, HealthCheckNames.StorageLifecycle,
-        HealthCheckNames.PurgeWorker, HealthCheckNames.PurgeBacklog,
+        HealthCheckNames.PurgeWorker, HealthCheckNames.PurgeBacklog, HealthCheckNames.StorageQuota,
     ];
 
     /// <summary>

@@ -38,6 +38,30 @@ public class StorageSafetyNetTests
         StorageSafetyNet.LifecycleExpiryDaysFor(age).Should().Be(17);
     }
 
+    [Fact]
+    public void ADemoWithBundlesOfAtMost24Hours_KeepsObjectsAtMost4Days()
+    {
+        // 24 h unconfirmed + 24 h bundle + 10 min + 30 min = 48 h 40 min, plus the 24 h margin: just over 3 days.
+        StorageSafetyNet.LifecycleExpiryDaysForMaxExpiry(TimeSpan.FromHours(24)).Should().Be(4);
+    }
+
+    [Fact]
+    public void TheLongestExpiryAllowed_GivesTodaysRule()
+    {
+        StorageSafetyNet.LifecycleExpiryDaysForMaxExpiry(BundleLimits.MaxExpiry).Should().Be(StorageSafetyNet.LifecycleExpiryDays);
+    }
+
+    [Fact]
+    public void EveryAllowedMaximumExpiry_LeavesTheMarginAboveTheOldestLegitimateObject()
+    {
+        for (var hours = BundleLimits.MinExpiryHours; hours <= BundleLimits.MaxExpiryHours; hours++)
+        {
+            var maxExpiry = TimeSpan.FromHours(hours);
+            TimeSpan.FromDays(StorageSafetyNet.LifecycleExpiryDaysForMaxExpiry(maxExpiry))
+                .Should().BeGreaterThanOrEqualTo(StorageSafetyNet.MaxObjectAgeForMaxExpiry(maxExpiry) + StorageSafetyNet.Margin, $"for {hours} h");
+        }
+    }
+
     // Age plus the 24 h margin, rounded up to whole days.
     [Theory]
     [InlineData(0, 1)]   // 24 h: exactly one day

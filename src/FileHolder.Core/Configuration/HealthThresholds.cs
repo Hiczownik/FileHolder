@@ -22,4 +22,7 @@ public static class HealthThresholds
     /// hanging dependency is reported as Unhealthy rather than as a probe that never answered.
     /// </summary>
     public static readonly TimeSpan DependencyProbeTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>The share of the global storage quota in use from which the quota check warns (Degraded).</summary>
+    public const double StorageQuotaWarningShare = 0.8;
 }

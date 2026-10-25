@@ -31,10 +31,10 @@
   * Each file link is valid for 5 minutes and points straight at storage.
   * *Download All* gives a ZIP: built by the server for normal bundles, and in the browser for encrypted ones.
 * **Self-destruction:**
-  * A bundle closes when it expires (1–168 hours) or when its downloads are used up.
+  * A bundle closes when it expires (1–168 hours, or less with `UploadLimits__MaxExpiryHours`) or when its downloads are used up.
   * A background worker runs every 30 minutes. It deletes a closed bundle's files from storage once no download session is still running (plus a 10-minute grace for links already handed out).
   * **Storage safety net:** in case that worker is stuck, crashes or has a bug, storage itself deletes **any object older than 10 days**, and **multipart uploads left incomplete for 48 hours**. No legitimate file gets that old: at most about 8 days (24 h to confirm an upload, 7 days of bundle life, then the grace and the worker's next run).
-    * The API sets the 10-day bucket lifecycle rule at startup, calculated from its own timings (`StorageSafetyNet`), and refuses to start if `Storage__LifecycleExpiryDays` is set lower. The `fileholder_storage_lifecycle_days` metric shows the rule's days once storage has confirmed it (0 until then).
+    * The API sets the 10-day bucket lifecycle rule at startup, calculated from its own timings and the longest a bundle may live (`StorageSafetyNet`; 4 days when bundles live at most 24 hours), and refuses to start if `Storage__LifecycleExpiryDays` is set lower. The `fileholder_storage_lifecycle_days` metric shows the rule's days once storage has confirmed it (0 until then).
     * Silo ignores the abort-incomplete-uploads part of lifecycle rules, so abandoned uploads are removed by its own stale-upload clean-up instead: `MINIO_API_STALE_UPLOADS_EXPIRY=48h` in `docker-compose.yml` (Silo's default, 24 h, could cut off a slow upload before it is confirmed).
   * **The bundle's details go with its files:** in the same step, the worker deletes the file names, sizes and types, and clears the title, password hash and an encrypted bundle's key material and manifest. What's left is an anonymous tombstone (the share token, the dates, and whether it was encrypted), so the link says "expired" rather than "not found". **Tombstones are deleted after 7 days**, and finished multipart-upload records 1 day after they finish.
     * This is deleted *from the database*, not wiped from the disk: Postgres keeps old row versions until it reuses the space, and its write-ahead log for a while. **Database backups keep whatever they copied**, so keep them for 7 days or less.
@@ -111,8 +111,9 @@
 | What | Limit | Setting |
 | :--- | :--- | :--- |
 | Files per bundle | 1–50 | |
-| Bundle size | 5 GB in total (encrypted bundles: measured before encryption) | `UploadLimits:MaxBundleSizeBytes`. Keep in sync with `STANDARD_MAX_TOTAL_BYTES` in the UI |
-| Expiry | 1–168 hours (required) | |
+| Bundle size | 5 GB in total (encrypted bundles: measured before encryption) | `UploadLimits:MaxBundleSizeBytes` |
+| Expiry | 1–168 hours (required) | `UploadLimits:MaxExpiryHours` (can only be lowered) |
+| Storage in use, all bundles together | No limit | `UploadLimits:GlobalQuotaBytes`. While full, presign answers `503` with `Retry-After`; uploads already started still finish |
 | Downloads | 1–1000 | |
 | Password / passkey | 4–100 characters, not only spaces | |
 | Unconfirmed uploads | Expire after 24 hours | |
@@ -120,6 +121,8 @@
 | File download link | 5 minutes | |
 | Single upload | Up to 50 MB; larger files use multipart (parts ≥ 16 MiB) | |
 | In-memory saving (browsers without streaming saves) | 1 GB | see *Encrypted Downloads* |
+
+The UI reads the upload limits from `GET /api/v1/files/limits` when the page loads, so its size check, expiry choices and texts follow the server's configuration. If that request fails, it uses the defaults above, and the server still enforces its own limits.
 
 ---
 
@@ -174,10 +177,10 @@ docker compose up --build
 * **API health check**: [http://localhost:8080/healthz/ready](http://localhost:8080/healthz/ready).
   * **Statuses:**
     * *Unhealthy* (503): the database or storage can't be reached.
-    * *Degraded* (still 200): the purge is lagging. The storage lifecycle rule isn't confirmed, the purge worker hasn't completed a run for an hour, or bundles have waited over 2 hours to be deleted.
+    * *Degraded* (still 200): the purge is lagging, or storage is filling up. The storage lifecycle rule isn't confirmed, the purge worker hasn't completed a run for an hour, bundles have waited over 2 hours to be deleted, or 80% of the storage quota is in use.
   * **Who waits on it:** compose (before starting the UI) and CI.
   * **Liveness:** [`/healthz/live`](http://localhost:8080/healthz/live) only shows the process is up. `/healthz` is the same as `/healthz/ready`.
-  * **Metrics:** each check's status is also on the metrics port as `fileholder_health_status`, with `fileholder_purge_overdue_groups` and `fileholder_purge_last_success_age_seconds`.
+  * **Metrics:** each check's status is also on the metrics port as `fileholder_health_status`, with `fileholder_purge_overdue_groups`, `fileholder_purge_last_success_age_seconds`, `fileholder_storage_used_bytes` and, with a quota set, `fileholder_storage_quota_bytes`.
 * **Grafana**: [http://localhost:3001](http://localhost:3001) *(login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*. Prometheus metrics, and Tempo traces (see *Tracing*).
 * **Storage console (Silo)**: [http://localhost:9001](http://localhost:9001) *(login: your `STORAGE_ROOT_USER` / `STORAGE_ROOT_PASSWORD`)*
 * **Scalar API docs**: only when the API runs in Development (see *Development*). The compose stack runs the API in Production.
@@ -246,7 +249,9 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Storage__PublicBaseUrl` | `http://localhost:9000` | Storage address in upload and download links, so it must be reachable from **browsers** |
 | `Storage__AccessKey`, `Storage__SecretKey` | `fileholder-api`, `STORAGE_API_SECRET_KEY` from `.env` | The API's own storage user (see *Passwords and Storage Users*). Required: the API refuses to start without them |
 | `Storage__BucketName` | `fileholder-bucket` | Bucket for all files |
-| `UploadLimits__MaxBundleSizeBytes` | 5 GB (default) | Largest bundle. Keep in sync with the UI |
+| `UploadLimits__MaxBundleSizeBytes` | 5 GB (default) | Largest bundle. The UI reads it from the API |
+| `UploadLimits__MaxExpiryHours` | 168 (default) | Longest a bundle may live, 1–168. Lowering it also shortens the storage lifecycle rule |
+| `UploadLimits__GlobalQuotaBytes` | unset (no quota) | Most storage all bundles and pending uploads may take up together, counted from their declared sizes. A cap on what's accepted, not an exact meter: confirm's copies of single-part files and two presigns at once can go a little past it |
 | `RateLimits__*PermitLimit` | see *Rate limits* (defaults) | Requests per client address per minute, per endpoint group. Raise only for single-address test stacks |
 | `Storage__LifecycleExpiryDays` | unset (10, calculated) | Days after which storage deletes any object. Only for a longer safety net; lower than the calculated value refuses to start |
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
@@ -261,6 +266,17 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | UI: `VITE_API_BASE_URL` (build time) | `/api/v1/files` (`.env.production`) | API address the UI calls; `.env.development` uses `http://localhost:8080/api/v1/files` |
 
 `docker-compose.override.example.yml` shows how to override settings locally (used for phone testing below).
+
+**A public demo** runs with much smaller upload limits than the defaults, so it isn't attractive as free file hosting and its storage bill stays predictable (#148). For example, 250 MB bundles that live at most a day, and 10 GB of storage in all:
+
+```yaml
+services:
+  api:
+    environment:
+      UploadLimits__MaxBundleSizeBytes: "262144000"   # 250 MB
+      UploadLimits__MaxExpiryHours: "24"
+      UploadLimits__GlobalQuotaBytes: "10737418240"   # 10 GB
+```
 
 ---
 

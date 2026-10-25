@@ -81,6 +81,7 @@ builder.Services.AddSingleton<IS3StorageProvider, S3StorageProvider>();
 builder.Services.AddScoped<IPasswordAttemptGuard, PasswordAttemptGuard>();
 builder.Services.AddScoped<IDownloadSessionService, DownloadSessionService>();
 builder.Services.AddScoped<IFileGroupService, FileGroupService>();
+builder.Services.AddScoped<StorageQuota>();
 builder.Services.AddScoped<IMultipartUploadService, MultipartUploadService>();
 builder.Services.AddScoped<IBundleStreamService, BundleStreamService>();
 builder.Services.AddScoped<IStoragePurgeService, StoragePurgeService>();
