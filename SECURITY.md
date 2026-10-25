@@ -4,7 +4,7 @@
 
 **Please don't report vulnerabilities in public issues, pull requests or discussions.**
 
-Email **heryk.zielniewski2@gmail.com** with "FileHolder security" in the subject. Please include:
+Email **security@fileholder.app** with "FileHolder security" in the subject. Please include:
 
 - what you found, and what an attacker could do with it;
 - steps to reproduce it (requests, files or a short script);
@@ -27,12 +27,7 @@ Please give a reasonable time to fix the issue before disclosing it.
 
 **Out of scope:**
 
-- **The documented local-only defaults**, while FileHolder isn't deployed:
-  - the default credentials in `appsettings.json` and `docker-compose.yml`;
-  - plain HTTP;
-  - the API using the storage root credentials.
-
-  These are tracked as deployment blockers in #82.
+- **Plain HTTP in the local stack**, while FileHolder isn't deployed. HTTPS (Caddy) is tracked as a deployment blocker in #82.
 - **Gaps already listed** in [`docs/threat-model.md`](docs/threat-model.md) §5, and the accepted risks in §6. A new way to exploit one of them is still welcome.
 - Problems in third-party services or dependencies with no FileHolder-specific impact. Please report those upstream.
 - Denial of service by sheer volume of traffic.
