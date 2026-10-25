@@ -113,8 +113,8 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
   - bodies (passwords, `kAuth`, keys, manifests) and database parameter values are never recorded.
   - The API's own spans (`FileHolderTracing`) carry counts, outcomes and GUIDs only. A failed step records the exception's type, not its message, which can name a file.
   - `TracingTests` checks a whole upload and download against an in-memory exporter.
-  - A trace still shows *that* a bundle was uploaded, unlocked and downloaded, and when, for as long as the trace store keeps it.
-- **Ports:** storage, database, API, Prometheus and Grafana are bound to loopback. Metrics are only on an unpublished port (9464). Grafana needs a password from `.env`.
+  - A trace still shows *that* a bundle was uploaded, unlocked and downloaded, and when, for as long as the trace store keeps it. Tempo keeps traces 48 hours (`docker/tempo/tempo.yaml`).
+- **Ports:** storage, database, API, Prometheus, Tempo's query port (3200) and Grafana are bound to loopback. Metrics are only on an unpublished port (9464), and so is Tempo's OTLP intake (4317/4318), so nothing outside the compose network can send it traces. Grafana needs a password from `.env`; Prometheus and Tempo have no login, so loopback is their only protection.
 - **Supply chain** (#74):
   - images are pinned by digest, actions by SHA, and NuGet versions are exact;
   - Dependabot proposes updates;

@@ -86,6 +86,9 @@ services:
       Storage__BucketName: "fileholder-bucket"
       # X-Forwarded-For is honoured only from the ui container's nginx, pinned to this address below.
       ForwardedHeaders__KnownProxies__0: "172.30.250.10"
+      # Traces go to Tempo over the compose network. Not a dependency: if Tempo is down the API still serves, and
+      # only traces are lost. Unset it to send none (see README, Tracing).
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,6 +132,19 @@ services:
     depends_on:
       - api
 
+  tempo:
+    # Traces (docker/tempo/tempo.yaml): kept 48 h. OTLP (4317 gRPC, 4318 HTTP) is only reachable on the compose
+    # network; the query port is on loopback for scripts/check-traces.sh and local tooling. Grafana reads it as the
+    # Tempo datasource.
+    image: grafana/tempo:3.1.0@sha256:3076b8dcdfb32fd6bc5ccef85e7b7313e6199b9cb84366257fc17ecb696db5fd
+    container_name: fileholder-tempo
+    command: ["-target=all", "-config.file=/etc/tempo.yaml"]
+    ports:
+      - "127.0.0.1:3200:3200"
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+
   grafana:
     image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
     container_name: fileholder-grafana
@@ -141,6 +157,7 @@ services:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
+      - tempo
 
   # Load tests (tests/load). Only started on demand: the "load" profile keeps `docker compose up` from running it.
   # Use tests/load/run.ps1, which also applies docker-compose.load.yml so presigned URLs point at minio:9000.
@@ -160,6 +177,7 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  tempo_data:
 
 networks:
   default:
