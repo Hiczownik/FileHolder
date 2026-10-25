@@ -30,6 +30,23 @@ server {
         root /usr/share/nginx/html;
         index index.html index.htm;
         try_files $uri $uri/ /index.html;
+
+        # Only here, not at server level: nginx would add them to /api/ responses too, which carry their own
+        # (SecurityHeadersMiddleware). A location with an add_header of its own inherits none of these.
+        #
+        # The page holds link keys, passkeys and kAuth, so only the app's own scripts may run: no inline script
+        # (index.html has none) and no other origin. 'wasm-unsafe-eval' lets hash-wasm compile Argon2id in the
+        # passkey worker; it allows WebAssembly only, not eval. connect-src adds storage, which the page uploads to
+        # and downloads from through presigned URLs; ${STORAGE_PUBLIC_URL} is filled in when the container starts
+        # (docker-entrypoint.d/19-storage-public-url.envsh). font-src allows data: because the build inlines the
+        # small woff fonts into the stylesheet. The download worker answers a same-origin iframe (frame-src).
+        # Once the app is served over HTTPS (#82), add Strict-Transport-Security here.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; font-src 'self' data:; connect-src 'self' ${STORAGE_PUBLIC_URL}; worker-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
+        # frame-ancestors covers current browsers; this is for older ones.
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        # The share token is in the path; nothing needs a Referer, so none is sent anywhere.
+        add_header Referrer-Policy "no-referrer" always;
     }
 
     # The API is reached through this proxy rather than its own published port, so it sees each client's

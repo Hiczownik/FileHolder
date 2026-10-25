@@ -425,7 +425,8 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
           try {
             const probe = new Worker(URL.createObjectURL(new Blob([workerSource], { type: 'text/javascript' })));
             probe.onmessage = (event) => resolve(event.data);
-            probe.onerror = (event) => resolve({ workerError: event.message });
+            // A worker the UI's CSP refuses (worker-src 'self' leaves out blob: URLs like this one) fails with no message.
+            probe.onerror = (event) => resolve({ workerError: event.message || 'did not start; blob: workers are blocked by the CSP (#130)' });
             probe.postMessage('probe');
             setTimeout(() => resolve({ timeout: 'no answer in 5 s' }), probeTimeoutMs);
           } catch (err) {

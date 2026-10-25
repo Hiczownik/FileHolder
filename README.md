@@ -173,6 +173,9 @@ The default credentials (`minioadmin`, the Postgres password in `appsettings.jso
 * **Docker Desktop (Windows/macOS) hides client addresses:** its port forwarding makes every connection appear to come from one gateway address, so locally all clients still share one rate-limit partition. Linux hosts and real proxies don't have this problem.
 * **Metrics** are served only on port 9464 (`Metrics:Port`), which compose never publishes. Prometheus scrapes `api:9464` over the internal network.
 * **Storage addresses** (`Storage:ServiceUrl` for the API, `Storage:PublicBaseUrl` for browsers) may each be `http://` or `https://`. Upload and download links follow `PublicBaseUrl`'s scheme, so when the app is served over HTTPS, storage must be too, or browsers block the links as mixed content.
+* **Security headers on the UI pages** (`nginx.conf.template`): a Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff` and `Referrer-Policy: no-referrer`. API responses get theirs from the API (`SecurityHeadersMiddleware`).
+  * The policy lets the page run only its own scripts and connect only to itself and to storage. The UI container's `STORAGE_PUBLIC_URL` must therefore match the API's `Storage__PublicBaseUrl`, or every upload and download is blocked. The container won't start without a valid one.
+  * Check for violations in the browser console (*Refused to …* / *Content-Security-Policy*). `e2e/securityHeaders.spec.ts` fails on any.
 
 ### Tracing
 One request, or one purge run, can be followed step by step: where the time went and in what order.
@@ -224,6 +227,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Tracing__RecordClientAddress` | false (default) | Keep the caller's address on request spans, for debugging rate limits or the lockout on a real host |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
 | `GRAFANA_ADMIN_PASSWORD` (`.env`) | (yours) | Grafana admin password |
+| UI: `STORAGE_PUBLIC_URL` | `http://localhost:9000` | The same address as `Storage__PublicBaseUrl`, without a path. The UI's Content-Security-Policy allows connections to it; without a valid one the container doesn't start |
 | UI: `VITE_API_BASE_URL` (build time) | `/api/v1/files` (`.env.production`) | API address the UI calls; `.env.development` uses `http://localhost:8080/api/v1/files` |
 
 `docker-compose.override.example.yml` shows how to override settings locally (used for phone testing below).
@@ -333,7 +337,7 @@ Encrypted downloads are saved differently per browser (see *Encrypted Downloads*
    cloudflared tunnel --url http://localhost:3000   # the app
    cloudflared tunnel --url http://localhost:9000   # storage: upload and download links point straight at it
    ```
-3. **Point upload and download links at the storage tunnel:** copy `docker-compose.override.example.yml` to `docker-compose.override.yml` (git-ignored), put the storage tunnel's address in it, then `docker compose up -d api`.
+3. **Point upload and download links at the storage tunnel:** copy `docker-compose.override.example.yml` to `docker-compose.override.yml` (git-ignored), put the storage tunnel's address in it (in both places: the API's links and the UI's Content-Security-Policy), then `docker compose up -d api ui`.
 4. **Upload through the app tunnel's address** (on the PC is fine), so the share link uses that address too. Open the share link on the phone with `?diagnostics` added **before the `#`**, e.g. `https://….trycloudflare.com/f/AbCd1234?diagnostics#k=…`. A *Diagnostics* panel shows which saving methods the browser will try, why others are left out, the free site storage, and how the last download was saved. **Copy** puts the whole report on the clipboard.
 5. **Checks:**
    - A small encrypted file downloads to *Files → Downloads* and opens; the panel says `via opfs`.
@@ -348,13 +352,13 @@ Encrypted downloads are saved differently per browser (see *Encrypted Downloads*
      - Pick a photo from the iPhone's library in Safari. The file list shows whether iOS handed over a JPEG copy (labelled *Metadata will be removed*, and 📍 if it has a location) or the HEIC original (*Metadata can't be removed (HEIC)*).
      - After downloading, the photo shows no location in Photos or Files (swipe up or *Get Info*), and displays the right way up.
    - A tampered file must fail with an error, not save. Tamper with the stored copy (Git Bash on Windows): `scripts/tamper-stored-file.sh <share-token> [file-number] [byte-offset]`. It flips one byte (by default in the middle of the file) and prints the command that restores it.
-6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the storage console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api`.
+6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the storage console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api ui`.
 
 **If `cloudflared` reports it can't reach port 7844** (some networks block it), use [Tailscale](https://tailscale.com) instead. It only needs normal HTTPS, and the addresses are reachable by your own devices only:
 1. Install it on the PC and the phone with the same account.
 2. Turn on *MagicDNS* and *HTTPS Certificates* in the admin console.
 3. Run `tailscale serve --bg --https=443 http://127.0.0.1:3000` and `tailscale serve --bg --https=8443 http://127.0.0.1:9000`.
-4. Set `Storage__PublicBaseUrl` to `https://<your-pc>.<tailnet>.ts.net:8443` (`tailscale serve status` shows the address).
+4. Set `Storage__PublicBaseUrl` and the UI's `STORAGE_PUBLIC_URL` to `https://<your-pc>.<tailnet>.ts.net:8443` (`tailscale serve status` shows the address).
 5. Stop serving afterwards with `tailscale serve reset`.
 
 If uploads fail with `403 SignatureDoesNotMatch`, the storage tunnel isn't passing the original host name on to storage (upload links are signed for it). A named Cloudflare tunnel has a fixed host name that can be set with `--http-host-header`. Upload parts are 16 MiB and single uploads at most 50 MB, well under Cloudflare's per-request size limit.

@@ -80,6 +80,7 @@ services:
       # instance, psql and other tools were refused. 50 leaves room for a second instance during a rolling deploy.
       ConnectionStrings__PostgresConnection: "Host=postgres;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=fileholder_password;Maximum Pool Size=50"
       Storage__ServiceUrl: "http://minio:9000"
+      # Keep in step with the ui container's STORAGE_PUBLIC_URL below.
       Storage__PublicBaseUrl: "http://localhost:9000"
       Storage__AccessKey: "minioadmin"
       Storage__SecretKey: "minioadmin"
@@ -113,6 +114,10 @@ services:
     container_name: fileholder-ui
     ports:
       - "3000:80"
+    environment:
+      # The same address as the API's Storage__PublicBaseUrl. The page's Content-Security-Policy lets it upload to
+      # and download from this address only, so with a different one every transfer is blocked.
+      STORAGE_PUBLIC_URL: "http://localhost:9000"
     networks:
       default:
         # Fixed so the API can trust X-Forwarded-For from this container and nothing else.

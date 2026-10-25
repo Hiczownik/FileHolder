@@ -67,7 +67,7 @@ streaming (7), the soak test (8), k6 results in Grafana, and a workflow.
   `docker-compose.yml` now sets `Maximum Pool Size=50`.
 * **nginx ran out of local ports above a few hundred requests a second.** It opened a new connection to the API for
   every request, and each closed one holds a port for a minute. In scenario 6, 69% of requests got 502
-  (`connect() … failed (99: Address not available)`). `nginx.conf` now keeps connections to the API open and reuses them.
+  (`connect() … failed (99: Address not available)`). `nginx.conf.template` now keeps connections to the API open and reuses them.
 
 ## Baseline
 
