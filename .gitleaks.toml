@@ -11,4 +11,10 @@ regexes = [
   '''^q3-_ZZ0x9Lm2Wk7Qp4Rt8Vy1Hd6Jb3Nc5Fg0Ks2Ue7Xa$''',
   # passkey.properties.test.ts: the example in a regex comment showing a passkey's format.
   '''K7QF-2MXA-9RTB''',
+  # The sample passkey of the upload/download tests (e2e specs, UploadSuccessCard and useFileUpload tests).
+  '''^K7QM-2HXP-9RTA$''',
+  # cryptoUtils.test.ts: a fixed Argon2id test vector, the bytes 0x01..0x20 in base64url as the link key.
+  '''^AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA$''',
+  # tests/load/lib/fileholder.js: k6's placeholder key envelope (padded with A's when the script runs).
+  '''^k6-placeholder-envelope-A*$''',
 ]
