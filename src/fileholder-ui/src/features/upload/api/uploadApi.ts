@@ -16,6 +16,12 @@ const PERCENT_COMPLETE = 100;
 const ETAG_QUOTES = /['"]/g;
 
 export const uploadApi = {
+    /** The deployment's upload limits; loadUploadLimits (services/uploadLimits.ts) checks and shares the answer. */
+    getLimits: async (): Promise<unknown> => {
+        const response = await axios.get<unknown>(`${API_BASE_URL}/limits`);
+        return response.data;
+    },
+
     getPresignedUrl: async (request: CreatePresignedUrlRequest): Promise<PresignedUrlResponse> => {
         const response = await axios.post<PresignedUrlResponse>(`${API_BASE_URL}/presign`, request);
         return response.data;

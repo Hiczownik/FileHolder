@@ -4,6 +4,7 @@ import { formatSize } from "../../../shared/utils/formatSize";
 import { cn } from "../../../shared/utils/cn";
 import { usePhotoMetadataReports } from "../hooks/usePhotoMetadataReports";
 import { MetadataLabels } from "./MetadataLabels";
+import { DEFAULT_UPLOAD_LIMITS, type UploadLimits } from "../services/uploadLimits";
 
 interface Props {
     selectedFiles: File[];
@@ -11,11 +12,13 @@ interface Props {
     onRemoveFile: (index: number) => void;
     /** Whether "Remove photo metadata" is on, for the files' labels. */
     stripMetadata: boolean;
+    /** The deployment's limits, for the hint under the drop area. */
+    limits?: UploadLimits;
 }
 
 const fileCountLabel =(count: number): string => `${count} ${count === 1 ? 'file' : 'files'}`;
 
-export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, onRemoveFile, stripMetadata }) => {
+export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, onRemoveFile, stripMetadata, limits = DEFAULT_UPLOAD_LIMITS }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isDraggingOver, setIsDraggingOver] = useState(false);
     const metadataReports = usePhotoMetadataReports(selectedFiles);
@@ -69,7 +72,7 @@ export const FileDropzone: React.FC<Props> = ({ selectedFiles, onFilesSelect, on
                 <span className="font-medium">
                     Drop files here or <span className="text-accent underline underline-offset-[3px]">choose files</span>
                 </span>
-                <span className="text-sm text-muted">Up to 50 files, 5 GB in total</span>
+                <span className="text-sm text-muted">Up to {limits.maxFilesPerBundle} files, {formatSize(limits.maxBundleSizeBytes)} in total</span>
             </label>
 
             {selectedFiles.length > 0 && (

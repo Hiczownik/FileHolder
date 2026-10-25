@@ -6,8 +6,8 @@ const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
 const BYTES_PER_GB = BYTES_PER_KB * BYTES_PER_MB;
 const STANDARD_MAX_TOTAL_GB = 5;
 
-// Applies to encrypted bundles too, measured before encryption: they are encrypted and decrypted a chunk at a
-// time, so their size no longer depends on memory. Keep in sync with UploadLimits on the server (UploadLimitsOptions.cs).
+// The server's default bundle limit (UploadLimitsOptions.cs). Applies to encrypted bundles too, measured before
+// encryption. A deployment may set a smaller one, which the UI reads from the server (services/uploadLimits.ts).
 export const STANDARD_MAX_TOTAL_BYTES = STANDARD_MAX_TOTAL_GB * BYTES_PER_GB;
 
 export interface UploadFormValues {

@@ -1,4 +1,5 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
+import { stubUploadLimits } from '../../../../test/uploadLimits';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useFileUpload } from '../useFileUpload';
 import { uploadApi } from '../../api/uploadApi';
@@ -6,6 +7,7 @@ import { STANDARD_MAX_TOTAL_BYTES } from '../../types';
 import { encryptedSize } from '../../../../shared/utils/crypto/streamCipher';
 import { DEFAULT_ARGON2_PARAMS, formatKdfParams } from '../../../../shared/utils/crypto/kdfParams';
 import { PASSKEY_TOO_SHORT_MESSAGE } from '../../services/passkey';
+import { DEFAULT_UPLOAD_LIMITS } from '../../services/uploadLimits';
 
 describe('useFileUpload Hook (Vertical Slice)', () => {
   const EXPIRE_IN_HOURS = 24;
@@ -13,6 +15,7 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
   const SMALL_FILE_BYTES = 50;
   beforeEach(() => {
     vi.restoreAllMocks();
+    stubUploadLimits();
   });
 
   const createDummyFile = (name: string, size: number): File => {
@@ -303,6 +306,8 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
 
   const FIVE_GB_IN_GB = 5;
   const TWO_GB_IN_GB = 2;
+  // A quarter of a GB: 256 MB, a demo-sized limit.
+  const DEMO_LIMITS_PER_GB = 4;
 
   // Only the reported size matters to the limit checks, so no real content is allocated.
   const createSizedFile = (name: string, size: number): File => {
@@ -328,6 +333,25 @@ describe('useFileUpload Hook (Vertical Slice)', () => {
     expect(result.current.uploadState.status).toBe('error');
     if (result.current.uploadState.status === 'error') {
       expect(result.current.uploadState.message).toContain(expected);
+    }
+  });
+
+  it("refuses a bundle over the deployment's smaller limit before calling the server, naming that limit", async () => {
+    const demoLimitBytes = STANDARD_MAX_TOTAL_BYTES / FIVE_GB_IN_GB / DEMO_LIMITS_PER_GB;
+    stubUploadLimits({ ...DEFAULT_UPLOAD_LIMITS, maxBundleSizeBytes: demoLimitBytes });
+    const presignSpy = vi.spyOn(uploadApi, 'getPresignedUrl');
+    const formValues = { title: 'Too Big For The Demo', expireInHours: EXPIRE_IN_HOURS, maxDownloads: MAX_DOWNLOADS } as const;
+
+    const { result } = renderHook(() => useFileUpload());
+
+    await act(async () => {
+      await result.current.upload(formValues, [createSizedFile('demo.bin', demoLimitBytes + 1)]);
+    });
+
+    expect(presignSpy).not.toHaveBeenCalled();
+    expect(result.current.uploadState).toMatchObject({ status: 'error' });
+    if (result.current.uploadState.status === 'error') {
+      expect(result.current.uploadState.message).toContain('cannot be larger than 256 MB in total');
     }
   });
 

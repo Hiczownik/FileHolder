@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { stubUploadLimits } from '../../../../test/uploadLimits';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useFileUpload } from '../useFileUpload';
 import { uploadApi } from '../../api/uploadApi';
@@ -42,6 +43,7 @@ const fakeApi = () => ({
 describe('useFileUpload photo metadata removal', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        stubUploadLimits();
     });
 
     it('uploads the cleaned photo, presigned for its cleaned size, and sums up what it removed', async () => {

@@ -4,15 +4,17 @@ import { StatusAlert } from "../../shared/components/StatusAlert";
 import { UploadSuccessCard } from "./components/UploadSuccessCard";
 import { UploadForm } from "./components/UploadForm";
 import { EncryptionModes, HowItWorks } from "./components/HomeSections";
-
-const FACTS = [
-    { icon: Clock, text: 'Expires after 1 hour to 7 days, or after 1 to 100 downloads' },
-    { icon: ShieldCheck, text: 'End-to-end encryption in your browser, optional' },
-    { icon: Upload, text: 'Files go straight to storage, never through our server' },
-] as const;
+import { useUploadLimits } from "./hooks/useUploadLimits";
+import { describeHours } from "./services/uploadLimits";
 
 export const UploadPage: React.FC = () => {
     const { upload, uploadState, reset } = useFileUpload();
+    const limits = useUploadLimits();
+    const facts = [
+        { icon: Clock, text: `Expires after ${describeHours(limits.minExpiryHours)} to ${describeHours(limits.maxExpiryHours)}, or after 1 to 100 downloads` },
+        { icon: ShieldCheck, text: 'End-to-end encryption in your browser, optional' },
+        { icon: Upload, text: 'Files go straight to storage, never through our server' },
+    ];
 
     if (uploadState.status === 'success') {
         return (
@@ -33,11 +35,11 @@ export const UploadPage: React.FC = () => {
                         Send files that clean up after themselves.
                     </h1>
                     <p className="text-fg-soft sm:text-[17px] max-w-[460px]">
-                        Share up to 50 files as one link. The bundle disappears after the time or number of downloads you
+                        Share up to {limits.maxFilesPerBundle} files as one link. The bundle disappears after the time or number of downloads you
                         choose. Turn on encryption and the server never sees what&apos;s inside.
                     </p>
                     <ul className="hidden sm:block pt-2 space-y-3 text-sm text-fg-soft">
-                        {FACTS.map(({ icon: Icon, text }) => (
+                        {facts.map(({ icon: Icon, text }) => (
                             <li key={text} className="flex items-center gap-2.5">
                                 <Icon aria-hidden="true" className="w-[18px] h-[18px] text-accent shrink-0" />
                                 <span>{text}</span>
@@ -50,7 +52,7 @@ export const UploadPage: React.FC = () => {
                     {uploadState.status === 'error' && (
                         <StatusAlert variant="error" message={uploadState.message} />
                     )}
-                    <UploadForm uploadState={uploadState} onUpload={upload} />
+                    <UploadForm uploadState={uploadState} onUpload={upload} limits={limits} />
                 </div>
             </div>
 

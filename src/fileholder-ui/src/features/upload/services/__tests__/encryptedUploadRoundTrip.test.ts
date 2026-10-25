@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { stubUploadLimits } from '../../../../test/uploadLimits';
 import { executeEncryptedUploadWorkflow } from '../uploadWorkflow';
 import { uploadApi } from '../../api/uploadApi';
 import { BundleDecryptionService } from '../../../download/services/bundleDecryptionService';
@@ -127,6 +128,7 @@ const createFakeBackend = (partSize: number) => {
 describe('encrypted upload round trip', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        stubUploadLimits();
     });
 
     it('uploads chunk-encrypted files, single and multipart, that the download path decrypts back exactly', async () => {
