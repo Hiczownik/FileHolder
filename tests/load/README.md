@@ -96,7 +96,7 @@ Still to come (#73): a workflow to run them on demand and nightly.
   `docker-compose.yml` now sets `Maximum Pool Size=50`.
 * **nginx ran out of local ports above a few hundred requests a second.** It opened a new connection to the API for
   every request, and each closed one holds a port for a minute. In scenario 6, 69% of requests got 502
-  (`connect() … failed (99: Address not available)`). `nginx.conf` now keeps connections to the API open and reuses them.
+  (`connect() … failed (99: Address not available)`). `nginx.conf.template` now keeps connections to the API open and reuses them.
 * **The purge couldn't keep up with uploads.** Each run of the purge worker (every 30 minutes) took one batch from each
   queue: 500 abandoned uploads, 100 bundles, 50 multipart uploads. Every single-file upload leaves its original for the
   purge (confirm serves a copy), so it could remove at most 1,000 files an hour, 20 bundles of 50 files, and anything

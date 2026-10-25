@@ -134,7 +134,7 @@
 | **Caching** | .NET `HybridCache` | In-memory only (no shared L2 cache), with stampede protection |
 | **Background work** | `BackgroundService` | Storage purge every 30 minutes |
 | **Frontend** | **React 19**, Vite 8, TypeScript 6, Tailwind CSS 4 | axios, react-hook-form, client-zip (ZIPs in the browser), qrcode.react |
-| **Observability** | OpenTelemetry metrics → Prometheus → Grafana; OpenTelemetry traces over OTLP (requests, PostgreSQL, storage); Serilog console logs with trace ids | |
+| **Observability** | OpenTelemetry metrics → Prometheus → Grafana; OpenTelemetry traces → Grafana Tempo → Grafana; Serilog console logs with trace ids | |
 | **Tests** | xUnit, FluentAssertions, NSubstitute, FsCheck, Testcontainers (PostgreSQL); Vitest + Testing Library, fast-check; Playwright (Chromium, Firefox, WebKit) | |
 | **Containers** | Docker Compose, multi-stage builds | |
 
@@ -158,7 +158,7 @@ docker compose up --build
   * **Who waits on it:** compose (before starting the UI) and CI.
   * **Liveness:** [`/healthz/live`](http://localhost:8080/healthz/live) only shows the process is up. `/healthz` is the same as `/healthz/ready`.
   * **Metrics:** each check's status is also on the metrics port as `fileholder_health_status`, with `fileholder_purge_overdue_groups` and `fileholder_purge_last_success_age_seconds`.
-* **Grafana**: [http://localhost:3001](http://localhost:3001) *(login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*
+* **Grafana**: [http://localhost:3001](http://localhost:3001) *(login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*. Prometheus metrics, and Tempo traces (see *Tracing*).
 * **Storage console (Silo)**: [http://localhost:9001](http://localhost:9001) *(login: `minioadmin` / `minioadmin`)*
 * **Scalar API docs**: only when the API runs in Development (see *Development*). The compose stack runs the API in Production.
 
@@ -173,6 +173,22 @@ The default credentials (`minioadmin`, the Postgres password in `appsettings.jso
 * **Docker Desktop (Windows/macOS) hides client addresses:** its port forwarding makes every connection appear to come from one gateway address, so locally all clients still share one rate-limit partition. Linux hosts and real proxies don't have this problem.
 * **Metrics** are served only on port 9464 (`Metrics:Port`), which compose never publishes. Prometheus scrapes `api:9464` over the internal network.
 * **Storage addresses** (`Storage:ServiceUrl` for the API, `Storage:PublicBaseUrl` for browsers) may each be `http://` or `https://`. Upload and download links follow `PublicBaseUrl`'s scheme, so when the app is served over HTTPS, storage must be too, or browsers block the links as mixed content.
+* **Security headers on the UI pages** (`nginx.conf.template`): a Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff` and `Referrer-Policy: no-referrer`. API responses get theirs from the API (`SecurityHeadersMiddleware`).
+  * The policy lets the page run only its own scripts and connect only to itself and to storage. The UI container's `STORAGE_PUBLIC_URL` must therefore match the API's `Storage__PublicBaseUrl`, or every upload and download is blocked. The container won't start without a valid one.
+  * Check for violations in the browser console (*Refused to …* / *Content-Security-Policy*). `e2e/securityHeaders.spec.ts` fails on any.
+
+### Tracing
+One request, or one purge run, can be followed step by step: where the time went and in what order.
+* **Where:** Grafana ([http://localhost:3001](http://localhost:3001)) → **Explore** → **Tempo**. Search for service `fileholder-api` and a span name such as `POST /api/v1/files/confirm` or `purge.run`, or paste a trace id from a log line (`… trace=<id> span=<id>`).
+* **What a trace holds:**
+  * the request, with its PostgreSQL queries and storage calls (`HEAD`, `PUT` …, from the AWS SDK's HttpClient);
+  * the API's own steps: `confirm.claim` → `confirm.check_sizes` → `confirm.hash_password` → `confirm.copy_single_part_files` → `confirm.persist` → `confirm.cache_write`, `presign`, `password.check` (with its lockout decision), `download_session.open`, `bundle_zip.entry` per file, and `storage.*` around every storage call;
+  * the purge worker's runs, each a trace of its own (`purge.run` and its steps, with counts).
+* **What it never holds:** share tokens, presigned-URL signatures, passwords, `kAuth`, keys, titles or file names, and client addresses unless switched on (see *Security Measures*, *Traces*).
+* **Kept 48 hours** (`docker/tempo/tempo.yaml`), on the `tempo_data` volume. A bundle lasts at most 7 days, and a trace still shows that a bundle was uploaded and downloaded, and when.
+* **Ports:** the API sends traces to `tempo:4317` over the compose network only. Tempo's query port is on loopback (`127.0.0.1:3200`) for tooling.
+* **Check it works:** with the stack up, run `scripts/check-traces.sh` (Git Bash). It sends one request under its own trace id and checks that Tempo has it, without the share token. CI runs it after the browser tests.
+* **Turn it off:** remove `OTEL_EXPORTER_OTLP_ENDPOINT` from the `api` service. Nothing is sent then, and log lines inside a request still carry their trace id.
 
 ### Encrypted Downloads
 * **Opening the link:**
@@ -206,11 +222,12 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Storage__LifecycleExpiryDays` | unset (10, calculated) | Days after which storage deletes any object. Only for a longer safety net; lower than the calculated value refuses to start |
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | unset | Where traces go over OTLP (e.g. `http://tempo:4317`). Unset, nothing is sent; log lines inside a trace still end with `trace=… span=…` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4317` | Where traces go over OTLP. Unset (the default outside compose), nothing is sent; log lines inside a trace still end with `trace=… span=…` |
 | `Tracing__SampleRatio` | 1 (default) | Share of requests traced, 0–1. Lower it (e.g. 0.1) on a deployment that sends traces |
 | `Tracing__RecordClientAddress` | false (default) | Keep the caller's address on request spans, for debugging rate limits or the lockout on a real host |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
 | `GRAFANA_ADMIN_PASSWORD` (`.env`) | (yours) | Grafana admin password |
+| UI: `STORAGE_PUBLIC_URL` | `http://localhost:9000` | The same address as `Storage__PublicBaseUrl`, without a path. The UI's Content-Security-Policy allows connections to it; without a valid one the container doesn't start |
 | UI: `VITE_API_BASE_URL` (build time) | `/api/v1/files` (`.env.production`) | API address the UI calls; `.env.development` uses `http://localhost:8080/api/v1/files` |
 
 `docker-compose.override.example.yml` shows how to override settings locally (used for phone testing below).
@@ -229,7 +246,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `tests/vectors` | Examples both test suites check, so the server's and browser's file-name rules agree |
 | `tests/FileHolder.Tests.Integration` | API and service tests (Testcontainers PostgreSQL) |
 | `tests/load` | k6 load tests, their runner (`run.ps1`) and database checks |
-| `docker/` | Prometheus and Grafana provisioning |
+| `docker/` | Prometheus, Tempo and Grafana configuration |
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
 
 ---
@@ -321,7 +338,7 @@ Encrypted downloads are saved differently per browser (see *Encrypted Downloads*
    cloudflared tunnel --url http://localhost:3000   # the app
    cloudflared tunnel --url http://localhost:9000   # storage: upload and download links point straight at it
    ```
-3. **Point upload and download links at the storage tunnel:** copy `docker-compose.override.example.yml` to `docker-compose.override.yml` (git-ignored), put the storage tunnel's address in it, then `docker compose up -d api`.
+3. **Point upload and download links at the storage tunnel:** copy `docker-compose.override.example.yml` to `docker-compose.override.yml` (git-ignored), put the storage tunnel's address in it (in both places: the API's links and the UI's Content-Security-Policy), then `docker compose up -d api ui`.
 4. **Upload through the app tunnel's address** (on the PC is fine), so the share link uses that address too. Open the share link on the phone with `?diagnostics` added **before the `#`**, e.g. `https://….trycloudflare.com/f/AbCd1234?diagnostics#k=…`. A *Diagnostics* panel shows which saving methods the browser will try, why others are left out, the free site storage, and how the last download was saved. **Copy** puts the whole report on the clipboard.
 5. **Checks:**
    - A small encrypted file downloads to *Files → Downloads* and opens; the panel says `via opfs`.
@@ -336,13 +353,13 @@ Encrypted downloads are saved differently per browser (see *Encrypted Downloads*
      - Pick a photo from the iPhone's library in Safari. The file list shows whether iOS handed over a JPEG copy (labelled *Metadata will be removed*, and 📍 if it has a location) or the HEIC original (*Metadata can't be removed (HEIC)*).
      - After downloading, the photo shows no location in Photos or Files (swipe up or *Get Info*), and displays the right way up.
    - A tampered file must fail with an error, not save. Tamper with the stored copy (Git Bash on Windows): `scripts/tamper-stored-file.sh <share-token> [file-number] [byte-offset]`. It flips one byte (by default in the middle of the file) and prints the command that restores it.
-6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the storage console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api`.
+6. **Close the tunnels** (Ctrl+C) when done: while open, anyone with an address can reach the app. Use throwaway files, and don't tunnel the storage console (port 9001). Then delete `docker-compose.override.yml` and run `docker compose up -d api ui`.
 
 **If `cloudflared` reports it can't reach port 7844** (some networks block it), use [Tailscale](https://tailscale.com) instead. It only needs normal HTTPS, and the addresses are reachable by your own devices only:
 1. Install it on the PC and the phone with the same account.
 2. Turn on *MagicDNS* and *HTTPS Certificates* in the admin console.
 3. Run `tailscale serve --bg --https=443 http://127.0.0.1:3000` and `tailscale serve --bg --https=8443 http://127.0.0.1:9000`.
-4. Set `Storage__PublicBaseUrl` to `https://<your-pc>.<tailnet>.ts.net:8443` (`tailscale serve status` shows the address).
+4. Set `Storage__PublicBaseUrl` and the UI's `STORAGE_PUBLIC_URL` to `https://<your-pc>.<tailnet>.ts.net:8443` (`tailscale serve status` shows the address).
 5. Stop serving afterwards with `tailscale serve reset`.
 
 If uploads fail with `403 SignatureDoesNotMatch`, the storage tunnel isn't passing the original host name on to storage (upload links are signed for it). A named Cloudflare tunnel has a fixed host name that can be set with `--http-host-header`. Upload parts are 16 MiB and single uploads at most 50 MB, well under Cloudflare's per-request size limit.

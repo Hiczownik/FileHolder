@@ -44,7 +44,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 | **Wherever the link travels** (chat apps, email, link previews, the clipboard) | The share token | **The link key: everything** | The link key, but not the passkey if it's sent separately |
 | **A malicious uploader** | Blocked file types are refused by the server (`FileSecurityUtils.IsExtensionForbidden`). Can upload 5 GB per bundle anonymously, rate-limited per IP only | Writes the manifest, so can try malicious names (checked in the recipient's browser) or extreme chunk settings (bounded by `parseStreamParams`) | Same as link-only |
 | **A malicious recipient** | Uses up the download limit for others. Triggers the lockout to block others (capped at 1 h: `PasswordLockout.MaxLockout`) | Uses up the download limit | Same as normal |
-| **Another website** | **Can frame the UI pages:** nginx sends no `X-Frame-Options` or CSP (#130) | Same | Same |
+| **Another website** | Can link to the pages, but not frame them (`frame-ancestors 'none'`, `X-Frame-Options: DENY`, #130) or read anything from them | Same | Same |
 | **Whoever controls the served JavaScript** (a compromised server, nginx or build) | n/a: the server sees everything anyway | **Can serve code that leaks link keys and contents.** Accepted risk, see §6 | Same, passkeys included |
 
 **When deployed:** the network row assumes HTTPS everywhere (#82). Backups of the database or storage volume extend the operator row past the purge (§5).
@@ -100,11 +100,15 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
   - the download page removes it from the address with `replaceState` and keeps it in `sessionStorage` for that tab only (`useFileDownload.ts`, `linkKeyStore.ts`).
 
 ### Responses, logs and infrastructure
-- **Security headers on API responses:** `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, CSP (`SecurityHeadersMiddleware`). The UI pages don't have them yet (§5).
+- **Security headers on API responses:** `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, CSP (`SecurityHeadersMiddleware`).
+- **Security headers on the UI pages** (#130, `nginx.conf.template`):
+  - a CSP that runs only the app's own scripts (no inline script, no other origin; `'wasm-unsafe-eval'` for Argon2id) and connects only to the app and storage (`STORAGE_PUBLIC_URL`);
+  - no framing (`frame-ancestors 'none'`, `X-Frame-Options: DENY`), `nosniff`, and `Referrer-Policy: no-referrer`, so the share token in the path isn't sent anywhere either;
+  - `e2e/securityHeaders.spec.ts` checks them and fails on any CSP violation during an encrypted upload and download.
 - **Errors are RFC 7807 `ProblemDetails`.** Internal messages are shown only in Development.
 - **Share tokens stay out of logs:**
   - the API logs route templates, not paths (Serilog override in `Program.cs`);
-  - nginx's access log writes `[token]` and drops query strings (`nginx.conf`).
+  - nginx's access log writes `[token]` and drops query strings (`nginx.conf.template`).
   - File names and titles are logged only at `Debug`.
 - **Traces** (#72) are sent only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. `TraceRedactionProcessor` cleans every span before any exporter sees it:
   - paths become route templates, and query strings are dropped (presigned-URL signatures, download-session ids);
@@ -113,8 +117,8 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
   - bodies (passwords, `kAuth`, keys, manifests) and database parameter values are never recorded.
   - The API's own spans (`FileHolderTracing`) carry counts, outcomes and GUIDs only. A failed step records the exception's type, not its message, which can name a file.
   - `TracingTests` checks a whole upload and download against an in-memory exporter.
-  - A trace still shows *that* a bundle was uploaded, unlocked and downloaded, and when, for as long as the trace store keeps it.
-- **Ports:** storage, database, API, Prometheus and Grafana are bound to loopback. Metrics are only on an unpublished port (9464). Grafana needs a password from `.env`.
+  - A trace still shows *that* a bundle was uploaded, unlocked and downloaded, and when, for as long as the trace store keeps it. Tempo keeps traces 48 hours (`docker/tempo/tempo.yaml`).
+- **Ports:** storage, database, API, Prometheus, Tempo's query port (3200) and Grafana are bound to loopback. Metrics are only on an unpublished port (9464), and so is Tempo's OTLP intake (4317/4318), so nothing outside the compose network can send it traces. Grafana needs a password from `.env`; Prometheus and Tempo have no login, so loopback is their only protection.
 - **Supply chain** (#74):
   - images are pinned by digest, actions by SHA, and NuGet versions are exact;
   - Dependabot proposes updates;
@@ -127,9 +131,8 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 
 | Gap | Tracked in |
 | :--- | :--- |
-| **No security headers on UI pages.** nginx sends no CSP, `X-Frame-Options`, `nosniff` or `Referrer-Policy`, so the pages can be framed and nothing limits script sources. | #130 (deployment blocker) |
 | **Short passwords are allowed** on plain bundles: 4 characters (`BundleRules`). The lockout limits online guessing, and bcrypt slows offline guessing. **Passkeys need 10 characters** (`passkeyProblem`, #78), but only the browser can check that, since the server never sees a passkey. A modified client could skip the check, weakening only its own bundle. Offline guessing of a passkey also needs the link key. | Accepted |
-| **Link keys and `kAuth` sit in `sessionStorage`**, so any script running on the origin can read them. That makes the CSP in #130 important. | #130 |
+| **Link keys and `kAuth` sit in `sessionStorage`**, so any script running on the origin can read them. The UI's CSP (#130) allows only the app's own scripts and connections to the app and storage, so an injected script can neither run nor send them elsewhere. | Accepted (CSP, #130) |
 | **Rate limits are per IP.** Changing IP sidesteps them. On Docker Desktop all clients share one partition (README). The lockout protects passwords, but nothing limits anonymous uploads beyond the per-IP limit. | #82 (upload abuse) |
 | **Committed default credentials** (Postgres password, `minioadmin`), and **the API uses the storage root credentials**. | #82 |
 | **No HTTPS** outside tunnels, and `X-Forwarded-Proto` trust and HSTS are undecided. | #82 |
@@ -140,7 +143,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 ## 6. Accepted risks
 
 - **The server serves the code that encrypts.** As with every browser-based encryption app, a compromised server, nginx or build could serve JavaScript that sends keys or contents elsewhere, and users couldn't tell. Mitigations:
-  - a strict CSP (#130);
+  - a strict CSP (#130). It stops injected scripts, but not the server's own code, since the same server sends the policy;
   - the command-line client as an independent way to encrypt and decrypt (#66);
   - later, Subresource Integrity on built assets, and reproducible UI builds with published hashes.
 - **For link-only bundles, the link is the secret.** Wherever the link goes (chat history, email, link-preview services), the key goes too. The upload form says so and offers "Also require a passkey".

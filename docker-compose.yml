@@ -80,12 +80,16 @@ services:
       # instance, psql and other tools were refused. 50 leaves room for a second instance during a rolling deploy.
       ConnectionStrings__PostgresConnection: "Host=postgres;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=fileholder_password;Maximum Pool Size=50"
       Storage__ServiceUrl: "http://minio:9000"
+      # Keep in step with the ui container's STORAGE_PUBLIC_URL below.
       Storage__PublicBaseUrl: "http://localhost:9000"
       Storage__AccessKey: "minioadmin"
       Storage__SecretKey: "minioadmin"
       Storage__BucketName: "fileholder-bucket"
       # X-Forwarded-For is honoured only from the ui container's nginx, pinned to this address below.
       ForwardedHeaders__KnownProxies__0: "172.30.250.10"
+      # Traces go to Tempo over the compose network. Not a dependency: if Tempo is down the API still serves, and
+      # only traces are lost. Unset it to send none (see README, Tracing).
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
     depends_on:
       postgres:
         condition: service_healthy
@@ -110,6 +114,10 @@ services:
     container_name: fileholder-ui
     ports:
       - "3000:80"
+    environment:
+      # The same address as the API's Storage__PublicBaseUrl. The page's Content-Security-Policy lets it upload to
+      # and download from this address only, so with a different one every transfer is blocked.
+      STORAGE_PUBLIC_URL: "http://localhost:9000"
     networks:
       default:
         # Fixed so the API can trust X-Forwarded-For from this container and nothing else.
@@ -132,6 +140,19 @@ services:
     depends_on:
       - api
 
+  tempo:
+    # Traces (docker/tempo/tempo.yaml): kept 48 h. OTLP (4317 gRPC, 4318 HTTP) is only reachable on the compose
+    # network; the query port is on loopback for scripts/check-traces.sh and local tooling. Grafana reads it as the
+    # Tempo datasource.
+    image: grafana/tempo:3.1.1@sha256:64e2fbd56d9c2b3412a4b430a58ea59e91a670b1e75f920a0c702213ad145044
+    container_name: fileholder-tempo
+    command: ["-target=all", "-config.file=/etc/tempo.yaml"]
+    ports:
+      - "127.0.0.1:3200:3200"
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+
   grafana:
     image: grafana/grafana:13.2.4@sha256:dbbc38ea21103cefb50396340cd88afec779c7e070b0a7bf5a75b4ce46651d3f
     container_name: fileholder-grafana
@@ -144,6 +165,7 @@ services:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - prometheus
+      - tempo
 
   # Load tests (tests/load). Only started on demand: the "load" profile keeps `docker compose up` from running it.
   # Use tests/load/run.ps1, which also applies docker-compose.load.yml so presigned URLs point at minio:9000.
@@ -167,6 +189,7 @@ volumes:
   postgres_data:
   minio_data:
   prometheus_data:
+  tempo_data:
 
 networks:
   default:

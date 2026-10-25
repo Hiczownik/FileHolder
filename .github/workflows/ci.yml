@@ -93,11 +93,12 @@ jobs:
             - name: Start Docker Compose Stack
               run: |
                 # Compose requires a Grafana password; CI never logs in, so a throwaway one is enough.
-                # Only api and ui (plus their dependencies) are started: the tests don't use Prometheus or Grafana.
+                # Only api, ui and tempo (plus their dependencies) are started: the tests don't use Prometheus or Grafana,
+                # and tempo receives the API's traces for the trace check after the browser tests.
                 # docker-compose.ci.yml raises the per-address rate limits: every test request comes from this runner.
                 # Compose starts ui only once the API's health check (/healthz/ready) passes, and fails if it never does;
                 # then the readiness report says which check failed.
-                if ! GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build api ui; then
+                if ! GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 16)" docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build api ui tempo; then
                   echo "::error::The stack didn't start. The API's readiness report:"
                   curl -sS http://localhost:8080/healthz/ready || true
                   echo
@@ -182,6 +183,14 @@ jobs:
               run: |
                 cd src/fileholder-ui
                 npx playwright test
+            - name: Verify Traces Reach Tempo
+              run: |
+                # A broken tracing setup fails nothing else: this sends one request under its own trace id and checks
+                # Tempo has it, with the share token redacted (#72).
+                if ! scripts/check-traces.sh; then
+                  docker compose logs --tail 30 tempo
+                  exit 1
+                fi
             - name: Upload Playwright Artifacts on Failure
               if: failure()
               uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

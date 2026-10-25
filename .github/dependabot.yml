@@ -73,7 +73,8 @@ updates:
         update-types: [version-update:semver-major]
 
   - package-ecosystem: docker-compose
-    # docker-compose.yml: postgres, Silo, Prometheus, Grafana. The integration tests read their images from it.
+    # docker-compose.yml: postgres, Silo, Prometheus, Grafana, Tempo, k6. The integration tests read their images from it.
+    # A Tempo major can change its config format (docker/tempo/tempo.yaml): check it with scripts/check-traces.sh.
     directory: /
     schedule:
       interval: weekly
