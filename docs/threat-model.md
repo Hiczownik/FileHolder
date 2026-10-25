@@ -119,6 +119,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
   - `TracingTests` checks a whole upload and download against an in-memory exporter.
   - A trace still shows *that* a bundle was uploaded, unlocked and downloaded, and when, for as long as the trace store keeps it. Tempo keeps traces 48 hours (`docker/tempo/tempo.yaml`).
 - **Ports:** storage, database, API, Prometheus, Tempo's query port (3200) and Grafana are bound to loopback. Metrics are only on an unpublished port (9464), and so is Tempo's OTLP intake (4317/4318), so nothing outside the compose network can send it traces. Grafana needs a password from `.env`; Prometheus and Tempo have no login, so loopback is their only protection.
+- **Credentials:** none are committed. Compose reads every password from `.env`, and the API refuses to start without its connection string and storage key. The API signs in to storage as its own user (`fileholder-api`), limited by `docker/silo/api-policy.json` to the bucket's objects, multipart uploads and lifecycle rule, so a leaked API key can't make the bucket public, reach other buckets or manage storage users. `StoragePolicyTests` checks the policy against every storage call the API makes.
 - **Supply chain** (#74):
   - images are pinned by digest, actions by SHA, and NuGet versions are exact;
   - Dependabot proposes updates;
@@ -134,7 +135,6 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 | **Short passwords are allowed** on plain bundles: 4 characters (`BundleRules`). The lockout limits online guessing, and bcrypt slows offline guessing. **Passkeys need 10 characters** (`passkeyProblem`, #78), but only the browser can check that, since the server never sees a passkey. A modified client could skip the check, weakening only its own bundle. Offline guessing of a passkey also needs the link key. | Accepted |
 | **Link keys and `kAuth` sit in `sessionStorage`**, so any script running on the origin can read them. The UI's CSP (#130) allows only the app's own scripts and connections to the app and storage, so an injected script can neither run nor send them elsewhere. | Accepted (CSP, #130) |
 | **Rate limits are per IP.** Changing IP sidesteps them. On Docker Desktop all clients share one partition (README). The lockout protects passwords, but nothing limits anonymous uploads beyond the per-IP limit. | #82 (upload abuse) |
-| **Committed default credentials** (Postgres password, `minioadmin`), and **the API uses the storage root credentials**. | #82 |
 | **No HTTPS** outside tunnels, and `X-Forwarded-Proto` trust and HSTS are undecided. | #82 |
 | **nginx's error log** shows the full request, share token included, when it can't reach the API (its format can't be changed). | README, *Logs* |
 | **Backups** (once there are any) would keep files and rows past the purge. | #82 |

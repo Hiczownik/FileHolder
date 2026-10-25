@@ -12,11 +12,13 @@ public class StorageOptions
     [Required(ErrorMessage = "Storage:PublicBaseUrl is required.")]
     public string PublicBaseUrl { get; set; } = "http://localhost:9000";
 
+    // No defaults: credentials come from the environment (compose reads them from .env) or, for a local
+    // `dotnet run`, from user secrets (README, Development).
     [Required(ErrorMessage = "Storage:AccessKey is required.")]
-    public string AccessKey { get; set; } = "minioadmin";
+    public string AccessKey { get; set; } = string.Empty;
 
     [Required(ErrorMessage = "Storage:SecretKey is required.")]
-    public string SecretKey { get; set; } = "minioadmin";
+    public string SecretKey { get; set; } = string.Empty;
 
     [Required(ErrorMessage = "Storage:BucketName is required.")]
     public string BucketName { get; set; } = "fileholder-bucket";

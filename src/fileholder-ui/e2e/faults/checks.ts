@@ -10,8 +10,9 @@ const POSTGRES_CONTAINER = 'fileholder-postgres';
 const STORAGE_CONTAINER = 'fileholder-minio';
 const API_CONTAINER = 'fileholder-api';
 const BUCKET = 'fileholder-bucket';
-// The storage container's own `mc` reaches it on localhost with the root credentials from docker-compose.yml.
-const MC_HOST = 'http://minioadmin:minioadmin@localhost:9000';
+// The storage container's own `mc` reaches it on localhost, signed in as the storage admin, whose credentials are in
+// that container's environment (from .env), so this file needs none of its own.
+const MC_HOST = 'http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@localhost:9000';
 
 const docker = (args: readonly string[], input?: string): string =>
   execFileSync('docker', args, { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
@@ -66,7 +67,8 @@ export function bundleCounts(shareToken: string): BundleCounts {
 
 /** Multipart uploads storage still holds open for this object key, i.e. parts nobody completed or aborted. */
 export function incompleteUploads(storageKey: string): string[] {
-  const output = docker(['exec', '-e', `MC_HOST_local=${MC_HOST}`, STORAGE_CONTAINER, 'mc', 'ls', '--incomplete', '--json', `local/${BUCKET}/${storageKey}`]);
+  // The container's shell expands the credentials; the key is passed as an argument ("$1"), never pasted into the script.
+  const output = docker(['exec', STORAGE_CONTAINER, 'sh', '-c', `MC_HOST_local="${MC_HOST}" exec mc ls --incomplete --json "local/${BUCKET}/$1"`, 'sh', storageKey]);
   return output.split('\n').filter((line) => line.trim() !== '');
 }
 

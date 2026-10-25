@@ -12,7 +12,7 @@ namespace FileHolder.Tests.Integration.Endpoints;
 /// </summary>
 public class RateLimitTests(RealRateLimitsFactory factory) : IClassFixture<RealRateLimitsFactory>
 {
-    private const string AppOrigin = "http://localhost:5173";
+    private const string AppOrigin = CustomWebApplicationFactory.CrossOrigin;
 
     private readonly HttpClient _client = factory.CreateClient();
 

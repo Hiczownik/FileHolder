@@ -4,6 +4,7 @@ using FileHolder.Tests.Integration.Fixtures;
 using FluentAssertions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 
@@ -62,6 +63,52 @@ public class HostingConfigurationTests(CustomWebApplicationFactory factory) : IC
         var start = () => misconfigured.CreateClient();
 
         start.Should().Throw<OptionsValidationException>().WithMessage("*must be absolute http:// or https:// URLs*");
+    }
+
+    [Theory]
+    [InlineData("Storage:AccessKey")]
+    [InlineData("Storage:SecretKey")]
+    public void Startup_RefusesMissingStorageCredentials(string setting)
+    {
+        // appsettings.json has none, so a deployment that forgets them stops here instead of failing every upload.
+        using var misconfigured = factory.WithWebHostBuilder(builder => builder.ConfigureAppConfiguration(config =>
+            config.AddInMemoryCollection(new Dictionary<string, string?> { [setting] = "" })));
+
+        var start = () => misconfigured.CreateClient();
+
+        start.Should().Throw<OptionsValidationException>().WithMessage($"*{setting} is required*");
+    }
+
+    [Theory]
+    [InlineData(CustomWebApplicationFactory.CrossOrigin, true)]
+    [InlineData("https://elsewhere.example", false)]
+    public async Task Cors_AllowsOnlyTheConfiguredOrigins(string origin, bool allowed)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Options, "/api/v1/files/presign");
+        request.Headers.Add("Origin", origin);
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+
+        var response = await factory.CreateClient().SendAsync(request);
+
+        response.Headers.TryGetValues("Access-Control-Allow-Origin", out var allowedOrigins).Should().Be(allowed);
+        if (allowed)
+        {
+            allowedOrigins.Should().Equal(origin);
+        }
+    }
+
+    [Theory]
+    [InlineData("http://localhost:3000/")]
+    [InlineData("https://fileholder.app/upload")]
+    [InlineData("fileholder.app")]
+    public void Startup_RefusesACorsEntryThatIsNotAnOrigin(string entry)
+    {
+        using var misconfigured = factory.WithWebHostBuilder(builder => builder.ConfigureAppConfiguration(config =>
+            config.AddInMemoryCollection(new Dictionary<string, string?> { ["Cors:AllowedOrigins:1"] = entry })));
+
+        var start = () => misconfigured.CreateClient();
+
+        start.Should().Throw<OptionsValidationException>().WithMessage("*isn't an origin*");
     }
 
     [Fact]
