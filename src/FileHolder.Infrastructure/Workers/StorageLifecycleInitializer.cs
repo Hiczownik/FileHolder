@@ -16,6 +16,7 @@ public sealed record AppliedLifecycleRule(int? ExpiryDays, int? AbortIncompleteU
 /// Puts the storage safety net in place at startup: a bucket lifecycle rule that deletes any object older than the
 /// app could ever keep one (<see cref="StorageSafetyNet"/>). The purge worker stays the main mechanism; this only
 /// catches what it misses. Runs in the background and retries until storage answers, so startup never waits on it.
+/// With <see cref="LifecycleRuleMode.External"/> it makes no storage call and only logs the rule's expected values.
 /// </summary>
 public sealed class StorageLifecycleInitializer(
     [FromKeyedServices("InternalS3")] IAmazonS3 s3Client,
@@ -30,6 +31,16 @@ public sealed class StorageLifecycleInitializer(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var expectedDays = options.Value.EffectiveLifecycleExpiryDays;
+        if (options.Value.LifecycleRule == LifecycleRuleMode.External)
+        {
+            status.MarkExternal();
+            logger.LogInformation(
+                "Storage lifecycle rule is managed outside the app (Storage:LifecycleRule=External). It should delete " +
+                "objects after {Days} days and abort incomplete multipart uploads after {AbortDays} days.",
+                expectedDays, StorageSafetyNet.AbandonedUploadDays);
+            return;
+        }
+
         var delay = FirstRetryDelay;
 
         while (!stoppingToken.IsCancellationRequested)
