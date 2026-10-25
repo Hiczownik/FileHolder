@@ -21,7 +21,7 @@ namespace FileHolder.Tests.Integration.Endpoints;
 /// Every request carries this test's own traceparent, and only that trace is read: the exporter also sees requests
 /// to the other test classes' API instances running alongside.
 /// </summary>
-[Collection(TracingCollection.Name)]
+[Collection(TracingCollectionDefinition.Name)]
 public class TracingTests : IClassFixture<TracingFactory>
 {
     private const string FileName = "tracing_secret_report.pdf";
