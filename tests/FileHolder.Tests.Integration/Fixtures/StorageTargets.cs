@@ -1,5 +1,6 @@
 using Amazon.S3;
 using Amazon.S3.Model;
+using FileHolder.Core.Configuration;
 using FileHolder.Infrastructure.Services;
 
 namespace FileHolder.Tests.Integration.Fixtures;
@@ -8,7 +9,11 @@ namespace FileHolder.Tests.Integration.Fixtures;
 /// One storage service the conformance tests run against, signed in as the API would be: with a key limited to
 /// its bucket, through <see cref="S3ClientFactory"/>, the factory the API itself uses.
 /// </summary>
-public sealed record StorageTarget(string Name, string ServiceUrl, string BucketName, IAmazonS3 ApiClient)
+/// <param name="LifecycleRule">
+/// How the API runs on it: Apply where its key may manage the bucket's settings (Silo's policy allows the
+/// lifecycle rule), External where it may only touch objects (an R2 token limited to one bucket).
+/// </param>
+public sealed record StorageTarget(string Name, string ServiceUrl, string BucketName, IAmazonS3 ApiClient, LifecycleRuleMode LifecycleRule)
 {
     /// <summary>Every object a test run creates is under this prefix, so it can all be removed afterwards.</summary>
     public string KeyPrefix { get; } = $"conformance/{Guid.NewGuid():N}/";
@@ -84,12 +89,12 @@ public sealed class StorageTargetsFixture : IAsyncLifetime
     public async Task InitializeAsync()
     {
         await _silo.InitializeAsync();
-        _targets[Silo] = new StorageTarget(Silo, _silo.ServiceUrl, SiloFixture.BucketName, _silo.ApiClient);
+        _targets[Silo] = new StorageTarget(Silo, _silo.ServiceUrl, SiloFixture.BucketName, _silo.ApiClient, LifecycleRuleMode.Apply);
 
         if (R2Settings.Current is { } r2)
         {
             _targets[R2] = new StorageTarget(R2, r2.ServiceUrl, r2.Bucket,
-                S3ClientFactory.Create(r2.ServiceUrl, r2.AccessKeyId, r2.SecretAccessKey));
+                S3ClientFactory.Create(r2.ServiceUrl, r2.AccessKeyId, r2.SecretAccessKey), LifecycleRuleMode.External);
         }
     }
 

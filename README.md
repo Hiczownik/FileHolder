@@ -254,6 +254,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `UploadLimits__GlobalQuotaBytes` | unset (no quota) | Most storage all bundles and pending uploads may take up together, counted from their declared sizes. A cap on what's accepted, not an exact meter: confirm's copies of single-part files and two presigns at once can go a little past it |
 | `RateLimits__*PermitLimit` | see *Rate limits* (defaults) | Requests per client address per minute, per endpoint group. Raise only for single-address test stacks |
 | `Storage__LifecycleExpiryDays` | unset (10, calculated) | Days after which storage deletes any object. Only for a longer safety net; lower than the calculated value refuses to start |
+| `Storage__LifecycleRule` | `Apply` (default) | `Apply`: the API puts the lifecycle rule on the bucket at startup and confirms it. `External`: it's set outside the app (R2's dashboard, see *Running on Cloudflare R2*); the API makes no lifecycle call and logs the values the rule should have |
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
 | `Cors__AllowedOrigins__<n>` | `http://localhost:3000` | Origins whose pages may call the API cross-origin, e.g. `https://fileholder.app`. None by default: through nginx the browser calls the API same-origin, which needs no CORS. Scheme, host and port only, with no trailing slash, or the API refuses to start |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
@@ -276,6 +277,62 @@ services:
       UploadLimits__MaxBundleSizeBytes: "262144000"   # 250 MB
       UploadLimits__MaxExpiryHours: "24"
       UploadLimits__GlobalQuotaBytes: "10737418240"   # 10 GB
+```
+
+### Running on Cloudflare R2
+
+The API works with any S3-compatible storage. The conformance suite (`StorageConformanceTests`) runs everything the API and the browser do with storage against Silo, and against R2 when a test bucket is configured (below). R2 needs these settings, all made in Cloudflare's dashboard:
+
+1. **Bucket:** create it with a **jurisdiction** (e.g. *European Union*) if the data must stay in one region. The jurisdiction can't be changed later, and it gives the bucket its own address: `https://<account-id>.eu.r2.cloudflarestorage.com`.
+2. **CORS policy** (bucket → Settings). Browsers upload and download directly, and must be able to read each part's `ETag`:
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://fileholder.app"],
+       "AllowedMethods": ["GET", "PUT", "HEAD"],
+       "AllowedHeaders": ["content-type", "range", "if-range"],
+       "ExposeHeaders": ["ETag", "Content-Length", "Content-Range", "Content-Disposition"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
+   ```
+3. **Lifecycle rule** (bucket → Settings → Object lifecycle rules), the storage safety net: delete objects after the days below, and **abort incomplete multipart uploads after 2 days**. The API can't set it there (step 4), but it logs the exact values at startup, and the `storage_lifecycle` health check shows them.
+
+   | `UploadLimits__MaxExpiryHours` | Delete objects after |
+   | :--- | :--- |
+   | 24 | 4 days |
+   | 72 | 6 days |
+   | 168 (default) | 10 days |
+
+   R2 applies rules in the background, so deletion can lag by up to about a day; the purge stays the main mechanism.
+4. **API token:** *Object Read & Write*, limited to this bucket. It can't change the bucket's settings, so a leaked key can't make the bucket public or reconfigure it (the conformance suite checks that too). That's also why the rule and CORS are set by hand.
+5. **Settings:**
+   ```yaml
+   services:
+     api:
+       environment:
+         Storage__ServiceUrl: "https://<account-id>.eu.r2.cloudflarestorage.com"
+         Storage__PublicBaseUrl: "https://<account-id>.eu.r2.cloudflarestorage.com"
+         Storage__BucketName: "<bucket>"
+         Storage__AccessKey: "<token's Access Key ID>"        # from .env, never committed
+         Storage__SecretKey: "<token's Secret Access Key>"    # from .env, never committed
+         Storage__LifecycleRule: "External"
+     ui:
+       environment:
+         STORAGE_PUBLIC_URL: "https://<account-id>.eu.r2.cloudflarestorage.com"   # the page's CSP allows only this
+   ```
+   Presigned URLs use R2's own address: custom domains don't support them.
+
+**Checking a bucket:** put a test bucket's details in `%USERPROFILE%\.fileholder\r2-test.env` (outside the repository) and run the conformance suite. Without the file, only Silo is checked.
+```
+R2_ACCOUNT_ID=<account id>
+R2_ACCESS_KEY_ID=<Access Key ID>
+R2_SECRET_ACCESS_KEY=<Secret Access Key>
+R2_BUCKET=<test bucket>
+R2_JURISDICTION=eu
+```
+```powershell
+dotnet test tests/FileHolder.Tests.Integration --filter "FullyQualifiedName~StorageConformance"
 ```
 
 ---

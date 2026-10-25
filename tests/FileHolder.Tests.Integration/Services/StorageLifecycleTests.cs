@@ -7,7 +7,9 @@ using FileHolder.Infrastructure.Services;
 using FileHolder.Infrastructure.Workers;
 using FileHolder.Tests.Integration.Fixtures;
 using FluentAssertions;
+using FileHolder.Api.Health;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -29,9 +31,10 @@ public class StorageLifecycleTests(SiloFixture silo) : IClassFixture<SiloFixture
     private static StorageLifecycleStatus NewStatus() =>
         new(new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
 
-    private static StorageLifecycleInitializer NewInitializer(IAmazonS3 client, StorageLifecycleStatus status, int? expiryDays = null) =>
+    private static StorageLifecycleInitializer NewInitializer(
+        IAmazonS3 client, StorageLifecycleStatus status, int? expiryDays = null, LifecycleRuleMode mode = LifecycleRuleMode.Apply) =>
         new(client,
-            Options.Create(new StorageOptions { BucketName = SiloFixture.BucketName, LifecycleExpiryDays = expiryDays }),
+            Options.Create(new StorageOptions { BucketName = SiloFixture.BucketName, LifecycleExpiryDays = expiryDays, LifecycleRule = mode }),
             status,
             NullLogger<StorageLifecycleInitializer>.Instance);
 
@@ -79,6 +82,45 @@ public class StorageLifecycleTests(SiloFixture silo) : IClassFixture<SiloFixture
 
         status.ConfirmedExpiryDays.Should().Be(StorageSafetyNet.LifecycleExpiryDays);
         ObservedLifecycleDays().Should().Be(StorageSafetyNet.LifecycleExpiryDays);
+    }
+
+    [Fact]
+    public async Task WithAnExternalRule_NoStorageCallIsMade_AndTheMetricReportsNothing()
+    {
+        // As with a Cloudflare R2 token limited to one bucket: every lifecycle call would be refused.
+        var objectsOnly = Substitute.For<IAmazonS3>();
+        var meterFactory = new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>();
+        var status = new StorageLifecycleStatus(meterFactory);
+        using var initializer = NewInitializer(objectsOnly, status, mode: LifecycleRuleMode.External);
+
+        await initializer.StartAsync(CancellationToken.None);
+        await initializer.ExecuteTask!;
+
+        objectsOnly.ReceivedCalls().Should().BeEmpty();
+        status.IsExternal.Should().BeTrue();
+        var measured = new List<int>();
+        using var listener = new MeterListener();
+        // Only this status's meter: other tests' statuses publish the same instrument.
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (ReferenceEquals(instrument.Meter.Scope, meterFactory)) l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<int>((_, value, _, _) => measured.Add(value));
+        listener.Start();
+        listener.RecordObservableInstruments();
+        measured.Should().BeEmpty("the API can't know the rule's days, so it claims none");
+    }
+
+    [Fact]
+    public async Task WithAnExternalRule_TheHealthCheckIsHealthy_AndStatesWhatTheRuleShouldBe()
+    {
+        var options = Options.Create(new StorageOptions { BucketName = SiloFixture.BucketName, LifecycleRule = LifecycleRuleMode.External });
+        options.Value.UseMaxExpiryHours(24);
+
+        var result = await new StorageLifecycleHealthCheck(NewStatus(), options).CheckHealthAsync(new HealthCheckContext());
+
+        result.Status.Should().Be(HealthStatus.Healthy);
+        result.Description.Should().Be("Managed outside the app (Storage:LifecycleRule=External); expected: objects deleted after 4 days, unfinished uploads aborted after 2 days.");
     }
 
     [Fact]
@@ -202,6 +244,25 @@ public class StorageLifecycleOptionsTests
         var resolve = () => Resolve(new() { ["UploadLimits:MaxExpiryHours"] = "24", ["Storage:LifecycleExpiryDays"] = "3" });
 
         resolve.Should().Throw<OptionsValidationException>().WithMessage("*Storage:LifecycleExpiryDays is below 4*still live*");
+    }
+
+    [Theory]
+    [InlineData(null, LifecycleRuleMode.Apply)]
+    [InlineData("External", LifecycleRuleMode.External)]
+    [InlineData("apply", LifecycleRuleMode.Apply)]
+    public void TheLifecycleRuleMode_IsApplyUnlessSetOtherwise(string? setting, LifecycleRuleMode expected)
+    {
+        var settings = setting is null ? new Dictionary<string, string?>() : new() { ["Storage:LifecycleRule"] = setting };
+
+        Resolve(settings).LifecycleRule.Should().Be(expected);
+    }
+
+    [Fact]
+    public void AnUnknownLifecycleRuleMode_IsRefused()
+    {
+        var resolve = () => Resolve(new() { ["Storage:LifecycleRule"] = "Sometimes" });
+
+        resolve.Should().Throw<InvalidOperationException>().WithMessage("*Storage:LifecycleRule*");
     }
 
     [Fact]

@@ -19,12 +19,23 @@ internal static class Ages
         : $"{(int)age.TotalHours} h";
 }
 
-/// <summary>Storage has confirmed the lifecycle safety net's rule (#69), as recorded at start; no storage call per probe.</summary>
+/// <summary>
+/// Storage has confirmed the lifecycle safety net's rule (#69), as recorded at start; no storage call per probe.
+/// Healthy when the rule is managed outside the app, a deliberate setup the API can't check, with the values it
+/// should have, so a reader can compare them with the provider's dashboard.
+/// </summary>
 public sealed class StorageLifecycleHealthCheck(StorageLifecycleStatus status, IOptions<StorageOptions> storageOptions) : IHealthCheck
 {
     public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
     {
         var expected = storageOptions.Value.EffectiveLifecycleExpiryDays;
+        if (storageOptions.Value.LifecycleRule == LifecycleRuleMode.External)
+        {
+            return Task.FromResult(HealthCheckResult.Healthy(
+                $"Managed outside the app (Storage:LifecycleRule=External); expected: objects deleted after {expected} days, " +
+                $"unfinished uploads aborted after {StorageSafetyNet.AbandonedUploadDays} days."));
+        }
+
         var result = status.ConfirmedExpiryDays == expected
             ? HealthCheckResult.Healthy($"Storage deletes any object after {expected} days.")
             : HealthCheckResult.Degraded("Storage hasn't confirmed the lifecycle safety net yet.");

@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Net;
 using System.Net.Http.Headers;
+using Amazon.S3;
 using Amazon.S3.Model;
 using FileHolder.Api.Health;
 using FileHolder.Core.Configuration;
@@ -172,18 +173,39 @@ public sealed class StorageConformanceTests(StorageTargetsFixture targets, ITest
         (await _http.SendAsync(part)).StatusCode.Should().Be(HttpStatusCode.NotFound, "storage answers NoSuchUpload");
     }
 
+    /// <summary>
+    /// Where the API applies the safety net's rule itself, its key can put it and read it back. Where the rule is
+    /// managed outside the app, the key is limited to objects: storage refuses it the bucket's settings (the rule,
+    /// and CORS), so a leaked key can't reconfigure the bucket. If this fails there, the API was given too much.
+    /// </summary>
     [Theory]
     [MemberData(nameof(StorageTargetsFixture.Names), MemberType = typeof(StorageTargetsFixture))]
-    public async Task TheSafetyNetsLifecycleRule_CanBePutAndReadBack_WithTheApisKey(string name)
+    public async Task TheApisKey_ManagesTheBucketsSettings_OnlyWhereTheApiAppliesTheRule(string name)
     {
         var target = targets[name];
         var status = new StorageLifecycleStatus(new ServiceCollection().AddMetrics().BuildServiceProvider().GetRequiredService<IMeterFactory>());
         using var initializer = new StorageLifecycleInitializer(target.ApiClient, OptionsFor(target), status, NullLogger<StorageLifecycleInitializer>.Instance);
 
-        var applied = await initializer.ApplyAsync();
+        if (target.LifecycleRule == LifecycleRuleMode.Apply)
+        {
+            var applied = await initializer.ApplyAsync();
 
-        output.WriteLine($"{name} kept the rule with expiry {applied.ExpiryDays} days, abort-incomplete {applied.AbortIncompleteUploadDays?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "dropped"}.");
-        applied.ExpiryDays.Should().Be(StorageSafetyNet.LifecycleExpiryDays);
+            output.WriteLine($"{name} kept the rule with expiry {applied.ExpiryDays} days, abort-incomplete {applied.AbortIncompleteUploadDays?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "dropped"}.");
+            applied.ExpiryDays.Should().Be(StorageSafetyNet.LifecycleExpiryDays);
+            return;
+        }
+
+        var putRule = () => initializer.ApplyAsync();
+        var readRule = () => target.ApiClient.GetLifecycleConfigurationAsync(new GetLifecycleConfigurationRequest { BucketName = target.BucketName });
+        var changeCors = () => target.ApiClient.PutCORSConfigurationAsync(new PutCORSConfigurationRequest
+        {
+            BucketName = target.BucketName,
+            Configuration = new CORSConfiguration { Rules = [new CORSRule { AllowedOrigins = ["*"], AllowedMethods = ["GET"] }] }
+        });
+
+        (await putRule.Should().ThrowAsync<AmazonS3Exception>()).Which.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await readRule.Should().ThrowAsync<AmazonS3Exception>()).Which.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await changeCors.Should().ThrowAsync<AmazonS3Exception>()).Which.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Theory]
