@@ -477,4 +477,4 @@ If uploads fail with `403 SignatureDoesNotMatch`, the storage tunnel isn't passi
 
 ## 📄 Licence
 
-The repository has no licence file yet, so all rights are reserved by default. Choosing a licence is part of [#82](https://github.com/Hiczownik/FileHolder/issues/82). Storage runs Silo, which is licensed under AGPL-3.0 as a separate service.
+FileHolder is released under the [MIT License](LICENSE). The libraries it uses keep their own licences (mostly MIT, Apache-2.0 and BSD). Storage runs Silo, licensed under AGPL-3.0, as a separate, unmodified service, so its licence doesn't extend to FileHolder's code.
