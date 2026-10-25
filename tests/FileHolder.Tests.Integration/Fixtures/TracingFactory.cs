@@ -61,3 +61,14 @@ public class TracingFactory : CustomWebApplicationFactory
         }
     }
 }
+
+/// <summary>
+/// Tracing tests count the spans of whole requests. The ASP.NET Core instrumentation behind them is shared by every
+/// test host in the process, and other test classes start and stop hosts all the time (startup checks especially),
+/// which made request spans go missing now and then. Classes in this collection run on their own, after the rest.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class TracingCollection
+{
+    public const string Name = "Tracing";
+}
