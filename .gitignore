@@ -29,6 +29,8 @@ Thumbs.db
 
 # Local secrets for docker compose
 .env
+# The local production test's secrets (scripts/prod-local.ps1)
+.env.prod-local
 
 # Local compose overrides, e.g. a tunnel address for testing from a phone (see docker-compose.override.example.yml)
 docker-compose.override.yml

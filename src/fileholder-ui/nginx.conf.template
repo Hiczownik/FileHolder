@@ -40,7 +40,7 @@ server {
         # and downloads from through presigned URLs; ${STORAGE_PUBLIC_URL} is filled in when the container starts
         # (docker-entrypoint.d/19-storage-public-url.envsh). font-src allows data: because the build inlines the
         # small woff fonts into the stylesheet. The download worker answers a same-origin iframe (frame-src).
-        # Once the app is served over HTTPS (#82), add Strict-Transport-Security here.
+        # Strict-Transport-Security comes from Caddy in production (docker/caddy/Caddyfile), which serves HTTPS.
         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self'; font-src 'self' data:; connect-src 'self' ${STORAGE_PUBLIC_URL}; worker-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'" always;
         # frame-ancestors covers current browsers; this is for older ones.
         add_header X-Frame-Options "DENY" always;

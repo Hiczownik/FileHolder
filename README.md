@@ -362,6 +362,33 @@ services:
       UploadLimits__GlobalQuotaBytes: "10737418240"   # 10 GB
 ```
 
+### Production
+One server runs the whole app with `docker-compose.prod.yml`; files live in Cloudflare R2 (*Running on Cloudflare R2*).
+
+```
+ Internet ──443/80──▶ Caddy ──▶ nginx (ui) ──/api/──▶ API ──▶ PostgreSQL
+                      HTTPS,     UI, CSP,              │  ╲
+                      HSTS       redacted log          │   ╲──▶ Tempo (traces)
+                                                       ▼
+ Browser ──presigned URLs──────────────────────▶ Cloudflare R2        Prometheus ◀── /metrics
+```
+
+* **Only Caddy is published**, on 80 and 443. Docker's published ports get around a host firewall such as `ufw`, so nothing else is: the admin port (9465), Prometheus (9090) and Tempo (3200) are bound to the server's loopback, and Postgres, nginx and the API aren't published at all.
+* **Caddy** (`docker/caddy/Caddyfile`) gets and renews the certificate for `SITE_ADDRESS` (Let's Encrypt, ZeroSSL as the fallback), redirects HTTP to HTTPS, adds `Strict-Transport-Security`, drops the `Server` header, and streams everything to nginx. It keeps no access log (paths hold share tokens); nginx logs them redacted. Its certificates are on the `caddy_data` volume: keep it, or every restart asks for new ones and soon hits Let's Encrypt's rate limits.
+* **Client addresses** pass along a fixed chain: Caddy sets `X-Forwarded-For`, nginx trusts it only from Caddy's address (`TRUSTED_PROXIES`), the API only from nginx's (`KnownProxies`).
+* **Hardening, on every container:** `no-new-privileges`, all Linux capabilities dropped except the few each needs (Caddy: binding 80/443; nginx and Postgres: switching to their own users), a read-only filesystem with tmpfs where they write, a memory limit (about 290 MB in use for the whole app, against limits of 2 GB), and logs rotated at 3 × 10 MB per container.
+* **Deploys** let running ZIP downloads finish (*Networking & Rate Limits*); `restart: unless-stopped` brings everything back after a reboot.
+* **Monitoring** stays private: Prometheus keeps 7 days and Tempo 48 hours, and Grafana runs on your own computer, reaching them through an SSH tunnel (`ssh -L 9090:localhost:9090 -L 3200:localhost:3200 <server>`) or Tailscale.
+* **Settings:** the server's `.env`, listed in `.env.prod.example`: the site address, the R2 bucket and token, the Postgres password, the admin token and the image version; the demo's upload limits are the defaults.
+* **Images** are built on a development machine and copied to the server (`deploy.ps1`, not yet written), so `docker-compose.prod.yml` refers to them as `fileholder-api:<version>` and `fileholder-ui:<version>`.
+
+**Trying it locally first:** `scripts/prod-local.ps1` runs the same setup next to the dev stack, as its own compose project with its own volumes, ports and random secrets (`.env.prod-local`). Caddy serves `https://localhost:18443` with its local certificate authority, and storage is Silo instead of R2 (`docker-compose.prod-local.yml`).
+```powershell
+scripts/prod-local.ps1 up      # build from this checkout and start; waits until everything is healthy
+scripts/prod-local.ps1 test    # Playwright: HTTPS and headers, plain and encrypted bundles through Caddy, the admin port
+scripts/prod-local.ps1 down -Volumes
+```
+
 ### Running on Cloudflare R2
 
 The API works with any S3-compatible storage. The conformance suite (`StorageConformanceTests`) runs everything the API and the browser do with storage against Silo, and against R2 when a test bucket is configured (below). R2 needs these settings, all made in Cloudflare's dashboard:
@@ -435,6 +462,7 @@ dotnet test tests/FileHolder.Tests.Integration --filter "FullyQualifiedName~Stor
 | `docker/` | Prometheus, Tempo and Grafana configuration |
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
 | `scripts/release.ps1` | Cuts a release with release-please while GitHub Actions are off (*Versions and Releases*) |
+| `docker-compose.prod.yml`, `docker/caddy/Caddyfile` | The production setup behind Caddy (*Production*); `docker-compose.prod-local.yml` and `scripts/prod-local.ps1` run it locally |
 | `scripts/admin.ps1` | The owner's controls: the maintenance mode and takedowns (*Maintenance Modes*, *Takedown*) |
 
 ---

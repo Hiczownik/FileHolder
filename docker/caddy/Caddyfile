@@ -1,0 +1,34 @@
+# Caddy, the only thing published to the internet in production (docker-compose.prod.yml). It gets and renews the
+# HTTPS certificate for SITE_ADDRESS by itself (Let's Encrypt, ZeroSSL as the fallback; both allowed by the domain's
+# CAA records), redirects HTTP to HTTPS, adds HSTS, and passes everything to the ui container (nginx), which serves the
+# UI with its own security headers and proxies /api/ to the API (README, Production).
+{
+	# Expiry warnings and the certificate authority's account go to this address.
+	email {$ACME_EMAIL}
+
+	# No admin API: the config only changes with a restart, and nothing in the container can reconfigure Caddy.
+	admin off
+
+	# On a stop, connections still open (a bundle ZIP) may finish for this long; the API waits 90 s plus 5 s
+	# (Hosting__ShutdownTimeoutSeconds, Hosting__LingerSeconds), and compose allows 100 s.
+	grace_period 95s
+}
+
+{$SITE_ADDRESS} {
+	header {
+		# Browsers only ever use HTTPS here, for two years, subdomains too. .app is HTTPS-only anyway (the whole
+		# top-level domain is on the HSTS preload list); this makes it explicit for every browser.
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		# Doesn't say which server software answers.
+		-Server
+	}
+
+	# No access log: request paths hold share tokens, and nginx already logs every request with them redacted.
+
+	reverse_proxy ui:80 {
+		# Bundle ZIPs stream through; send each piece on at once instead of buffering.
+		flush_interval -1
+		# Caddy sets X-Forwarded-For to the client's address (dropping whatever the client sent) and
+		# X-Forwarded-Proto to https; nginx trusts both only from this container (TRUSTED_PROXIES).
+	}
+}
