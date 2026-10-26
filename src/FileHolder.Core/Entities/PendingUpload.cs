@@ -21,5 +21,14 @@ public class PendingUpload
     public Guid? ClaimId { get; set; }
     public DateTime? ClaimedUntil { get; set; }
 
+    /// <summary>
+    /// The longest expiry this upload's tier allows (#169), fixed at presign so confirm can't ask for more: confirm
+    /// sends the expiry again. Null when access codes are off.
+    /// </summary>
+    public int? MaxExpiryHours { get; set; }
+
+    /// <summary>The access code presign accepted, if any, so confirm can count the bundle against it. Gone with the row.</summary>
+    public Guid? AccessCodeId { get; set; }
+
     public bool IsActive(DateTime utcNow) => ExpiresAt > utcNow;
 }

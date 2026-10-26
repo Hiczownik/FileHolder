@@ -22,6 +22,54 @@ namespace FileHolder.Infrastructure.Data.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("FileHolder.Core.Entities.AccessCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("BundleCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("BytesUploaded")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("FirstUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CodeHash")
+                        .IsUnique();
+
+                    b.HasIndex("Label")
+                        .IsUnique();
+
+                    b.ToTable("AccessCodes", (string)null);
+                });
+
             modelBuilder.Entity("FileHolder.Core.Entities.DownloadSession", b =>
                 {
                     b.Property<Guid>("Id")
@@ -211,6 +259,9 @@ namespace FileHolder.Infrastructure.Data.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("AccessCodeId")
+                        .HasColumnType("uuid");
+
                     b.Property<Guid?>("ClaimId")
                         .HasColumnType("uuid");
 
@@ -235,6 +286,9 @@ namespace FileHolder.Infrastructure.Data.Migrations
 
                     b.Property<bool>("IsEncrypted")
                         .HasColumnType("boolean");
+
+                    b.Property<int?>("MaxExpiryHours")
+                        .HasColumnType("integer");
 
                     b.Property<long>("SizeBytes")
                         .HasColumnType("bigint");

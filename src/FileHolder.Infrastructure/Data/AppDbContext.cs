@@ -12,6 +12,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<PendingUpload> PendingUploads => Set<PendingUpload>();
     public DbSet<ServiceModeChange> ServiceModeChanges => Set<ServiceModeChange>();
     public DbSet<Takedown> Takedowns => Set<Takedown>();
+    public DbSet<AccessCode> AccessCodes => Set<AccessCode>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

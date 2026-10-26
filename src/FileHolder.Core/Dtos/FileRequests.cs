@@ -14,7 +14,9 @@ public record CreatePresignedUrlRequestDto(
     int? ExpireInHours,
     int? MaxDownloads,
     string? Password,
-    bool IsEncrypted = false
+    bool IsEncrypted = false,
+    // Unlocks the full limits when access codes are on (#169); without one, the smaller limits apply.
+    string? AccessCode = null
     );
 
 public record ConfirmedFileItemDto(

@@ -31,4 +31,38 @@ public class UploadLimitsOptions
     /// </summary>
     [Range(1, long.MaxValue)]
     public long? GlobalQuotaBytes { get; set; }
+
+    /// <summary>
+    /// The largest bundle an upload without an access code may have (#169). With <see cref="WithoutCodeMaxExpiryHours"/>
+    /// it turns access codes on: uploads without a valid code get these smaller limits, uploads with one get
+    /// <see cref="MaxBundleSizeBytes"/> and <see cref="MaxExpiryHours"/>. Unset (the default), every upload gets those.
+    /// </summary>
+    [Range(1, long.MaxValue)]
+    public long? WithoutCodeMaxBundleSizeBytes { get; set; }
+
+    /// <summary>The longest an upload without an access code may live. Set together with <see cref="WithoutCodeMaxBundleSizeBytes"/>.</summary>
+    [Range(BundleLimits.MinExpiryHours, BundleLimits.MaxExpiryHours)]
+    public int? WithoutCodeMaxExpiryHours { get; set; }
+
+    /// <summary>Whether uploads without an access code get smaller limits (both WithoutCode settings are set).</summary>
+    public bool AccessCodesEnabled => WithoutCodeMaxBundleSizeBytes.HasValue && WithoutCodeMaxExpiryHours.HasValue;
+
+    /// <summary>
+    /// The WithoutCode settings are both set or both unset, and no larger than the limits a code unlocks: a smaller
+    /// tier that allowed more would make codes pointless.
+    /// </summary>
+    public bool WithoutCodeSettingsAreValid() =>
+        WithoutCodeMaxBundleSizeBytes.HasValue == WithoutCodeMaxExpiryHours.HasValue
+        && (!AccessCodesEnabled
+            || (WithoutCodeMaxBundleSizeBytes <= MaxBundleSizeBytes && WithoutCodeMaxExpiryHours <= MaxExpiryHours));
+
+    /// <summary>The limits for an upload without an access code; the same limits when codes are off.</summary>
+    public UploadLimitsOptions WithoutCode() => AccessCodesEnabled
+        ? new UploadLimitsOptions
+        {
+            MaxBundleSizeBytes = WithoutCodeMaxBundleSizeBytes!.Value,
+            MaxExpiryHours = WithoutCodeMaxExpiryHours!.Value,
+            GlobalQuotaBytes = GlobalQuotaBytes,
+        }
+        : this;
 }
