@@ -1,4 +1,5 @@
 ﻿using FileHolder.Api.RateLimiting;
+using FileHolder.Api.ServiceModes;
 using FileHolder.Api.Validation;
 using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
@@ -25,6 +26,7 @@ public static class FileEndpoints
             .WithName("GetUploadLimits");
 
         group.MapPost("/presign", GetPresignedUploadUrl)
+            .RequireServiceMode(ServiceCapability.StartUpload)
             .AddEndpointFilter<ValidationFilter<CreatePresignedUrlRequestDto>>()
             .RequireRateLimiting(RateLimitPolicies.UploadInitiate)
             .WithName("GetPresignedUploadUrl");
@@ -34,46 +36,59 @@ public static class FileEndpoints
             .RequireRateLimiting(RateLimitPolicies.MultipartPipeline);
 
         multipart.MapPost("/presign-batch", PresignPartBatch)
+            .RequireServiceMode(ServiceCapability.ContinueUpload)
             .AddEndpointFilter<ValidationFilter<PresignPartBatchRequestDto>>()
             .WithName("PresignPartBatch");
 
         multipart.MapPost("/complete", CompleteMultipartUpload)
+            .RequireServiceMode(ServiceCapability.ContinueUpload)
             .AddEndpointFilter<ValidationFilter<CompleteMultipartUploadRequestDto>>()
             .WithName("CompleteMultipartUpload");
 
+        // No mode check: aborting only frees storage, which is welcome in any mode.
         multipart.MapPost("/abort", AbortMultipartUpload)
             .AddEndpointFilter<ValidationFilter<AbortMultipartUploadRequestDto>>()
             .WithName("AbortMultipartUpload");
 
         group.MapPost("/confirm", ConfirmUpload)
             .RequireRateLimiting(RateLimitPolicies.Confirm)
+            .RequireServiceMode(ServiceCapability.ContinueUpload)
             .AddEndpointFilter<ValidationFilter<ConfirmUploadRequestDto>>()
             .WithName("ConfirmUpload");
 
         group.MapGet("/{shareToken}", GetGroupMetadata)
             .RequireRateLimiting(RateLimitPolicies.Metadata)
+            .RequireServiceMode(ServiceCapability.ViewBundle)
             .WithName("GetGroupMetadata");
 
         group.MapPost("/{shareToken}/unlock", UnlockGroup)
             .RequireRateLimiting(RateLimitPolicies.Download)
+            .RequireServiceMode(ServiceCapability.ViewBundle)
             .WithName("UnlockGroup");
 
         group.MapPost("/{shareToken}/downloads", OpenDownloadSession)
             .RequireRateLimiting(RateLimitPolicies.Download)
+            .RequireServiceMode(ServiceCapability.StartDownload)
             .WithName("OpenDownloadSession");
 
         group.MapPost("/{shareToken}/download/{fileId:guid}", GenerateDownloadLink)
             .RequireRateLimiting(RateLimitPolicies.Download)
+            .RequireServiceMode(ServiceCapability.ContinueDownload)
             .WithName("GenerateDownloadLink");
 
         group.MapPost("/{shareToken}/download-all", StreamBundleZip)
             .RequireRateLimiting(RateLimitPolicies.Download)
+            // Without a session this ZIP opens one, which counts a download.
+            .RequireServiceMode(context => context.Arguments.OfType<DownloadRequestDto>().FirstOrDefault()?.DownloadSessionId is null
+                ? ServiceCapability.StartDownload
+                : ServiceCapability.ContinueDownload)
             .WithName("StreamBundleZip");
 
         // The same ZIP for an open download session, as a plain GET the browser can navigate to, so it is
         // saved straight to disk instead of being buffered in page memory first.
         group.MapGet("/{shareToken}/download-all", StreamBundleZipForSession)
             .RequireRateLimiting(RateLimitPolicies.Download)
+            .RequireServiceMode(ServiceCapability.ContinueDownload)
             .WithName("StreamBundleZipForSession");
     }
 

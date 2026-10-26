@@ -10,6 +10,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<MultipartUploadSession> MultipartUploadSessions => Set<MultipartUploadSession>();
     public DbSet<DownloadSession> DownloadSessions => Set<DownloadSession>();
     public DbSet<PendingUpload> PendingUploads => Set<PendingUpload>();
+    public DbSet<ServiceModeChange> ServiceModeChanges => Set<ServiceModeChange>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -31,6 +31,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 | **Presigned URLs** | Temporary credentials, valid for anyone holding them: 5 min for downloads (`DownloadTimings.PresignedUrlLifetime`), 15 min for single uploads (`UploadTimings.SinglePutUrlLifetime`). |
 | **The download limit and expiry** | The promise that a bundle opens at most N times and is then gone. |
 | **Storage and database credentials** | They give access to everything. |
+| **The admin token** (`ADMIN_TOKEN`) | It switches the maintenance mode, so whoever has it can close the site or reopen uploads the owner paused. |
 
 ## 3. Who might attack, and what each party sees today
 
@@ -119,6 +120,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
   - `TracingTests` checks a whole upload and download against an in-memory exporter.
   - A trace still shows *that* a bundle was uploaded, unlocked and downloaded, and when, for as long as the trace store keeps it. Tempo keeps traces 48 hours (`docker/tempo/tempo.yaml`).
 - **Ports:** storage, database, API, Prometheus, Tempo's query port (3200) and Grafana are bound to loopback. Metrics are only on an unpublished port (9464), and so is Tempo's OTLP intake (4317/4318), so nothing outside the compose network can send it traces. Grafana needs a password from `.env`; Prometheus and Tempo have no login, so loopback is their only protection.
+- **Admin endpoints** (maintenance modes, README *Maintenance Modes*): answer only on their own port (9465), which compose binds to the host's loopback and no proxy forwards, and only with the bearer token `ADMIN_TOKEN` (at least 32 characters, compared in constant time over SHA-256 hashes). On any other port, or without a token configured, `/admin/…` is a 404, so the public port doesn't reveal it exists. The token check also keeps out the other containers on the compose network. Every mode change is logged with its reason and stored in `ServiceModeChanges`. The purge runs in every mode, so a mode can't be used to keep files past their deletion.
 - **Credentials:** none are committed. Compose reads every password from `.env`, and the API refuses to start without its connection string and storage key. The API signs in to storage as its own user (`fileholder-api`), limited by `docker/silo/api-policy.json` to the bucket's objects, multipart uploads and lifecycle rule, so a leaked API key can't make the bucket public, reach other buckets or manage storage users. `StorageConformanceTests` runs every storage call the API makes as that user, and `StoragePolicyTests` checks it can't reach further. On Cloudflare R2 the API's token is limited to the objects of one bucket in the same way: it can't change the bucket's settings, so the lifecycle rule and CORS are set in R2's dashboard (README, *Running on Cloudflare R2*).
 - **Supply chain** (#74):
   - images are pinned by digest, actions by SHA, and NuGet versions are exact;

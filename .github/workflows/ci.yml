@@ -80,6 +80,7 @@ jobs:
                   echo "STORAGE_ROOT_USER=ci-admin"
                   echo "STORAGE_ROOT_PASSWORD=$(openssl rand -hex 16)"
                   echo "STORAGE_API_SECRET_KEY=$(openssl rand -hex 16)"
+                  echo "ADMIN_TOKEN=$(openssl rand -hex 32)"
                 } > .env
             - name: Set up Docker Buildx
               uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
