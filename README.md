@@ -225,6 +225,17 @@ docker compose up --build
   * the API's startup log line, and the trace service version (`0.9.0+<commit>`);
   * the metric `fileholder_build_info{version,commit} 1`, for marking deploys in Grafana;
   * the image labels `org.opencontainers.image.version` (from `VERSION`, `dev` unless a release or deploy build sets it) and `org.opencontainers.image.revision`.
+* **Releases** come from [release-please](https://github.com/googleapis/release-please), configured in `release-please-config.json` (the current version is in `.release-please-manifest.json` and `version.txt`). It reads the conventional commit messages since the last release. Below 1.0, `feat:` and `fix:` bump the patch (0.9.1, 0.9.2, …) and a breaking change the minor; from 1.0 on, `feat:` bumps the minor and `fix:` the patch. It then writes `CHANGELOG.md` (features, fixes, performance, reverts and docs; build, CI, test, refactor and chore commits are left out) and bumps `version.txt`, `Directory.Build.props` and the UI's `package.json` and `package-lock.json` together.
+  * **While GitHub Actions are off**, cut a release from your machine with your `gh` login:
+    ```powershell
+    scripts/release.ps1 pr -DryRun   # what the next release would be
+    scripts/release.ps1 pr           # open or update the release PR ("chore: release 0.9.1")
+    # review and merge it, then:
+    scripts/release.ps1 release      # tag v0.9.1 and create the GitHub release
+    ```
+  * **Once Actions are back**, set the repository variable `RELEASE_PLEASE_ENABLED` to `true`. `.github/workflows/release.yml` then does the same on every push to `main`, and the script is no longer needed.
+  * **1.0.0, at the first deployment:** add `"release-as": "1.0.0"` to the package in `release-please-config.json`, cut that release, then remove it again.
+  * **0.9.0** is the first release, made by hand: everything before it is summed up in `CHANGELOG.md`, rather than release-please listing about 150 earlier PRs.
 
 ### Maintenance Modes
 Uploads can be paused, or the whole site closed, within seconds and without a restart: for abuse, a full bucket, or maintenance.
@@ -418,6 +429,7 @@ dotnet test tests/FileHolder.Tests.Integration --filter "FullyQualifiedName~Stor
 | `tests/load` | k6 load tests, their runner (`run.ps1`) and database checks |
 | `docker/` | Prometheus, Tempo and Grafana configuration |
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
+| `scripts/release.ps1` | Cuts a release with release-please while GitHub Actions are off (*Versions and Releases*) |
 | `scripts/admin.ps1` | The owner's controls: the maintenance mode and takedowns (*Maintenance Modes*, *Takedown*) |
 
 ---
