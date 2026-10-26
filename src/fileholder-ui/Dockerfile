@@ -29,6 +29,11 @@ LABEL org.opencontainers.image.title="fileholder-ui" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${GIT_SHA}" \
       org.opencontainers.image.licenses="MIT"
+# The base image carries curl, which nothing here uses (the healthcheck uses BusyBox wget), and older brotli-libs
+# (freetype needs it). Removing curl drops libcurl with it; brotli-libs is upgraded to Alpine's fixed release. Both
+# had HIGH vulnerabilities the base image hasn't picked up yet (Trivy, 2026-10-26). Remove once the base image has them.
+RUN apk del --no-cache curl \
+    && apk add --no-cache --upgrade brotli-libs
 COPY --from=build /app/dist /usr/share/nginx/html
 # The image fills in templates when the container starts, writing /etc/nginx/conf.d/default.conf. Only
 # STORAGE_PUBLIC_URL is replaced: the config's own $variables must stay as they are.

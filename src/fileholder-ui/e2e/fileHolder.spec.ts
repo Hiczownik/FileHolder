@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test';
-import path from 'node:path';
 import fs from 'node:fs';
 import JSZip from 'jszip';
 import { createHash } from 'node:crypto';
@@ -261,10 +260,10 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     await downloaderContext.close();
   });
 
-  test('5. Streaming Architecture: Multi-File E2EE Bundles Exceeding 200 MB Are Permitted With Passkey', async ({ page }) => {
-    const tempDir = path.resolve(process.cwd(), 'e2e');
-    const bigFile1Path = path.join(tempDir, 'big1.bin');
-    const bigFile2Path = path.join(tempDir, 'big2.bin');
+  test('5. Streaming Architecture: Multi-File E2EE Bundles Exceeding 200 MB Are Permitted With Passkey', async ({ page }, testInfo) => {
+    // In this test's own output folder, not the source tree.
+    const bigFile1Path = testInfo.outputPath('big1.bin');
+    const bigFile2Path = testInfo.outputPath('big2.bin');
 
     // Create two 110 MB sparse files instantly (~1ms, 0 RAM overhead)
     const fd1 = fs.openSync(bigFile1Path, 'w');
@@ -311,7 +310,7 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     }
   });
 
-  test('6. Chunked E2EE: a multipart encrypted file uploads to real storage and decrypts back byte for byte @cross-browser', async ({ page, browser, browserName }) => {
+  test('6. Chunked E2EE: a multipart encrypted file uploads to real storage and decrypts back byte for byte @cross-browser', async ({ page, browser, browserName }, testInfo) => {
     const MIB = 1024 * 1024;
     const ENCRYPTED_CHUNK_BYTES = 4 * MIB + 16;
     const TEST_TIMEOUT_MS = 180_000;
@@ -323,7 +322,9 @@ test.describe('FileHolder Multi-File v1.1.0 System Tests', () => {
     // Over the 50 MB multipart threshold, so the server sizes parts as whole encrypted chunks (16 MiB + 64 bytes)
     // and storage checks every part against the size its URL was signed for. The odd tail ends mid-chunk.
     const fileName = 'chunked-e2ee.bin';
-    const filePath = path.join(path.resolve(process.cwd(), 'e2e'), fileName);
+    // In this test's own output folder: the browsers run this test at the same time, and with one shared path one
+    // of them deleted or rewrote the file while another was still uploading it.
+    const filePath = testInfo.outputPath(fileName);
     const sizeBytes = 60 * MIB + 12345;
     const pattern = Buffer.from(Array.from({ length: PATTERN_LENGTH }, (_, i) => i));
     const content = Buffer.alloc(sizeBytes, pattern);

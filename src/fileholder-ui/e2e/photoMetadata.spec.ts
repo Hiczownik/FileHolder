@@ -68,7 +68,10 @@ async function decodedPixels(page: Page, bytes: Uint8Array): Promise<string> {
   return page.evaluate(async (base64) => {
     const data = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
     const bitmap = await createImageBitmap(new Blob([data], { type: 'image/jpeg' }), { imageOrientation: 'from-image' });
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    // A plain canvas element, not OffscreenCanvas, which Playwright's WebKit on Windows doesn't have.
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
     const context = canvas.getContext('2d')!;
     context.drawImage(bitmap, 0, 0);
     return `${bitmap.width}x${bitmap.height}:${context.getImageData(0, 0, bitmap.width, bitmap.height).data.join(',')}`;
