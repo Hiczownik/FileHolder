@@ -171,7 +171,7 @@ public class StoragePurgeService(
         await using (var tx = await _dbContext.Database.BeginTransactionAsync(ct))
         {
             await _dbContext.SaveChangesAsync(ct);
-            await ScrubPurgedGroupsAsync(ct);
+            await ScrubPurgedGroupsAsync(_dbContext, ct);
             await tx.CommitAsync(ct);
         }
 
@@ -202,15 +202,16 @@ public class StoragePurgeService(
     /// cleared, leaving only what tells a visitor the link has expired. Once the files are gone nothing needs the
     /// rest, and an encrypted bundle's salt, key envelope and manifest would let anyone with the database guess
     /// its passkey offline and read its file names. Only touches groups that still have something to clear, so
-    /// repeating it is harmless.
+    /// repeating it is harmless. A takedown's mark (<see cref="FileGroup.TakenDownAt"/>) stays, so the link keeps
+    /// saying it was removed. The takedown runs it too.
     /// </summary>
-    private async Task ScrubPurgedGroupsAsync(CancellationToken ct)
+    public static async Task ScrubPurgedGroupsAsync(AppDbContext dbContext, CancellationToken ct)
     {
-        await _dbContext.SharedFiles
+        await dbContext.SharedFiles
             .Where(f => f.FileGroup.StoragePurgedAt != null)
             .ExecuteDeleteAsync(ct);
 
-        await _dbContext.FileGroups
+        await dbContext.FileGroups
             .Where(g => g.StoragePurgedAt != null && (
                 g.Title != null || g.PasswordHash != null || g.EncryptedManifest != null || g.KeyEnvelope != null ||
                 g.KeySalt != null || g.EncryptedTitle != null || g.KeyMode != null || g.KdfParams != null ||

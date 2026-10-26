@@ -50,7 +50,8 @@ public class DownloadSessionService(
         var now = _dateTimeProvider.UtcNow;
         if (group.IsExpired(now))
         {
-            return new OpenDownloadSessionResult(OpenDownloadSessionStatus.Expired, null);
+            return new OpenDownloadSessionResult(
+                group.IsTakenDown ? OpenDownloadSessionStatus.Removed : OpenDownloadSessionStatus.Expired, null);
         }
 
         var passwordCheck = await _passwordGuard.CheckAsync(group, password, ct);
@@ -132,10 +133,11 @@ public class DownloadSessionService(
             .FirstOrDefaultAsync(s => s.Id == sessionId && s.FileGroup.ShareToken == shareToken, ct);
 
         // A session outlives its group's IsDeleted flag on purpose (the last download keeps working),
-        // but never its storage.
+        // but never its storage, nor a takedown, which cuts running downloads off at once.
         if (session == null
             || !session.IsActive(_dateTimeProvider.UtcNow)
-            || session.FileGroup.StoragePurgedAt != null)
+            || session.FileGroup.StoragePurgedAt != null
+            || session.FileGroup.TakenDownAt != null)
         {
             return null;
         }

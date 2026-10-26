@@ -11,6 +11,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<DownloadSession> DownloadSessions => Set<DownloadSession>();
     public DbSet<PendingUpload> PendingUploads => Set<PendingUpload>();
     public DbSet<ServiceModeChange> ServiceModeChanges => Set<ServiceModeChange>();
+    public DbSet<Takedown> Takedowns => Set<Takedown>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

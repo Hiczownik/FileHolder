@@ -156,6 +156,11 @@ public static class FileEndpoints
             return TypedResults.NotFound();
         }
 
+        if (metadata.IsRemoved)
+        {
+            return RemovedProblem();
+        }
+
         if (metadata.IsExpired)
         {
             return TypedResults.Problem(
@@ -187,6 +192,11 @@ public static class FileEndpoints
                 detail: "Incorrect password. Please try again.",
                 statusCode: StatusCodes.Status401Unauthorized,
                 title: "Unauthorized");
+        }
+
+        if (result.IsRemoved)
+        {
+            return RemovedProblem();
         }
 
         if (result.IsExpired)
@@ -226,6 +236,7 @@ public static class FileEndpoints
                 detail: "This shared file bundle has expired or reached its download limit.",
                 statusCode: StatusCodes.Status410Gone,
                 title: "Link Expired"),
+            OpenDownloadSessionStatus.Removed => RemovedProblem(),
             OpenDownloadSessionStatus.LockedOut => LockedOutProblem(context, result.LockedUntil, dateTimeProvider),
             _ => TypedResults.NotFound()
         };
@@ -307,6 +318,7 @@ public static class FileEndpoints
                 detail: "Bundle has expired or reached maximum download limit.",
                 statusCode: StatusCodes.Status410Gone,
                 title: "Link Expired"),
+            StreamZipStatus.Removed => RemovedProblem(),
             StreamZipStatus.SessionInvalid => SessionInvalidProblem(),
             StreamZipStatus.EmptyBundle => TypedResults.BadRequest("Bundle contains no files to download."),
             StreamZipStatus.LockedOut => LockedOutProblem(context, result.LockedUntil, dateTimeProvider),
@@ -328,6 +340,16 @@ public static class FileEndpoints
             statusCode: StatusCodes.Status429TooManyRequests,
             title: "Too Many Attempts");
     }
+
+    /// <summary>
+    /// A bundle the owner took down. Said plainly rather than passed off as expired, so a recipient who was sent
+    /// something harmful learns it was removed. The problem's <c>removed</c> field lets the UI tell the two apart.
+    /// </summary>
+    private static ProblemHttpResult RemovedProblem() => TypedResults.Problem(
+        detail: "This bundle was removed by FileHolder.",
+        statusCode: StatusCodes.Status410Gone,
+        title: "Link Removed",
+        extensions: new Dictionary<string, object?> { ["removed"] = true });
 
     private static ProblemHttpResult SessionInvalidProblem() => TypedResults.Problem(
         detail: "The download session is missing or has expired. Start a new download.",

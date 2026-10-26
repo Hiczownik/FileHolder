@@ -477,7 +477,8 @@ public class FileGroupService
             fileItemDtos,
             group.EncryptedTitle,
             group.KeyMode,
-            group.KdfParams
+            group.KdfParams,
+            group.IsTakenDown
         );
     }
 
@@ -501,7 +502,7 @@ public class FileGroupService
         var now = _dateTimeProvider.UtcNow;
         if (group.IsExpired(now))
         {
-            return new UnlockResult(false, false, true, null);
+            return new UnlockResult(false, false, true, null, IsRemoved: group.IsTakenDown);
         }
 
         var passwordCheck = await _passwordGuard.CheckAsync(group, password);
