@@ -47,6 +47,10 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
         # The share token is in the path; nothing needs a Referer, so none is sent anywhere.
         add_header Referrer-Policy "no-referrer" always;
+        # The page never uses these, so no script on it (or in a frame) may ask for them: a camera or microphone
+        # prompt on a file-sharing page could only be someone else's doing. Copying the share link (clipboard) and
+        # saving downloads need none of them.
+        add_header Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()" always;
     }
 
     # The API is reached through this proxy rather than its own published port, so it sees each client's
