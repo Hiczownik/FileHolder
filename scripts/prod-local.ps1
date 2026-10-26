@@ -55,6 +55,24 @@ if (-not (Test-Path $envFile)) {
     Add-Content -Encoding ascii $envFile "STORAGE_API_SECRET_KEY=$((Get-Content $envFile | Where-Object { $_ -like 'STORAGE_SECRET_KEY=*' }).Split('=', 2)[1])"
 }
 
+# The sample keeper's access code (README, Sample Bundle): made on the admin port once the API is up, kept in the env
+# file, and made again when it no longer works (after down -Volumes, the database that knew it is gone).
+function Initialize-SampleCode {
+    $headers = @{ Authorization = "Bearer $((Get-Content $envFile | Where-Object { $_ -like 'ADMIN_TOKEN=*' }).Split('=', 2)[1])" }
+    $saved = Get-Content $envFile | Where-Object { $_ -like 'SAMPLE_ACCESS_CODE=*' }
+    $active = @(Invoke-RestMethod -Uri 'http://localhost:19465/admin/access-codes' -Headers $headers |
+        Where-Object { $_.status -eq 'active' } | ForEach-Object { $_.label })
+    if ($saved -and $active -contains $saved.Split('=', 2)[1].Split('-')[0]) { return $false }
+
+    $label = "s$(New-Secret 2)"
+    $created = Invoke-RestMethod -Method Post -Uri 'http://localhost:19465/admin/access-codes' -Headers $headers `
+        -ContentType 'application/json' -Body (@{ label = $label; noExpiry = $true } | ConvertTo-Json)
+    @(Get-Content $envFile | Where-Object { $_ -notlike 'SAMPLE_ACCESS_CODE=*' }) + "SAMPLE_ACCESS_CODE=$($created.code)" |
+        Set-Content -Encoding ascii $envFile
+    Write-Host "Made the sample keeper's access code ($label)."
+    return $true
+}
+
 $compose = @('compose', '--project-name', 'fileholder-prodtest', '--project-directory', $root,
     '--file', (Join-Path $root 'docker-compose.prod.yml'), '--file', (Join-Path $root 'docker-compose.prod-local.yml'),
     '--env-file', $envFile)
@@ -69,6 +87,11 @@ try {
             $env:GIT_SHA = (git rev-parse --short HEAD).Trim()
             & docker @compose up --build --detach --wait
             if ($LASTEXITCODE -ne 0) { throw 'The production stack did not come up healthy; see docker compose logs.' }
+            if (Initialize-SampleCode) {
+                # Started again with the code it now has in the env file.
+                & docker @compose up --detach --wait sample
+                if ($LASTEXITCODE -ne 0) { throw 'The sample keeper did not start; see docker compose logs sample.' }
+            }
             'Up: https://localhost:18443 (Caddy''s local certificate, so the browser warns once).'
         }
         'test' {

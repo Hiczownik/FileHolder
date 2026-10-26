@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     1. Checks: no uncommitted changes (unless -AllowDirty), and the server has Docker Compose and its .env.
-    2. Builds fileholder-api and fileholder-ui here, tagged <version>-<commit> (e.g. 0.9.0-4ba83f2).
+    2. Builds fileholder-api, fileholder-ui and fileholder-sample (the sample keeper) here, tagged <version>-<commit> (e.g. 0.9.0-4ba83f2).
     3. Copies them to the server over SSH (docker save, scp -C, docker load), with docker-compose.prod.yml and the
        Caddy, Prometheus and Tempo configs. No registry: the images are built here and only ever copied (#82).
     4. On the server: points FILEHOLDER_VERSION in .env at the new tag, remembers the old one, and runs
@@ -47,7 +47,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$images = @('fileholder-api', 'fileholder-ui')
+$images = @('fileholder-api', 'fileholder-ui', 'fileholder-sample')
 # The files the server needs next to its .env, at the same paths as in the repository.
 $configFiles = @('docker-compose.prod.yml', 'docker/caddy/Caddyfile', 'docker/prometheus/prometheus.yml', 'docker/tempo/tempo.yaml')
 $healthTimeoutSeconds = 300
@@ -124,6 +124,10 @@ echo "Rolled back from `$current to `$previous."
     }
     Invoke-Native 'Building fileholder-ui' {
         docker build --build-arg "GIT_SHA=$commit" --build-arg "VERSION=$version" -t "fileholder-ui:$tag" src/fileholder-ui
+    }
+    # The same Dockerfile's other target, so it shares the UI's build stage (and its cache).
+    Invoke-Native 'Building fileholder-sample' {
+        docker build --build-arg "GIT_SHA=$commit" --build-arg "VERSION=$version" --target sample -t "fileholder-sample:$tag" src/fileholder-ui
     }
 
     Write-Step 'Copying the images and configs to the server'
