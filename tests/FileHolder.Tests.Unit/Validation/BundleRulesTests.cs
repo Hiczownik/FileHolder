@@ -7,6 +7,37 @@ namespace FileHolder.Tests.Unit.Validation;
 
 public class BundleRulesTests
 {
+    public sealed record Field(string? Value);
+
+    private sealed class FieldValidator : AbstractValidator<Field>
+    {
+        public FieldValidator(string rule)
+        {
+            switch (rule)
+            {
+                case "content type": RuleFor(x => x.Value!).MustBeValidContentType(); break;
+                case "key material": RuleFor(x => x.Value).MustBeKeyMaterial("Key salt", 64); break;
+                default: RuleFor(x => x.Value).MustBeAuthKey(); break;
+            }
+        }
+    }
+
+    // .NET's $ also matches just before a final newline, so a pattern ending in $ let "application/pdf\n" through, and
+    // the content type is echoed back as a response header. The patterns end with \z instead. Found by the FsCheck
+    // property ContentType_AcceptedValues_AreValidContentTypeHeaders on a random seed.
+    [Theory]
+    [InlineData("content type", "application/pdf")]
+    [InlineData("key material", "q3-_Zx0")]
+    [InlineData("auth key", "q3-_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    public void AValueTheRuleAccepts_IsRefused_WithATrailingNewline(string rule, string accepted)
+    {
+        var validator = new FieldValidator(rule);
+
+        validator.Validate(new Field(accepted)).IsValid.Should().BeTrue();
+        validator.Validate(new Field(accepted + "\n")).IsValid.Should().BeFalse();
+        validator.Validate(new Field(accepted + "\r\n")).IsValid.Should().BeFalse();
+    }
+
     public sealed record Sizes(List<long> Files);
 
     private sealed class SizeValidator : AbstractValidator<Sizes>
