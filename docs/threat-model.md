@@ -105,6 +105,7 @@ What FileHolder protects, from whom, how, and what it doesn't protect. Every cla
 - **Security headers on the UI pages** (#130, `nginx.conf.template`):
   - a CSP that runs only the app's own scripts (no inline script, no other origin; `'wasm-unsafe-eval'` for Argon2id) and connects only to the app and storage (`STORAGE_PUBLIC_URL`);
   - no framing (`frame-ancestors 'none'`, `X-Frame-Options: DENY`), `nosniff`, and `Referrer-Policy: no-referrer`, so the share token in the path isn't sent anywhere either;
+  - a `Permissions-Policy` denying the camera, microphone, location, motion sensors, payment and USB, which the page never uses, so no script on it can ask for them;
   - `e2e/securityHeaders.spec.ts` checks them and fails on any CSP violation during an encrypted upload and download.
 - **Errors are RFC 7807 `ProblemDetails`.** Internal messages are shown only in Development.
 - **Share tokens stay out of logs:**

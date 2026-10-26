@@ -50,6 +50,8 @@ function expectUiHeaders(response: APIResponse, what: string): void {
   expect(headers['x-frame-options'], what).toBe('DENY');
   expect(headers['x-content-type-options'], what).toBe('nosniff');
   expect(headers['referrer-policy'], what).toBe('no-referrer');
+  expect(headers['permissions-policy'], what).toBe(
+    'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()');
 
   const directives = directivesOf(headers['content-security-policy'] ?? '');
   expect(directives.get('default-src'), what).toBe("'self'");
