@@ -36,6 +36,8 @@ ENV NGINX_ENVSUBST_FILTER=^STORAGE_PUBLIC_URL$
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 # Checks STORAGE_PUBLIC_URL first; the container won't start without a valid one (set in docker-compose.yml).
 COPY --chmod=755 docker-entrypoint.d/19-storage-public-url.envsh /docker-entrypoint.d/
+# Writes the trusted-proxy settings (TRUSTED_PROXIES) the config relies on; refuses a malformed value.
+COPY --chmod=755 docker-entrypoint.d/18-trusted-proxies.envsh /docker-entrypoint.d/
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

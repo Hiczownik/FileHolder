@@ -50,7 +50,9 @@ server {
     }
 
     # The API is reached through this proxy rather than its own published port, so it sees each client's
-    # address in X-Forwarded-For instead of one shared address, and per-client rate limits work.
+    # address in X-Forwarded-For instead of one shared address, and per-client rate limits work. Behind another proxy
+    # (Caddy in production), $remote_addr is already the client's address, taken from that proxy's X-Forwarded-For
+    # (TRUSTED_PROXIES, docker-entrypoint.d/18-trusted-proxies.envsh).
     location /api/ {
         proxy_pass http://api;
         proxy_http_version 1.1;
@@ -60,7 +62,8 @@ server {
         # Overwrite, never append: a client-supplied X-Forwarded-For would let anyone pick their own
         # rate-limit partition. The API trusts this header only from this container's address.
         proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        # https when a trusted proxy says so, otherwise this connection's scheme (18-trusted-proxies.envsh).
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
         proxy_set_header Host $host;
 
         # Requests are small JSON bodies; file contents go straight to storage via presigned URLs.

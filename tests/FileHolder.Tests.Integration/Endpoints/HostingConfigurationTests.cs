@@ -44,6 +44,24 @@ public class HostingConfigurationTests(CustomWebApplicationFactory factory) : IC
     }
 
     [Fact]
+    public void OnAStop_RunningRequestsGet90Seconds_ByDefault()
+    {
+        // Compose's stop_grace_period (100s) is set to outlast this.
+        factory.Services.GetRequiredService<IOptions<Microsoft.Extensions.Hosting.HostOptions>>().Value.ShutdownTimeout
+            .Should().Be(TimeSpan.FromSeconds(90));
+    }
+
+    [Fact]
+    public void TheShutdownTimeout_IsConfigurable()
+    {
+        using var configured = factory.WithWebHostBuilder(builder => builder.ConfigureAppConfiguration(config =>
+            config.AddInMemoryCollection(new Dictionary<string, string?> { ["Hosting:ShutdownTimeoutSeconds"] = "30" })));
+
+        configured.Services.GetRequiredService<IOptions<Microsoft.Extensions.Hosting.HostOptions>>().Value.ShutdownTimeout
+            .Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
     public async Task TheBuild_IsAMetric_ForMarkingDeploys()
     {
         using var metricsFactory = factory.WithWebHostBuilder(builder => builder.UseSetting("Metrics:Port", "0"));

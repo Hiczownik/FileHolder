@@ -47,6 +47,11 @@ builder.Services.AddOptions<AdminOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+// On a stop (a deploy), how long requests already running may finish: bundle ZIPs stream through the API and are cut
+// off after this. Compose's stop_grace_period must be longer, or Docker kills the process first (README, Configuration).
+builder.Services.Configure<HostOptions>(options =>
+    options.ShutdownTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue("Hosting:ShutdownTimeoutSeconds", 90)));
+
 builder.Services.AddOpenApi();
 
 #pragma warning disable EXTEXP0018
@@ -195,6 +200,11 @@ app.MapAdminEndpoints();
 app.MapHealthEndpoints();
 
 await app.RunAsync(CancellationToken.None);
+
+// Kestrel counts a response as done once its last bytes are in the kernel's send buffer, but Docker removes the
+// container's network as soon as this process exits, and what was still buffered (the end of a long bundle ZIP) is
+// lost. Staying a moment longer lets it go out. Only on a real stop, after every request has finished.
+await Task.Delay(TimeSpan.FromSeconds(builder.Configuration.GetValue("Hosting:LingerSeconds", 5)), CancellationToken.None);
 
 public partial class Program
 {
