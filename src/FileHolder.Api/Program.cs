@@ -2,6 +2,7 @@
 using Amazon.S3;
 using FileHolder.Api.Admin;
 using FileHolder.Api.Configuration;
+using FileHolder.Api.Diagnostics;
 using FileHolder.Api.Endpoints;
 using FileHolder.Api.ExceptionHandling;
 using FileHolder.Api.Health;
@@ -144,6 +145,9 @@ builder.Services.AddFileHolderRateLimits(builder.Configuration);
 builder.Services.AddFileHolderCors(builder.Configuration);
 
 var app = builder.Build();
+
+app.Logger.LogInformation("FileHolder API {Build} starting.", BuildInfo.Current);
+BuildInfo.AddMetric(app.Services.GetRequiredService<System.Diagnostics.Metrics.IMeterFactory>(), BuildInfo.Current);
 
 using (var scope = app.Services.CreateScope())
 {

@@ -13,6 +13,18 @@ public record ServiceStatusDto(
     public static readonly ServiceStatusDto Normal = new(ServiceMode.Normal, null, null);
 }
 
+/// <summary>
+/// GET /api/v1/status: the mode as visitors see it, and the API's build, which the UI's diagnostics report shows next
+/// to its own (a mismatch means a tab from before a deploy).
+/// </summary>
+public record ServiceStatusResponseDto(
+    [property: JsonPropertyName("mode")] ServiceMode Mode,
+    [property: JsonPropertyName("message")] string? Message,
+    [property: JsonPropertyName("until")] DateTime? Until,
+    [property: JsonPropertyName("version")] string Version,
+    [property: JsonPropertyName("commit")] string Commit
+);
+
 /// <summary>PUT /admin/mode.</summary>
 public record SetServiceModeRequestDto(
     ServiceMode Mode,

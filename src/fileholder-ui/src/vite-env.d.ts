@@ -7,6 +7,10 @@ interface ImportMetaEnv {
   readonly VITE_ABUSE_EMAIL?: string;
 }
 
+/** The UI's version and commit, fixed at build time (vite.config.ts, shared/utils/buildInfo.ts). */
+declare const __APP_VERSION__: string;
+declare const __GIT_SHA__: string;
+
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }

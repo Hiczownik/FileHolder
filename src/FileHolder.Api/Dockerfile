@@ -14,10 +14,21 @@ RUN dotnet restore "src/FileHolder.Api/FileHolder.Api.csproj"
 # Copy full source and publish Release binaries
 COPY . .
 WORKDIR "/src/src/FileHolder.Api"
-RUN dotnet publish "FileHolder.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+# The commit this image is built from: the build context has no .git, so whoever builds passes it (compose reads
+# GIT_SHA from the environment). It goes into the assembly's informational version ("0.9.0+abc1234"), which the API
+# shows in /healthz, /api/v1/status and fileholder_build_info. Without it, the commit shows as "unknown".
+ARG GIT_SHA=""
+RUN dotnet publish "FileHolder.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false "/p:SourceRevisionId=${GIT_SHA}"
 
 # Stage 2: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0.13-alpine3.24@sha256:ecf8dcbaab8ebc4bdfb2322d6fe4217bbb118894310ebb6d53c580874ab4b27d AS final
+# OCI labels, so `docker inspect` says which build an image is. VERSION is passed by release and deploy builds.
+ARG GIT_SHA=""
+ARG VERSION="dev"
+LABEL org.opencontainers.image.title="fileholder-api" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.licenses="MIT"
 WORKDIR /app
 EXPOSE 8080 9464 9465
 # 8080 serves the API; 9464 serves only /metrics and is never published outside the compose network; 9465 serves

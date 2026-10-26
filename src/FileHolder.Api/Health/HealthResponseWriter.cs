@@ -1,11 +1,12 @@
 using System.Text.Json;
+using FileHolder.Api.Diagnostics;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace FileHolder.Api.Health;
 
 /// <summary>
 /// Writes a health report as JSON: the overall status, then each check's status, duration, description and
-/// numbers. Only the checks' own descriptions and counts are written, never an exception message, which could
+/// numbers, with the build that answered (so a deploy can be checked). Only the checks' own descriptions and counts are written, never an exception message, which could
 /// carry a connection string, a host or a storage key.
 /// </summary>
 public static class HealthResponseWriter
@@ -22,6 +23,8 @@ public static class HealthResponseWriter
         var body = new
         {
             Status = report.Status.ToString(),
+            BuildInfo.Current.Version,
+            BuildInfo.Current.Commit,
             TotalDurationMs = (long)report.TotalDuration.TotalMilliseconds,
             Checks = report.Entries.ToDictionary(
                 entry => entry.Key,

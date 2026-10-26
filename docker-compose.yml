@@ -84,6 +84,13 @@ services:
     build:
       context: .
       dockerfile: src/FileHolder.Api/Dockerfile
+      # The build's commit and version, shown in the footer, /healthz, /api/v1/status and fileholder_build_info.
+      # Docker builds have no .git, so set GIT_SHA before building (README, Versions and Releases):
+      #   $env:GIT_SHA = git rev-parse --short HEAD; docker compose up -d --build
+      # Unset, the commit shows as "unknown". VERSION only labels the image; the app's version is in the code.
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        VERSION: ${VERSION:-dev}
     container_name: fileholder-api
     # Browsers reach the API through the ui container's nginx (/api/), so it sees real client addresses.
     # This loopback port is only for local tooling and the CI health check. Metrics (9464) stay internal.
@@ -136,6 +143,9 @@ services:
     build:
       context: ./src/fileholder-ui
       dockerfile: Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        VERSION: ${VERSION:-dev}
     container_name: fileholder-ui
     ports:
       - "3000:80"

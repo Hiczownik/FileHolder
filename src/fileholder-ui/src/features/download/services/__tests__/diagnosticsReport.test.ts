@@ -6,6 +6,7 @@ const BYTES_PER_KB = 1024;
 const BYTES_PER_GB = BYTES_PER_KB * BYTES_PER_KB * BYTES_PER_KB;
 const QUOTA_GB = 10;
 const USED_GB = 4;
+const BUILD = { version: '0.9.0', commit: 'abc1234' };
 
 describe('buildDiagnosticsReport', () => {
     it('describes what Safari on an iPhone would do, line by line', () => {
@@ -15,6 +16,8 @@ describe('buildDiagnosticsReport', () => {
             lastSaveReport: 'Saved "big.bin" via opfs. Skipped: service-worker (held back on WebKit).',
             userAgent: IPHONE_SAFARI,
             secureContext: true,
+            uiBuild: BUILD,
+            apiBuild: BUILD,
         });
 
         expect(report.split('\n')).toEqual([
@@ -24,6 +27,8 @@ describe('buildDiagnosticsReport', () => {
             'Site storage: 6 GB free of 10 GB',
             'Last download: Saved "big.bin" via opfs. Skipped: service-worker (held back on WebKit).',
             `Browser: ${IPHONE_SAFARI}`,
+            'UI build: v0.9.0 · abc1234',
+            'API build: v0.9.0 · abc1234',
         ]);
     });
 
@@ -34,11 +39,28 @@ describe('buildDiagnosticsReport', () => {
             lastSaveReport: null,
             userAgent: IPHONE_SAFARI,
             secureContext: false,
+            uiBuild: BUILD,
+            apiBuild: null,
         });
 
         expect(report).toContain('Will try, in order: memory');
         expect(report).toContain('Secure context (HTTPS): no');
         expect(report).toContain('Site storage: no estimate available');
         expect(report).toContain('Last download: none yet');
+        expect(report).toContain('API build: not known');
+    });
+
+    it('points out a page from before a deploy, whose UI build differs from the API it talks to', () => {
+        const report = buildDiagnosticsReport({
+            capabilities: { serviceWorker: true, isWebKit: false, fileSystemAccess: true, opfs: true },
+            storage: null,
+            lastSaveReport: null,
+            userAgent: IPHONE_SAFARI,
+            secureContext: true,
+            uiBuild: BUILD,
+            apiBuild: { version: '0.9.1', commit: 'def5678' },
+        });
+
+        expect(report).toContain('API build: v0.9.1 · def5678 (differs from the UI: reload the page)');
     });
 });

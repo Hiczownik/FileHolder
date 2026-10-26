@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { CopyButton } from '../../../shared/components/CopyButton';
 import { detectCapabilities } from '../../../shared/utils/download/streamSaving';
 import { buildDiagnosticsReport, type StorageEstimate } from '../services/diagnosticsReport';
+import { UI_BUILD } from '../../../shared/utils/buildInfo';
+import { useServiceStatus } from '../../../shared/hooks/useServiceStatus';
 
 /**
  * Shown only with ?diagnostics in the link: how this browser can save encrypted downloads, and how the last one
@@ -15,6 +17,7 @@ interface Props {
 
 export const SaveDiagnostics: React.FC<Props> = ({ lastSaveReport }) => {
     const [storage, setStorage] = useState<StorageEstimate | null>(null);
+    const serviceStatus = useServiceStatus();
 
     useEffect(() => {
         let isCancelled = false;
@@ -38,6 +41,8 @@ export const SaveDiagnostics: React.FC<Props> = ({ lastSaveReport }) => {
         lastSaveReport,
         userAgent: navigator.userAgent,
         secureContext: window.isSecureContext,
+        uiBuild: UI_BUILD,
+        apiBuild: serviceStatus?.apiBuild ?? null,
     });
 
     return (

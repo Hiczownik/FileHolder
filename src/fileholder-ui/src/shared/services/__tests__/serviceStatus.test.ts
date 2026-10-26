@@ -29,6 +29,7 @@ describe('service status', () => {
             mode: 'UploadsPaused',
             message: 'Back soon.',
             until: new Date(UNTIL),
+            apiBuild: null,
         });
     });
 
@@ -40,8 +41,12 @@ describe('service status', () => {
         expect(parseServiceStatus(value)).toEqual(NORMAL_STATUS);
     });
 
+    it("reads the API's build when it sends one", () => {
+        expect(parseServiceStatus({ mode: 'Normal', version: '0.9.0', commit: 'abc1234' }).apiBuild).toEqual({ version: '0.9.0', commit: 'abc1234' });
+    });
+
     it('drops a blank message and an unreadable until', () => {
-        expect(parseServiceStatus({ mode: 'Closed', message: '  ', until: 'soon' })).toEqual({ mode: 'Closed', message: null, until: null });
+        expect(parseServiceStatus({ mode: 'Closed', message: '  ', until: 'soon' })).toEqual({ mode: 'Closed', message: null, until: null, apiBuild: null });
     });
 
     it('asks once per page load, and shares the answer', async () => {

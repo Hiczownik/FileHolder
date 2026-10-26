@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { formatShortDateTime } from '../utils/timeLeft';
+import type { BuildInfo } from '../utils/buildInfo';
 
 /** How much of FileHolder is open, as GET /api/v1/status reports it (ServiceMode on the server). */
 export type ServiceMode = 'Normal' | 'UploadsPaused' | 'ReadOnly' | 'Closed';
@@ -10,9 +11,11 @@ export interface ServiceStatus {
     readonly message: string | null;
     /** When the owner expects to switch back. Informational: nothing switches back by itself. */
     readonly until: Date | null;
+    /** The API's build, for the diagnostics report; null when the server didn't say. */
+    readonly apiBuild: BuildInfo | null;
 }
 
-export const NORMAL_STATUS: ServiceStatus = { mode: 'Normal', message: null, until: null };
+export const NORMAL_STATUS: ServiceStatus = { mode: 'Normal', message: null, until: null, apiBuild: null };
 
 const MODES: readonly ServiceMode[] = ['Normal', 'UploadsPaused', 'ReadOnly', 'Closed'];
 
@@ -34,6 +37,7 @@ export function parseServiceStatus(value: unknown): ServiceStatus {
         mode: raw.mode as ServiceMode,
         message: typeof raw.message === 'string' && raw.message.trim() !== '' ? raw.message : null,
         until: until && !Number.isNaN(until.getTime()) ? until : null,
+        apiBuild: typeof raw.version === 'string' && typeof raw.commit === 'string' ? { version: raw.version, commit: raw.commit } : null,
     };
 }
 
