@@ -204,6 +204,8 @@ docker compose up --build
   * nginx sets `X-Forwarded-For`, and the API trusts it only from the UI container's fixed address (`172.30.250.10`, `ForwardedHeaders__KnownProxies__0`), so rate limits apply per client.
   * Port 8080 is bound to loopback, for local tooling only.
 * **The compose network is pinned to `172.30.250.0/24`.** If that clashes with a network on your machine, change the subnet, the UI's `ipv4_address` and `ForwardedHeaders__KnownProxies__0` together.
+* **A reverse proxy in front of the UI container** (Caddy in production): list its address in the UI container's `TRUSTED_PROXIES`. nginx then replaces the connection's address with the client's from that proxy's `X-Forwarded-For` and passes it on, so the access log, the rate limits and the password lockout see real clients. The API keeps trusting only nginx. Other clients' forwarded headers are ignored.
+* **Deploys don't cut downloads off:** on a stop, the API lets running requests (bundle ZIPs) finish for up to 90 s, then stays up 5 s more so the last buffered bytes leave before Docker removes the container's network. Compose gives it 100 s (`stop_grace_period`), and Postgres 30 s for a clean shutdown.
 * **Behind your own reverse proxy or load balancer**, list its address under `ForwardedHeaders:KnownProxies`, or its range under `ForwardedHeaders:KnownNetworks` (CIDR, e.g. `10.0.1.0/24`). Otherwise every client shares the proxy's rate limit. Make sure the proxy overwrites `X-Forwarded-For` rather than appending to a client-supplied one.
 * **Docker Desktop (Windows/macOS) hides client addresses:** its port forwarding makes every connection appear to come from one gateway address, so locally all clients still share one rate-limit partition. Linux hosts and real proxies don't have this problem.
 * **Metrics** are served only on port 9464 (`Metrics:Port`), which compose never publishes. Prometheus scrapes `api:9464` over the internal network.
@@ -332,6 +334,8 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
 | `Cors__AllowedOrigins__<n>` | `http://localhost:3000` | Origins whose pages may call the API cross-origin, e.g. `https://fileholder.app`. None by default: through nginx the browser calls the API same-origin, which needs no CORS. Scheme, host and port only, with no trailing slash, or the API refuses to start |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
+| `Hosting__ShutdownTimeoutSeconds` | 90 (default) | On a stop (a deploy), how long requests already running may finish. Bundle ZIPs stream through the API, so a longer one is cut off after this. Compose's `stop_grace_period` (100 s) must be longer than this plus the linger |
+| `Hosting__LingerSeconds` | 5 (default) | How long the API stays up after its last response, so the end of a ZIP still in the network buffers reaches nginx before Docker removes the container's network |
 | `Admin__Token` | `ADMIN_TOKEN` from `.env` | Bearer token for the admin endpoints (see *Maintenance Modes*). At least 32 characters, or the API refuses to start; empty turns the admin endpoints off |
 | `Admin__Port` | 9465 (default) | The only port the admin endpoints answer on. Compose binds it to the host's loopback |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4317` | Where traces go over OTLP. Unset (the default outside compose), nothing is sent; log lines inside a trace still end with `trace=… span=…` |
@@ -339,6 +343,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Tracing__RecordClientAddress` | false (default) | Keep the caller's address on request spans, for debugging rate limits or the lockout on a real host |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
 | `.env`: `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `STORAGE_ROOT_USER`, `STORAGE_ROOT_PASSWORD`, `STORAGE_API_SECRET_KEY`, `ADMIN_TOKEN` | (yours) | The stack's passwords (see *Quick Start* and `.env.example`) |
+| UI: `TRUSTED_PROXIES` | empty | Addresses or CIDR ranges of a reverse proxy in front of the UI container (Caddy in production). nginx then takes the client's address and scheme from that proxy's `X-Forwarded-For` and `X-Forwarded-Proto`. Empty: clients connect directly and those headers are ignored. A malformed value stops the container |
 | UI: `STORAGE_PUBLIC_URL` | `http://localhost:9000` | The same address as `Storage__PublicBaseUrl`, without a path. The UI's Content-Security-Policy allows connections to it; without a valid one the container doesn't start |
 | Build: `GIT_SHA`, `VERSION` (build args; compose reads them from the environment) | unset | The commit and image version label (see *Versions and Releases*). Unset, the commit shows as `unknown` and the label as `dev` |
 | UI: `VITE_ABUSE_EMAIL` (build time) | `abuse@fileholder.app` (`.env.production`, Dockerfile) | Where the *Report abuse* links send email. Empty hides them |

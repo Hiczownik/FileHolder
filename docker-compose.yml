@@ -8,6 +8,8 @@ services:
   postgres:
     image: postgres:17.11-alpine3.24@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
     container_name: fileholder-postgres
+    # Time for a clean shutdown (a checkpoint) instead of crash recovery on the next start.
+    stop_grace_period: 30s
     environment:
       POSTGRES_DB: fileholder_db
       POSTGRES_USER: fileholder_user
@@ -92,6 +94,9 @@ services:
         GIT_SHA: ${GIT_SHA:-}
         VERSION: ${VERSION:-dev}
     container_name: fileholder-api
+    # Longer than Hosting__ShutdownTimeoutSeconds (90 by default) plus Hosting__LingerSeconds (5), so a deploy lets
+    # running bundle ZIPs finish instead of Docker killing the API after its default 10 seconds.
+    stop_grace_period: 100s
     # Browsers reach the API through the ui container's nginx (/api/), so it sees real client addresses.
     # This loopback port is only for local tooling and the CI health check. Metrics (9464) stay internal.
     # 9465 is the owner's admin port (maintenance modes, scripts/admin.ps1): loopback only, and never proxied.
@@ -147,12 +152,17 @@ services:
         GIT_SHA: ${GIT_SHA:-}
         VERSION: ${VERSION:-dev}
     container_name: fileholder-ui
+    # nginx stops gracefully (SIGQUIT), waiting for the ZIPs it is passing on from the API; as long as the API waits.
+    stop_grace_period: 100s
     ports:
       - "3000:80"
     environment:
       # The same address as the API's Storage__PublicBaseUrl. The page's Content-Security-Policy lets it upload to
       # and download from this address only, so with a different one every transfer is blocked.
       STORAGE_PUBLIC_URL: "http://localhost:9000"
+      # Browsers connect to nginx directly here, so no forwarded header is trusted. Behind a reverse proxy, list its
+      # address (docker-compose.prod.yml sets Caddy's), so nginx and the API see real client addresses.
+      TRUSTED_PROXIES: ""
     networks:
       default:
         # Fixed so the API can trust X-Forwarded-For from this container and nothing else.
