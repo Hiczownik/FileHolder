@@ -392,6 +392,16 @@ describe('useFileDownload Hook Lifecycle & Cryptographic States', () => {
             expect(result.current.unavailable).toBe('gone');
         });
 
+        it('was removed when the owner took it down (410 with removed)', async () => {
+            const removed = httpError(HTTP_GONE, 'This bundle was removed by FileHolder.');
+            (removed.response!.data as Record<string, unknown>).removed = true;
+            vi.spyOn(downloadApi, 'getGroupMetadata').mockRejectedValue(removed);
+
+            const { result } = await renderLoaded('removed_410');
+
+            expect(result.current.unavailable).toBe('removed');
+        });
+
         it('is gone when the server marks it expired', async () => {
             const expired: FileGroupMetadataResponse = {
                 shareToken: 'gone_flag',

@@ -6,10 +6,20 @@ import { UploadForm } from "./components/UploadForm";
 import { EncryptionModes, HowItWorks } from "./components/HomeSections";
 import { useUploadLimits } from "./hooks/useUploadLimits";
 import { describeHours } from "./services/uploadLimits";
+import { useEffect } from "react";
+import { useServiceStatus } from "../../shared/hooks/useServiceStatus";
+import { refreshServiceStatus } from "../../shared/services/serviceStatus";
 
 export const UploadPage: React.FC = () => {
     const { upload, uploadState, reset } = useFileUpload();
     const limits = useUploadLimits();
+    const serviceStatus = useServiceStatus();
+    const uploadsPaused = serviceStatus?.mode === 'UploadsPaused' || serviceStatus?.mode === 'ReadOnly';
+
+    // The owner may have paused uploads since the page loaded; asking again shows the banner and disables the form.
+    useEffect(() => {
+        if (uploadState.status === 'error') void refreshServiceStatus();
+    }, [uploadState.status]);
     const facts = [
         { icon: Clock, text: `Expires after ${describeHours(limits.minExpiryHours)} to ${describeHours(limits.maxExpiryHours)}, or after 1 to 100 downloads` },
         { icon: ShieldCheck, text: 'End-to-end encryption in your browser, optional' },
@@ -52,7 +62,7 @@ export const UploadPage: React.FC = () => {
                     {uploadState.status === 'error' && (
                         <StatusAlert variant="error" message={uploadState.message} />
                     )}
-                    <UploadForm uploadState={uploadState} onUpload={upload} limits={limits} />
+                    <UploadForm uploadState={uploadState} onUpload={upload} limits={limits} uploadsPaused={uploadsPaused} />
                 </div>
             </div>
 

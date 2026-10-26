@@ -225,6 +225,10 @@ Uploads can be paused, or the whole site closed, within seconds and without a re
 * **The purge runs in every mode,** so pausing never delays a deletion. Aborting a multipart upload is also always allowed: it only frees storage.
 * **Refused requests** get `503` with `Retry-After` (until the mode's `until`, else 5 minutes), the owner's message as the problem's `detail`, and the mode as its `mode` field.
 * **`GET /api/v1/status`** → `{ "mode": "UploadsPaused", "message": "…", "until": "…" }`, for the UI. Never cached.
+* **What visitors see:** the UI asks for the status when the page loads (and again after a failed upload, in case uploads were paused meanwhile).
+  * `UploadsPaused` and `ReadOnly`: a banner on every page with the owner's message (or a default one) and *"Expected back …"* while `until` is ahead. The upload form stays visible, but its button reads *Uploads are paused* and can't be pressed.
+  * `Closed`: one page, *"FileHolder is closed for now"*, instead of every page.
+  * If the status can't be read, the UI behaves as in `Normal`: the API refuses whatever the mode doesn't allow anyway.
 * **Switching it:** `scripts/admin.ps1` calls the admin endpoints on port 9465 with `ADMIN_TOKEN` from `.env`:
   ```powershell
   scripts/admin.ps1 status
@@ -250,6 +254,8 @@ scripts/admin.ps1 takedowns   # the latest takedowns
 * **If storage fails** to delete a file, the bundle is still closed, and the purge retries on its next run (within 30 minutes) without waiting for its grace period or for open download sessions. The script says so.
 * **The script sends only the share token,** never the `#k=` key of an encrypted bundle's link. A link or a bare token both work.
 * **The record** (`Takedowns`: share token, reason, who, when, file count, total size, encrypted or not) is kept after the tombstone is deleted, so a later question about the link can be answered. It holds no title, file names or keys. Taking down the same link again changes nothing and shows the first record.
+* **What the recipient sees:** *"This bundle was removed by FileHolder"*, with a short note to be careful with anything else the sender sent, instead of the usual "no longer available" page.
+* **Reports come in by email:** the footer's *Report abuse* link, and *Report it* under every bundle, open an email to `abuse@fileholder.app` (`VITE_ABUSE_EMAIL`). The bundle's report names its link **without the `#k=` key**, so the key never reaches the inbox; the share token is all a takedown needs.
 * **Answers:** `404` for an unknown token; `409` when the bundle already expired and its files are gone. Encrypted bundles can be taken down like any other: the server can't see inside them, but it can delete them.
 
 ### Tracing
@@ -309,6 +315,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
 | `.env`: `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `STORAGE_ROOT_USER`, `STORAGE_ROOT_PASSWORD`, `STORAGE_API_SECRET_KEY`, `ADMIN_TOKEN` | (yours) | The stack's passwords (see *Quick Start* and `.env.example`) |
 | UI: `STORAGE_PUBLIC_URL` | `http://localhost:9000` | The same address as `Storage__PublicBaseUrl`, without a path. The UI's Content-Security-Policy allows connections to it; without a valid one the container doesn't start |
+| UI: `VITE_ABUSE_EMAIL` (build time) | `abuse@fileholder.app` (`.env.production`, Dockerfile) | Where the *Report abuse* links send email. Empty hides them |
 | UI: `VITE_API_BASE_URL` (build time) | `/api/v1/files` (`.env.production`) | API address the UI calls; `.env.development` uses `http://localhost:8080/api/v1/files` |
 
 `docker-compose.override.example.yml` shows how to override settings locally (used for phone testing below).

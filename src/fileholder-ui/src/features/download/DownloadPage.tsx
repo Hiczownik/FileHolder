@@ -11,6 +11,7 @@ import { SaveDiagnostics } from './components/SaveDiagnostics';
 import { describeDownloadProgress, type DownloadProgress } from '../../shared/utils/download/progress';
 import { Button } from '../../shared/components/Button';
 import { StatusAlert } from '../../shared/components/StatusAlert';
+import { abuseReportHref } from '../../shared/utils/abuseReport';
 
 const PERCENT = 100;
 
@@ -94,6 +95,8 @@ export const DownloadPage: React.FC = () => {
     const isBusy = downloadingFileId !== null || isDownloadingAll;
     const files = metadata?.files ?? [];
     const onlyFile = metadata?.fileCount === 1 ? files[0] : undefined;
+    // The address without its fragment: an encrypted bundle's key never goes into the report.
+    const reportHref = abuseReportHref(window.location.href);
 
     return (
         <div className="max-w-[640px] mx-auto px-4 py-10 sm:py-14 space-y-4">
@@ -156,6 +159,16 @@ export const DownloadPage: React.FC = () => {
                 <p className="px-1 text-sm text-muted">
                     Your first download starts a session that lasts up to 6 hours. Downloading again within it, the same
                     files or others, doesn&apos;t use up another of this bundle&apos;s downloads.
+                </p>
+            )}
+
+            {reportHref && (
+                <p className="px-1 text-sm text-muted">
+                    Something wrong with this bundle, like phishing or malware?{' '}
+                    <a href={reportHref} className="underline underline-offset-2 hover:text-fg rounded outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                        Report it
+                    </a>
+                    .
                 </p>
             )}
         </div>

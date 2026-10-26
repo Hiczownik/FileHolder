@@ -10,6 +10,9 @@ COPY . .
 # Same-origin by default: nginx forwards /api/ to the API container (see nginx.conf.template).
 ARG VITE_API_BASE_URL=/api/v1/files
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+# Where the "Report abuse" links send email; .env.production has FileHolder's. An empty value hides the links.
+ARG VITE_ABUSE_EMAIL=abuse@fileholder.app
+ENV VITE_ABUSE_EMAIL=$VITE_ABUSE_EMAIL
 
 RUN npm run build
 
