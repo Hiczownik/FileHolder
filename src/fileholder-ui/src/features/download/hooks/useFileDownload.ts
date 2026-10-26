@@ -38,7 +38,11 @@ export const WRONG_PASSKEY_MESSAGE = 'Incorrect passkey. If you\'re sure it\'s r
 export type PromptKind = 'password' | 'passkey';
 
 /** Why the bundle can't be shown at all: it expired or ran out of downloads (`gone`), or no bundle has this link. */
-export type Unavailability = 'gone' | 'notFound';
+/** gone: expired or used up; removed: taken down by the owner (a 410 whose problem says `removed`). */
+export type Unavailability = 'gone' | 'removed' | 'notFound';
+
+const isRemovedProblem = (data: unknown): boolean =>
+    typeof data === 'object' && data !== null && (data as { removed?: unknown }).removed === true;
 
 /**
  * Takes the link key out of the address bar, so it doesn't sit on screen, in screenshots or in the tab's history
@@ -194,7 +198,8 @@ export const useFileDownload = (shareToken?: string) => {
                 if (isCancelled) return;
                 if (isAxiosError(err) && (err.response?.status === HTTP_NOT_FOUND || err.response?.status === HTTP_GONE)) {
                     linkKeyStore.clear(shareToken);
-                    setUnavailable(err.response.status === HTTP_GONE ? 'gone' : 'notFound');
+                    if (err.response.status !== HTTP_GONE) setUnavailable('notFound');
+                    else setUnavailable(isRemovedProblem(err.response.data) ? 'removed' : 'gone');
                 }
                 setError(parseApiError(err));
             } finally {

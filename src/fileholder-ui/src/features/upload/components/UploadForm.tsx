@@ -16,6 +16,8 @@ interface Props {
     onUpload: (formValues: UploadFormValues, files: File[]) => void;
     /** The deployment's limits (useUploadLimits): the expiries offered and the drop area's hint. */
     limits?: UploadLimits;
+    /** The owner has paused uploads (the maintenance mode): the form stays to look at, but can't be sent. */
+    uploadsPaused?: boolean;
 }
 
 const DEFAULT_MAX_DOWNLOADS = 10;
@@ -25,7 +27,7 @@ const OPTIONAL = "font-normal text-muted";
 const FIELD = "w-full h-11 px-3 rounded-[10px] border border-line-strong bg-surface text-fg outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent/40";
 const HINT = "text-[13px] text-muted";
 
-export const UploadForm: React.FC<Props> = ({ uploadState, onUpload, limits = DEFAULT_UPLOAD_LIMITS }) => {
+export const UploadForm: React.FC<Props> = ({ uploadState, onUpload, limits = DEFAULT_UPLOAD_LIMITS, uploadsPaused = false }) => {
     const [files, setFiles] = useState<File[]>([]);
     // Shown until the next pick, so a file left out is never dropped without a word.
     const [skippedNames, setSkippedNames] = useState<string[]>([]);
@@ -61,7 +63,7 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload, limits = DE
     const isPasskeyRequired = isEncrypted && requirePasskey;
     const showPasswordField = !isEncrypted || requirePasskey;
     const isPasswordMissingForE2EE = isPasskeyRequired && (!passwordValue || passwordValue.trim().length === 0);
-    const isSubmitDisabled = files.length === 0 || isPasswordMissingForE2EE;
+    const isSubmitDisabled = uploadsPaused || files.length === 0 || isPasswordMissingForE2EE;
 
     const handleFilesSelect = (newFiles: File[]) => {
         const merged = mergeSelectedFiles(files, newFiles);
@@ -238,9 +240,13 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload, limits = DE
                     loadingText="Uploading..."
                     className="h-[50px] text-base"
                 >
-                    Create share link
+                    {uploadsPaused ? 'Uploads are paused' : 'Create share link'}
                 </Button>
-                <p className={`${HINT} text-center`}>Your browser uploads the files directly to storage.</p>
+                <p className={`${HINT} text-center`}>
+                    {uploadsPaused
+                        ? 'New uploads are paused for now (see the notice at the top). Shared links still work.'
+                        : 'Your browser uploads the files directly to storage.'}
+                </p>
             </div>
         </form>
     );

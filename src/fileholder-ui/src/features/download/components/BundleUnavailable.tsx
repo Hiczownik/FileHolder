@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Clock, Link2Off } from "lucide-react";
+import { Clock, Link2Off, ShieldX, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import type { Unavailability } from "../hooks/useFileDownload";
 
@@ -13,6 +13,11 @@ const TEXT: Readonly<Record<Unavailability, { title: string; explanation: string
         explanation: "It has expired or run out of downloads, and its files are deleted automatically. That's how FileHolder is meant to work.",
         next: 'If you still need the files, ask the sender for a new link.',
     },
+    removed: {
+        title: 'This bundle was removed by FileHolder',
+        explanation: 'FileHolder removes bundles reported as harmful, such as phishing or malware, and deletes their files.',
+        next: "If you weren't expecting files from the sender, be careful with anything else they sent you.",
+    },
     notFound: {
         title: "This link doesn't open a bundle",
         explanation: 'It may have been copied incompletely, or the bundle no longer exists.',
@@ -20,10 +25,12 @@ const TEXT: Readonly<Record<Unavailability, { title: string; explanation: string
     },
 };
 
+const ICONS: Readonly<Record<Unavailability, LucideIcon>> = { gone: Clock, removed: ShieldX, notFound: Link2Off };
+
 /** Not an error to fix: the bundle has gone, as bundles are meant to. Calm, with the one thing the reader can do. */
 export const BundleUnavailable: React.FC<Props> = ({ reason }) => {
     const text = TEXT[reason];
-    const Icon = reason === 'gone' ? Clock : Link2Off;
+    const Icon = ICONS[reason];
     const headingRef = useRef<HTMLHeadingElement>(null);
 
     // The page was "Loading bundle…" a moment ago; moving focus here has screen readers announce the outcome.
