@@ -1,0 +1,205 @@
+# Production: one server running the whole app (README, Production). Only Caddy is published to the internet, on 80
+# and 443; Docker's published ports get around a host firewall such as ufw, so nothing else is. Files are stored in
+# Cloudflare R2, not here; Grafana runs on the owner's computer and reaches Prometheus and Tempo over SSH or Tailscale.
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+#
+# The images are built elsewhere and copied to the server (deploy.ps1), so they are referred to by name and version
+# (FILEHOLDER_VERSION). Every setting and secret comes from the server's .env (.env.prod.example lists them).
+#
+# Hardening, for every service: no new privileges, as few Linux capabilities as it needs, a read-only filesystem with
+# tmpfs where it writes, a memory limit, and logs rotated at 3 x 10 MB, since Docker keeps them forever otherwise.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      SITE_ADDRESS: "${SITE_ADDRESS:?Set SITE_ADDRESS in .env, e.g. fileholder.app}"
+      ACME_EMAIL: "${ACME_EMAIL:?Set ACME_EMAIL in .env: certificate expiry warnings go there}"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and the certificate authority account: kept, or every restart would ask for new ones and soon
+      # hit Let's Encrypt's rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      default:
+        # Fixed, so nginx trusts forwarded client addresses from this container only (TRUSTED_PROXIES).
+        ipv4_address: 172.30.250.20
+    # Root in its container, as the image runs, but with no capabilities except binding ports 80 and 443.
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 128m
+    # Caddy lets open connections finish (grace_period in the Caddyfile).
+    stop_grace_period: 100s
+    logging: *logging
+    depends_on:
+      ui:
+        condition: service_healthy
+
+  ui:
+    image: "fileholder-ui:${FILEHOLDER_VERSION:?Set FILEHOLDER_VERSION in .env (deploy.ps1 does)}"
+    restart: unless-stopped
+    environment:
+      # R2's address, the same as the API's Storage__PublicBaseUrl: the page's CSP lets it reach only this.
+      STORAGE_PUBLIC_URL: "${STORAGE_PUBLIC_URL:?Set STORAGE_PUBLIC_URL in .env (the R2 bucket address)}"
+      # Caddy, so nginx takes the client's address and https from Caddy's forwarded headers.
+      TRUSTED_PROXIES: "172.30.250.20"
+    networks:
+      default:
+        # Fixed, so the API trusts X-Forwarded-For from this container only (ForwardedHeaders__KnownProxies__0).
+        ipv4_address: 172.30.250.10
+    # nginx starts as root to drop its workers to the nginx user; it needs these, and nothing else.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETUID, SETGID, NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    # The image's entrypoint writes the config into conf.d at start (templates, TRUSTED_PROXIES).
+    tmpfs: [/tmp, /var/cache/nginx, /var/run, /etc/nginx/conf.d]
+    mem_limit: 128m
+    stop_grace_period: 100s
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    image: "fileholder-api:${FILEHOLDER_VERSION:?Set FILEHOLDER_VERSION in .env (deploy.ps1 does)}"
+    restart: unless-stopped
+    # The owner's admin port (maintenance modes, takedown): the server's loopback only, reached over SSH. The API
+    # itself (8080) and its metrics (9464) are only on the compose network.
+    ports:
+      - "127.0.0.1:9465:9465"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__PostgresConnection: "Host=postgres;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env};Maximum Pool Size=50"
+      # Cloudflare R2 (README, Running on Cloudflare R2): the bucket's address, used by the API and in presigned URLs.
+      Storage__ServiceUrl: "${STORAGE_PUBLIC_URL:?Set STORAGE_PUBLIC_URL in .env (the R2 bucket address)}"
+      Storage__PublicBaseUrl: "${STORAGE_PUBLIC_URL:?Set STORAGE_PUBLIC_URL in .env (the R2 bucket address)}"
+      Storage__BucketName: "${STORAGE_BUCKET:?Set STORAGE_BUCKET in .env}"
+      Storage__AccessKey: "${STORAGE_ACCESS_KEY:?Set STORAGE_ACCESS_KEY in .env (the R2 token's Access Key ID)}"
+      Storage__SecretKey: "${STORAGE_SECRET_KEY:?Set STORAGE_SECRET_KEY in .env (the R2 token's Secret Access Key)}"
+      # Set in R2's dashboard; the API only logs the values it should have.
+      Storage__LifecycleRule: "${STORAGE_LIFECYCLE_RULE:-External}"
+      # The public demo's limits (#148), unless .env says otherwise.
+      UploadLimits__MaxBundleSizeBytes: "${UPLOAD_MAX_BUNDLE_BYTES:-262144000}"
+      UploadLimits__MaxExpiryHours: "${UPLOAD_MAX_EXPIRY_HOURS:-24}"
+      UploadLimits__GlobalQuotaBytes: "${UPLOAD_GLOBAL_QUOTA_BYTES:-10737418240}"
+      # Only nginx, which passes on the client's address it got from Caddy.
+      ForwardedHeaders__KnownProxies__0: "172.30.250.10"
+      Admin__Token: "${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env (at least 32 characters)}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 768m
+    # Longer than Hosting__ShutdownTimeoutSeconds (90) plus Hosting__LingerSeconds (5): running ZIPs finish.
+    stop_grace_period: 100s
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8080/healthz/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17.11-alpine3.24@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fileholder_db
+      POSTGRES_USER: fileholder_user
+      # Only applied when the volume is first created (README, Passwords and Storage Users).
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
+    # No port: reach it with `docker compose exec postgres psql …`.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # The entrypoint fixes the data directory's owner and drops to the postgres user.
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp, /var/run/postgresql]
+    shm_size: 128m
+    mem_limit: 512m
+    # Time for a clean shutdown (a checkpoint) instead of crash recovery on the next start.
+    stop_grace_period: 30s
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fileholder_user -d fileholder_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # A week is enough to see a problem and how it started; the disk holds only the database otherwise.
+      - --storage.tsdb.retention.time=7d
+    # The owner's Grafana reaches it over SSH or Tailscale; never published to the internet.
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    mem_limit: 256m
+    logging: *logging
+
+  tempo:
+    # Traces, kept 48 h (docker/tempo/tempo.yaml). OTLP only on the compose network; queries on the loopback.
+    image: grafana/tempo:3.1.1@sha256:64e2fbd56d9c2b3412a4b430a58ea59e91a670b1e75f920a0c702213ad145044
+    restart: unless-stopped
+    command: ["-target=all", "-config.file=/etc/tempo.yaml"]
+    ports:
+      - "127.0.0.1:3200:3200"
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 256m
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  prometheus_data:
+  tempo_data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24

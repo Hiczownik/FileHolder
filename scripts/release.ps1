@@ -53,6 +53,9 @@ if ($DryRun) { $arguments += '--dry-run' }
 
 Push-Location $root
 try {
+    # Docker and npx report progress on stderr, which Windows PowerShell 5.1 turns into errors that 'Stop' would
+    # end the script on; their exit codes say whether they failed.
+    $ErrorActionPreference = 'Continue'
     # release-please only takes the token as an argument (no environment variable), so it is visible in this
     # machine's process list while the command runs. Fine on your own machine; don't run this on a shared one.
     & npx @arguments '--token' $token

@@ -1,0 +1,78 @@
+# The production setup (docker-compose.prod.yml) on a development machine, to check it before it reaches the server:
+# Caddy with its own local certificate authority for https://localhost, the hardened containers, and nginx and the API
+# behind Caddy. Run it with scripts/prod-local.ps1, which builds the images, uses a project of its own
+# (fileholder-prodtest) and its own .env.prod-local, so it never touches the dev stack or its volumes.
+#
+# What differs from production: storage is Silo instead of R2 (from docker-compose.yml), the images are built here,
+# and every published port and the network move out of the dev stack's way (Caddy on https://localhost:18443).
+
+services:
+  caddy:
+    ports: !override
+      - "127.0.0.1:18443:443"
+    networks:
+      default:
+        ipv4_address: 172.30.251.20
+
+  ui:
+    build:
+      context: ./src/fileholder-ui
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        VERSION: ${FILEHOLDER_VERSION}
+    environment:
+      TRUSTED_PROXIES: "172.30.251.20"
+    networks:
+      default:
+        ipv4_address: 172.30.251.10
+
+  api:
+    build:
+      context: .
+      dockerfile: src/FileHolder.Api/Dockerfile
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        VERSION: ${FILEHOLDER_VERSION}
+    ports: !override
+      - "127.0.0.1:19465:9465"
+    environment:
+      # Silo on the compose network; browsers use STORAGE_PUBLIC_URL (http://localhost:19000).
+      Storage__ServiceUrl: "http://minio:9000"
+      # Silo takes the lifecycle rule from the API, as in the dev stack.
+      Storage__LifecycleRule: "Apply"
+      ForwardedHeaders__KnownProxies__0: "172.30.251.10"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+
+  minio:
+    extends:
+      file: docker-compose.yml
+      service: minio
+    container_name: fileholder-prodtest-minio
+    ports: !override
+      - "127.0.0.1:19000:9000"
+
+  minio-init:
+    extends:
+      file: docker-compose.yml
+      service: minio-init
+    container_name: fileholder-prodtest-minio-init
+
+  prometheus:
+    ports: !override
+      - "127.0.0.1:19090:9090"
+
+  tempo:
+    ports: !override
+      - "127.0.0.1:13200:3200"
+
+volumes:
+  minio_data:
+
+networks:
+  default:
+    # The dev stack has 172.30.250.0/24.
+    ipam: !override
+      config:
+        - subnet: 172.30.251.0/24
