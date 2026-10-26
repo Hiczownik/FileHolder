@@ -1,0 +1,21 @@
+# Findings accepted in the Caddy image only (caddy:2.11.7-alpine), on top of .trivyignore. scripts/pre-deploy-check.ps1
+# adds this file when it scans Caddy, so these never hide the same IDs in another image. Each entry says why, and
+# expires (exp:): after that date the scan fails on it again. Caddy 2.11.7 (2026-10-03) is the newest release and is
+# built with Go 1.26.8; take the next release (built with a fixed Go and golang.org/x/net) and remove what it fixes.
+
+# HTTP/2: a flood of SETTINGS frames can tie the server up (Go stdlib and golang.org/x/net). Reachable, so HTTP/2 is off
+# in docker/caddy/Caddyfile (`protocols h1 h3`) until a fixed Caddy release; turn it back on then.
+CVE-2026-78669 exp:2026-11-30
+
+# net/http: crafted Range headers slow down Go's file server (ServeContent). Caddy only reverse-proxies here, with no
+# file_server, so that code never runs.
+CVE-2026-78667 exp:2026-11-30
+
+# crypto/tls: a ClientHello with repeated Encrypted Client Hello extensions. Only parsed when the server has ECH keys;
+# the Caddyfile configures no ECH.
+CVE-2026-97031 exp:2026-11-30
+
+# Alpine packages in the image that the Caddy binary (statically linked Go) never loads: brotli-libs (decoder
+# out-of-bounds write) and curl/libcurl (HTTP/2 upload use-after-free). Nothing in the container runs curl.
+CVE-2026-111497 exp:2026-11-30
+CVE-2026-92392 exp:2026-11-30
