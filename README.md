@@ -380,7 +380,30 @@ One server runs the whole app with `docker-compose.prod.yml`; files live in Clou
 * **Deploys** let running ZIP downloads finish (*Networking & Rate Limits*); `restart: unless-stopped` brings everything back after a reboot.
 * **Monitoring** stays private: Prometheus keeps 7 days and Tempo 48 hours, and Grafana runs on your own computer, reaching them through an SSH tunnel (`ssh -L 9090:localhost:9090 -L 3200:localhost:3200 <server>`) or Tailscale.
 * **Settings:** the server's `.env`, listed in `.env.prod.example`: the site address, the R2 bucket and token, the Postgres password, the admin token and the image version; the demo's upload limits are the defaults.
-* **Images** are built on a development machine and copied to the server (`deploy.ps1`, not yet written), so `docker-compose.prod.yml` refers to them as `fileholder-api:<version>` and `fileholder-ui:<version>`.
+* **Images** are built on a development machine and copied to the server (`scripts/deploy.ps1`, below), so `docker-compose.prod.yml` refers to them as `fileholder-api:<version>` and `fileholder-ui:<version>`.
+
+#### Deploying
+```powershell
+scripts/deploy.ps1 -Server fileholder            # build this checkout, copy it over, switch, check
+scripts/deploy.ps1 -Server fileholder -Rollback  # back to the version before
+```
+`-Server` is an SSH destination, best a `Host` in `~/.ssh/config` (or set `FILEHOLDER_SERVER`). The script:
+1. refuses uncommitted changes (`-AllowDirty` overrides), and checks the server has Docker Compose and its `.env`;
+2. builds both images here, tagged `<version>-<commit>` (e.g. `0.9.0-4ba83f2`);
+3. copies them over SSH (`docker save`, `scp -C`, `docker load`; about 150 MB), with `docker-compose.prod.yml` and the Caddy, Prometheus and Tempo configs. There's no registry; once the repository is public, images can move to GHCR;
+4. sets `FILEHOLDER_VERSION` in the server's `.env`, remembers the previous version, and runs `docker compose up --wait`. **If anything doesn't come up healthy, it switches back to the previous version by itself** and fails;
+5. checks the API on the server, and `https://fileholder.app/api/v1/status` (`-SiteUrl`; empty skips it), report the new commit;
+6. keeps the new and the previous images, removes older ones, and logs each deploy, failure and rollback in `deploy.log` on the server.
+
+Only the API and UI containers are recreated; Caddy, Postgres, Prometheus and Tempo keep running. A deploy interrupted halfway (Ctrl+C, a dropped connection) can leave a container stopped: run it again, or `docker compose -f docker-compose.prod.yml up -d` on the server.
+
+**First time on a new server** (a fresh Debian or Ubuntu):
+1. An SSH key on your computer (`ssh-keygen -t ed25519`), installed on the server, and a `Host fileholder` entry in `~/.ssh/config` with its address, user and key. Turn off password logins.
+2. Docker Engine with the Compose plugin ([docs.docker.com/engine/install](https://docs.docker.com/engine/install/)). If you deploy as a user other than root, add it to the `docker` group, which is root-equivalent on the server.
+3. A firewall allowing only SSH, 80 and 443 (`ufw allow OpenSSH; ufw allow 80; ufw allow 443; ufw enable`). Docker's published ports get around it, so `docker-compose.prod.yml` publishes nothing else.
+4. `/opt/fileholder`, owned by the deploying user, with a `.env` made from `.env.prod.example`.
+5. DNS: `A`/`AAAA` for the site address pointing at the server, **DNS only** (not proxied by Cloudflare), so Caddy gets its certificate and sees real client addresses.
+6. `scripts/deploy.ps1 -Server fileholder`. Caddy asks for the certificate on its first start, so DNS must already point at the server.
 
 **Trying it locally first:** `scripts/prod-local.ps1` runs the same setup next to the dev stack, as its own compose project with its own volumes, ports and random secrets (`.env.prod-local`). Caddy serves `https://localhost:18443` with its local certificate authority, and storage is Silo instead of R2 (`docker-compose.prod-local.yml`).
 ```powershell
@@ -463,6 +486,7 @@ dotnet test tests/FileHolder.Tests.Integration --filter "FullyQualifiedName~Stor
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
 | `scripts/release.ps1` | Cuts a release with release-please while GitHub Actions are off (*Versions and Releases*) |
 | `docker-compose.prod.yml`, `docker/caddy/Caddyfile` | The production setup behind Caddy (*Production*); `docker-compose.prod-local.yml` and `scripts/prod-local.ps1` run it locally |
+| `scripts/deploy.ps1` | Deploys this checkout to the production server over SSH, or rolls it back (*Production*) |
 | `scripts/admin.ps1` | The owner's controls: the maintenance mode and takedowns (*Maintenance Modes*, *Takedown*) |
 
 ---
