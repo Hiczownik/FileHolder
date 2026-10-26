@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { LegalPage, MailLink, Section } from './LegalLayout';
 import { useUploadLimits } from '../upload/hooks/useUploadLimits';
-import { describeHours } from '../upload/services/uploadLimits';
+import { describeHours, longestExpiry } from '../upload/services/uploadLimits';
 import { ABUSE_EMAIL } from '../../shared/utils/abuseReport';
 import { CONTACT_EMAIL } from '../../shared/utils/operator';
 
@@ -10,7 +10,7 @@ const LINK = 'underline underline-offset-2 text-fg hover:text-accent rounded out
 /** What FileHolder does with personal data (GDPR art. 13), kept true to the code: see README, Production. */
 export const PrivacyPage: React.FC = () => {
     const limits = useUploadLimits();
-    const longest = describeHours(limits.maxExpiryHours);
+    const longest = describeHours(longestExpiry(limits));
 
     return (
         <LegalPage
@@ -60,6 +60,14 @@ export const PrivacyPage: React.FC = () => {
                     save a large download through the site&apos;s private storage first; that copy is deleted about an
                     hour later, and anything left behind within a day. No cookies are set.
                 </p>
+                {limits.accessCodesEnabled && (
+                    <p>
+                        <strong>Access codes</strong> allow larger bundles. For each code, FileHolder counts how many
+                        bundles were uploaded with it, how many bytes, and when it was first and last used; it never
+                        records which bundle came with which code. A code from a personal link is kept in that tab
+                        until it closes, and removed from the address bar.
+                    </p>
+                )}
             </Section>
 
             <Section title="Who else handles data">

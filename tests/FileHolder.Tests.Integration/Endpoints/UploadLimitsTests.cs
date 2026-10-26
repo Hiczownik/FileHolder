@@ -23,7 +23,7 @@ public class DefaultUploadLimitsTests(CustomWebApplicationFactory factory) : ICl
     {
         var limits = await factory.CreateClient().GetFromJsonAsync<UploadLimitsResponseDto>("/api/v1/files/limits");
 
-        limits.Should().Be(new UploadLimitsResponseDto(5L * 1024 * 1024 * 1024, 50, 1, 168));
+        limits.Should().Be(new UploadLimitsResponseDto(5L * 1024 * 1024 * 1024, 50, 1, 168, LongestExpiryHours: 168));
     }
 }
 
@@ -95,7 +95,7 @@ public class DemoUploadLimitsTests(DemoLimitsFactory factory) : IClassFixture<De
     {
         var limits = await _client.GetFromJsonAsync<UploadLimitsResponseDto>("/api/v1/files/limits");
 
-        limits.Should().Be(new UploadLimitsResponseDto(MaxBundleSizeBytes, 50, 1, MaxExpiryHours));
+        limits.Should().Be(new UploadLimitsResponseDto(MaxBundleSizeBytes, 50, 1, MaxExpiryHours, LongestExpiryHours: MaxExpiryHours));
     }
 
     [Fact]

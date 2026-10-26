@@ -81,12 +81,24 @@ async function uploadAllOrStop(
     throw failures[0];
 }
 
+/**
+ * What the visitor's access code allows (#169): the code to send with presign, and the bundle size it allows. Without
+ * one, the limits the server reports for uploads without a code apply.
+ */
+export interface UploadAccess {
+    readonly accessCode?: string;
+    readonly maxBundleSizeBytes?: number;
+}
+
 /** Fails before anything is uploaded, with the same limit the server enforces at presign (as it reported it). */
-async function assertWithinBundleLimit(files: readonly File[]): Promise<void> {
-    const { maxBundleSizeBytes } = await loadUploadLimits();
+async function assertWithinBundleLimit(files: readonly File[], access?: UploadAccess): Promise<void> {
+    const limits = access?.maxBundleSizeBytes === undefined ? await loadUploadLimits() : undefined;
+    const maxBundleSizeBytes = access?.maxBundleSizeBytes ?? limits?.maxBundleSizeBytes ?? Number.POSITIVE_INFINITY;
     const totalBytes = files.reduce((acc, f) => acc + f.size, 0);
     if (totalBytes > maxBundleSizeBytes) {
-        throw new Error(`The bundle cannot be larger than ${formatSize(maxBundleSizeBytes)} in total; these files add up to ${formatSize(totalBytes)}.`);
+        // As the server's refusal says: without a code, a code would allow more.
+        const codeHint = limits?.accessCodesEnabled ? ' An access code allows more.' : '';
+        throw new Error(`The bundle cannot be larger than ${formatSize(maxBundleSizeBytes)} in total; these files add up to ${formatSize(totalBytes)}.${codeHint}`);
     }
 }
 
@@ -94,9 +106,10 @@ export async function executeStandardUploadWorkflow(
     formValues: UploadFormValues,
     files: File[],
     onProgress: (percent: number) => void,
-    signal?: AbortSignal 
+    signal?: AbortSignal,
+    access?: UploadAccess
 ): Promise<string> {
-    await assertWithinBundleLimit(files);
+    await assertWithinBundleLimit(files, access);
 
     const presign = await uploadApi.getPresignedUrl({
         title: formValues.title || undefined,
@@ -109,6 +122,7 @@ export async function executeStandardUploadWorkflow(
         maxDownloads: Number(formValues.maxDownloads),
         password: formValues.password || undefined,
         isEncrypted: false,
+        accessCode: access?.accessCode,
     });
 
     const items: PresignedItem[] = presign.items ?? [];
@@ -178,7 +192,8 @@ export async function executeEncryptedUploadWorkflow(
     formValues: UploadFormValues,
     files: File[],
     onProgress: (percent: number) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    access?: UploadAccess
 ): Promise<string> {
     const problem = formValues.requirePasskey ? passkeyProblem(formValues.password) : null;
     if (problem) {
@@ -191,7 +206,7 @@ export async function executeEncryptedUploadWorkflow(
         throw new Error(`Forbidden file extension detected. Executable files and scripts are not allowed: ${blocked.map((file) => file.name).join(', ')}.`);
     }
 
-    await assertWithinBundleLimit(files);
+    await assertWithinBundleLimit(files, access);
 
     // Nothing is encrypted yet: each file is encrypted part by part as it uploads, so memory doesn't grow
     // with file size. The encrypted sizes are known up front, so the upload URLs can be signed for them.
@@ -212,6 +227,7 @@ export async function executeEncryptedUploadWorkflow(
         maxDownloads: Number(formValues.maxDownloads),
         password: prepared.kAuth,
         isEncrypted: true,
+        accessCode: access?.accessCode,
     });
 
     const items: PresignedItem[] = presign.items ?? [];

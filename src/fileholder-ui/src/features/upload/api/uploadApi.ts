@@ -22,6 +22,12 @@ export const uploadApi = {
         return response.data;
     },
 
+    /** The limits an access code unlocks (#169); accessCode.ts checks the answer. Refused codes answer 400. */
+    checkAccessCode: async (code: string): Promise<unknown> => {
+        const response = await axios.post<unknown>(`${API_BASE_URL}/access-codes/check`, { code });
+        return response.data;
+    },
+
     getPresignedUrl: async (request: CreatePresignedUrlRequest): Promise<PresignedUrlResponse> => {
         const response = await axios.post<PresignedUrlResponse>(`${API_BASE_URL}/presign`, request);
         return response.data;

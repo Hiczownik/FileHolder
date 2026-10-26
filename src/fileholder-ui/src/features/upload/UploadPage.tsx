@@ -5,6 +5,9 @@ import { UploadSuccessCard } from "./components/UploadSuccessCard";
 import { UploadForm } from "./components/UploadForm";
 import { EncryptionModes, HowItWorks } from "./components/HomeSections";
 import { useUploadLimits } from "./hooks/useUploadLimits";
+import { useAccessCode } from "./hooks/useAccessCode";
+import { AccessCodePanel } from "./components/AccessCodePanel";
+import type { UploadFormValues } from "./types";
 import { describeHours } from "./services/uploadLimits";
 import { useEffect } from "react";
 import { useServiceStatus } from "../../shared/hooks/useServiceStatus";
@@ -12,7 +15,13 @@ import { refreshServiceStatus } from "../../shared/services/serviceStatus";
 
 export const UploadPage: React.FC = () => {
     const { upload, uploadState, reset } = useFileUpload();
-    const limits = useUploadLimits();
+    const baseLimits = useUploadLimits();
+    const accessCode = useAccessCode(baseLimits.accessCodesEnabled === true);
+    // A valid code's limits replace the smaller ones without a code (#169).
+    const codeLimits = accessCode.state.status === 'valid' ? accessCode.state.limits : undefined;
+    const limits = codeLimits ?? baseLimits;
+    const onUpload = (formValues: UploadFormValues, files: File[]): Promise<void> =>
+        upload(formValues, files, { accessCode: accessCode.validCode, maxBundleSizeBytes: codeLimits?.maxBundleSizeBytes });
     const serviceStatus = useServiceStatus();
     const uploadsPaused = serviceStatus?.mode === 'UploadsPaused' || serviceStatus?.mode === 'ReadOnly';
 
@@ -20,8 +29,11 @@ export const UploadPage: React.FC = () => {
     useEffect(() => {
         if (uploadState.status === 'error') void refreshServiceStatus();
     }, [uploadState.status]);
+    const expiryRange = limits.minExpiryHours === limits.maxExpiryHours
+        ? describeHours(limits.maxExpiryHours)
+        : `${describeHours(limits.minExpiryHours)} to ${describeHours(limits.maxExpiryHours)}`;
     const facts = [
-        { icon: Clock, text: `Expires after ${describeHours(limits.minExpiryHours)} to ${describeHours(limits.maxExpiryHours)}, or after 1 to 100 downloads` },
+        { icon: Clock, text: `Expires after ${expiryRange}, or after 1 to 100 downloads` },
         { icon: ShieldCheck, text: 'End-to-end encryption in your browser, optional' },
         { icon: Upload, text: 'Files go straight to storage, never through our server' },
     ];
@@ -62,7 +74,10 @@ export const UploadPage: React.FC = () => {
                     {uploadState.status === 'error' && (
                         <StatusAlert variant="error" message={uploadState.message} />
                     )}
-                    <UploadForm uploadState={uploadState} onUpload={upload} limits={limits} uploadsPaused={uploadsPaused} />
+                    {baseLimits.accessCodesEnabled && !uploadsPaused && (
+                        <AccessCodePanel baseLimits={baseLimits} accessCode={accessCode} />
+                    )}
+                    <UploadForm uploadState={uploadState} onUpload={onUpload} limits={limits} uploadsPaused={uploadsPaused} />
                 </div>
             </div>
 

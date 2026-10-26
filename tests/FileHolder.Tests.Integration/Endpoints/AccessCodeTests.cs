@@ -65,7 +65,7 @@ public class AccessCodeTests(AccessCodesFactory factory) : IClassFixture<AccessC
     {
         var limits = await _client.GetFromJsonAsync<UploadLimitsResponseDto>("/api/v1/files/limits");
 
-        limits.Should().Be(new UploadLimitsResponseDto(WithoutCodeBytes, 50, 1, WithoutCodeHours, AccessCodesEnabled: true));
+        limits.Should().Be(new UploadLimitsResponseDto(WithoutCodeBytes, 50, 1, WithoutCodeHours, AccessCodesEnabled: true, LongestExpiryHours: WithCodeHours));
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public class AccessCodeTests(AccessCodesFactory factory) : IClassFixture<AccessC
 
         var valid = await _client.PostAsJsonAsync("/api/v1/files/access-codes/check", new AccessCodeCheckRequestDto(code.Code));
         (await valid.Content.ReadFromJsonAsync<UploadLimitsResponseDto>()).Should()
-            .Be(new UploadLimitsResponseDto(WithCodeBytes, 50, 1, WithCodeHours, AccessCodesEnabled: true));
+            .Be(new UploadLimitsResponseDto(WithCodeBytes, 50, 1, WithCodeHours, AccessCodesEnabled: true, LongestExpiryHours: WithCodeHours));
 
         var unknown = await _client.PostAsJsonAsync("/api/v1/files/access-codes/check", new AccessCodeCheckRequestDto("a01-0000-0000-0000"));
         await _admin.PostAsync($"/admin/access-codes/{code.Label}/revoke", null);

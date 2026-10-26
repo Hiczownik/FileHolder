@@ -88,7 +88,9 @@ public record UploadLimitsResponseDto(
     [property: JsonPropertyName("minExpiryHours")] int MinExpiryHours,
     [property: JsonPropertyName("maxExpiryHours")] int MaxExpiryHours,
     // True when uploads without an access code get these (smaller) limits, and a code unlocks more (#169).
-    [property: JsonPropertyName("accessCodesEnabled")] bool AccessCodesEnabled = false
+    [property: JsonPropertyName("accessCodesEnabled")] bool AccessCodesEnabled = false,
+    // The longest any bundle can live, with a code or without: what the privacy page promises about deletion.
+    [property: JsonPropertyName("longestExpiryHours")] int? LongestExpiryHours = null
 );
 
 public record DownloadUrlResponseDto(

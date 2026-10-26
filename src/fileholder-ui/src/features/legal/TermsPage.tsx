@@ -22,7 +22,7 @@ export const TermsPage: React.FC = () => {
                     FileHolder is a free demonstration of a file-sharing service, built as a portfolio project. You can share
                     up to {limits.maxFilesPerBundle} files ({formatSize(limits.maxBundleSizeBytes)} in total) as one link that
                     stops working after the time you choose, {describeHours(limits.maxExpiryHours)} at most, or after a
-                    number of downloads. Its features and limits may change, and it may be paused, emptied or shut down at
+                    number of downloads{limits.accessCodesEnabled ? ' (an access code, given out by the operator, allows more)' : ''}. Its features and limits may change, and it may be paused, emptied or shut down at
                     any time, without notice.
                 </p>
             </Section>
