@@ -212,6 +212,20 @@ docker compose up --build
   * The policy lets the page run only its own scripts and connect only to itself and to storage. The UI container's `STORAGE_PUBLIC_URL` must therefore match the API's `Storage__PublicBaseUrl`, or every upload and download is blocked. The container won't start without a valid one.
   * Check for violations in the browser console (*Refused to …* / *Content-Security-Policy*). `e2e/securityHeaders.spec.ts` fails on any.
 
+### Versions and Releases
+* **The version** is `<Version>` in `Directory.Build.props` (API) and `version` in `src/fileholder-ui/package.json` (UI). Releases bump both together. It stays below 1.0 until the first deployment, which is `1.0.0`.
+* **The commit** is added at build time. Local builds take it from git. Docker builds have no `.git`, so pass `GIT_SHA` (compose reads it from the environment), otherwise the commit shows as `unknown`:
+  ```powershell
+  $env:GIT_SHA = git rev-parse --short HEAD; docker compose up -d --build
+  ```
+* **Where it shows:**
+  * the UI footer (`v0.9.0 · abc1234`);
+  * `/healthz`, `/healthz/live`, `/healthz/ready` and `GET /api/v1/status` (`version`, `commit`);
+  * the `?diagnostics` report on a download page, as *UI build* and *API build*. A mismatch means a tab from before a deploy;
+  * the API's startup log line, and the trace service version (`0.9.0+<commit>`);
+  * the metric `fileholder_build_info{version,commit} 1`, for marking deploys in Grafana;
+  * the image labels `org.opencontainers.image.version` (from `VERSION`, `dev` unless a release or deploy build sets it) and `org.opencontainers.image.revision`.
+
 ### Maintenance Modes
 Uploads can be paused, or the whole site closed, within seconds and without a restart: for abuse, a full bucket, or maintenance.
 
@@ -315,6 +329,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
 | `.env`: `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `STORAGE_ROOT_USER`, `STORAGE_ROOT_PASSWORD`, `STORAGE_API_SECRET_KEY`, `ADMIN_TOKEN` | (yours) | The stack's passwords (see *Quick Start* and `.env.example`) |
 | UI: `STORAGE_PUBLIC_URL` | `http://localhost:9000` | The same address as `Storage__PublicBaseUrl`, without a path. The UI's Content-Security-Policy allows connections to it; without a valid one the container doesn't start |
+| Build: `GIT_SHA`, `VERSION` (build args; compose reads them from the environment) | unset | The commit and image version label (see *Versions and Releases*). Unset, the commit shows as `unknown` and the label as `dev` |
 | UI: `VITE_ABUSE_EMAIL` (build time) | `abuse@fileholder.app` (`.env.production`, Dockerfile) | Where the *Report abuse* links send email. Empty hides them |
 | UI: `VITE_API_BASE_URL` (build time) | `/api/v1/files` (`.env.production`) | API address the UI calls; `.env.development` uses `http://localhost:8080/api/v1/files` |
 

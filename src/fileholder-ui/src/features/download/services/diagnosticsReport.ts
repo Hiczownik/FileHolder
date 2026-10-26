@@ -1,5 +1,6 @@
 import { formatSize } from '../../../shared/utils/formatSize';
 import { planSaveMethods, type BrowserCapabilities } from '../../../shared/utils/download/streamSaving';
+import { describeBuild, type BuildInfo } from '../../../shared/utils/buildInfo';
 
 /** The text of the ?diagnostics panel (SaveDiagnostics.tsx), kept apart so it can be tested on its own. */
 
@@ -14,7 +15,17 @@ export interface DiagnosticsInput {
     readonly lastSaveReport: string | null;
     readonly userAgent: string;
     readonly secureContext: boolean;
+    readonly uiBuild: BuildInfo;
+    /** From GET /api/v1/status; null when it hasn't answered with one. */
+    readonly apiBuild: BuildInfo | null;
 }
+
+/** A page from before a deploy talks to the new API: worth knowing when something behaves oddly. */
+const describeApiBuild = (ui: BuildInfo, api: BuildInfo | null): string => {
+    if (!api) return 'not known';
+    const differs = api.version !== ui.version || (api.commit !== ui.commit && api.commit !== 'unknown' && ui.commit !== 'unknown');
+    return differs ? `${describeBuild(api)} (differs from the UI: reload the page)` : describeBuild(api);
+};
 
 const describeStorage = (storage: StorageEstimate | null): string => {
     if (storage?.quota === undefined || storage.usage === undefined) {
@@ -33,5 +44,7 @@ export function buildDiagnosticsReport(input: DiagnosticsInput): string {
         `Site storage: ${describeStorage(input.storage)}`,
         `Last download: ${input.lastSaveReport ?? 'none yet'}`,
         `Browser: ${input.userAgent}`,
+        `UI build: ${describeBuild(input.uiBuild)}`,
+        `API build: ${describeApiBuild(input.uiBuild, input.apiBuild)}`,
     ].join('\n');
 }

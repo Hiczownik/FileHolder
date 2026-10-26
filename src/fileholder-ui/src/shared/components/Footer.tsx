@@ -1,4 +1,5 @@
 import { abuseReportHref } from "../utils/abuseReport";
+import { UI_BUILD, describeBuild } from "../utils/buildInfo";
 
 export const Footer: React.FC = () => {
     const reportHref = abuseReportHref();
@@ -7,11 +8,15 @@ export const Footer: React.FC = () => {
         <footer className="border-t border-line">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 text-sm text-muted flex flex-col sm:flex-row sm:justify-between gap-2">
                 <p>Files are deleted when a bundle expires or runs out of downloads.</p>
-                {reportHref && (
-                    <a href={reportHref} className="underline underline-offset-2 hover:text-fg rounded outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                        Report abuse
-                    </a>
-                )}
+                <p className="flex gap-4">
+                    {reportHref && (
+                        <a href={reportHref} className="underline underline-offset-2 hover:text-fg rounded outline-none focus-visible:ring-2 focus-visible:ring-accent">
+                            Report abuse
+                        </a>
+                    )}
+                    {/* Which build this page is, so a report or a screenshot says it. */}
+                    <span data-testid="ui-build" className="tabular-nums">{describeBuild(UI_BUILD)}</span>
+                </p>
             </div>
         </footer>
     );

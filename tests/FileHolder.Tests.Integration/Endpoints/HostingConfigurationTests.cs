@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using FileHolder.Api.Telemetry;
 using FileHolder.Tests.Integration.Fixtures;
 using FluentAssertions;
@@ -40,6 +41,30 @@ public class HostingConfigurationTests(CustomWebApplicationFactory factory) : IC
         var response = await metricsFactory.CreateClient().GetAsync("/metrics");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task TheBuild_IsAMetric_ForMarkingDeploys()
+    {
+        using var metricsFactory = factory.WithWebHostBuilder(builder => builder.UseSetting("Metrics:Port", "0"));
+
+        var metrics = await metricsFactory.CreateClient().GetStringAsync("/metrics");
+
+        var build = FileHolder.Api.Diagnostics.BuildInfo.Current;
+        metrics.Should().MatchRegex($"fileholder_build_info\\{{[^}}]*version=\"{System.Text.RegularExpressions.Regex.Escape(build.Version)}\"[^}}]*\\}} 1");
+        metrics.Should().Contain($"commit=\"{build.Commit}\"");
+    }
+
+    [Theory]
+    [InlineData("/healthz/live")]
+    [InlineData("/healthz/ready")]
+    [InlineData("/api/v1/status")]
+    public async Task TheBuild_IsInTheHealthOutputAndTheStatus(string path)
+    {
+        var json = await factory.CreateClient().GetFromJsonAsync<System.Text.Json.JsonElement>(path);
+
+        json.GetProperty("version").GetString().Should().Be(FileHolder.Api.Diagnostics.BuildInfo.Current.Version);
+        json.GetProperty("commit").GetString().Should().Be(FileHolder.Api.Diagnostics.BuildInfo.Current.Commit);
     }
 
     [Fact]

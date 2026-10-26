@@ -7,6 +7,15 @@
         <NoWarn>$(NoWarn);CA1848;CA1873</NoWarn>
     </PropertyGroup>
     
+    <!--
+      FileHolder's version, for the API and its libraries (the UI's is in src/fileholder-ui/package.json; release-please
+      bumps both). The commit is added at build time: from git locally, from the GIT_SHA build argument in Docker,
+      which has no .git (README, Versions and Releases).
+    -->
+    <PropertyGroup>
+        <Version>0.9.0</Version> <!-- x-release-please-version -->
+    </PropertyGroup>
+
     <!-- SonarAnalyzer.CSharp is added to every project by Directory.Packages.props (a GlobalPackageReference). -->
 
     <!--

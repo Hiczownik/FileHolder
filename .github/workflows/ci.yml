@@ -92,9 +92,12 @@ jobs:
                 targets: api,ui
                 load: true
                 # mode=max also caches the intermediate restore/npm ci stages, not just the final images.
+                # The commit goes into both builds (footer, /healthz, fileholder_build_info): the context has no .git.
                 set: |
                   api.tags=fileholder-api
                   ui.tags=fileholder-ui
+                  api.args.GIT_SHA=${{ github.sha }}
+                  ui.args.GIT_SHA=${{ github.sha }}
                   api.cache-from=type=gha,scope=api
                   api.cache-to=type=gha,scope=api,mode=max
                   ui.cache-from=type=gha,scope=ui
