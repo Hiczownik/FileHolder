@@ -1,0 +1,41 @@
+#!/bin/sh
+# Sourced by the nginx image's entrypoint before the templates are filled in. Writes
+# /etc/nginx/conf.d/00-client-address.conf, which defines $logged_client for the access log (nginx.conf.template).
+#
+# NGINX_LOG_CLIENT_ADDRESS: whether the access log records who made each request.
+#   off (the default)  no address at all: FileHolder stores no IP addresses (privacy page).
+#   masked             the network only, for investigating abuse for a while: IPv4 without its last part
+#                      (203.0.113.57 -> 203.0.113.0), IPv6 at most its first three groups (a /48). Turn it off again
+#                      afterwards; the privacy page says shortened addresses are only kept while investigating.
+# Full addresses are never logged. The rate limits use them in the API's memory only.
+
+mode="${NGINX_LOG_CLIENT_ADDRESS:-off}"
+conf=/etc/nginx/conf.d/00-client-address.conf
+
+case "$mode" in
+    off)
+        cat > "$conf" <<'CONF'
+# NGINX_LOG_CLIENT_ADDRESS=off: no client address in the access log.
+map $remote_addr $logged_client {
+    default "-";
+}
+CONF
+        ;;
+    masked)
+        # Matches an IPv4 address and keeps its first three parts, or keeps at most the first three groups of an IPv6
+        # address; "203.0.113.57" -> "203.0.113.0", "2001:db8:1234:5678::1" -> "2001:db8:1234::/48", "garbage" -> "-".
+        # https://regex101.com/?regex=%5E%28%5Cd%2B%5C.%5Cd%2B%5C.%5Cd%2B%29%5C.%5Cd%2B%24&testString=203.0.113.57%0Agarbage
+        cat > "$conf" <<'CONF'
+# NGINX_LOG_CLIENT_ADDRESS=masked: the client's network only (IPv4 /24, IPv6 /48).
+map $remote_addr $logged_client {
+    "~^(?<v4>\d+\.\d+\.\d+)\.\d+$"                       "${v4}.0";
+    "~^(?<v6>[0-9A-Fa-f]*:[0-9A-Fa-f]*:[0-9A-Fa-f]*)"     "${v6}::/48";
+    default                                              "-";
+}
+CONF
+        ;;
+    *)
+        echo "17-client-address-log.envsh: NGINX_LOG_CLIENT_ADDRESS must be off or masked; got '$mode'" >&2
+        exit 1
+        ;;
+esac

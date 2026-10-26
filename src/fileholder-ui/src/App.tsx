@@ -4,6 +4,8 @@ import { Navbar } from './shared/components/Navbar';
 import { Footer } from './shared/components/Footer';
 import { UploadPage } from './features/upload/UploadPage';
 import { DownloadPage } from './features/download/DownloadPage';
+import { TermsPage } from './features/legal/TermsPage';
+import { PrivacyPage } from './features/legal/PrivacyPage';
 import { ServiceStatusBanner } from './shared/components/ServiceStatusBanner';
 import { ClosedPage } from './shared/components/ClosedPage';
 import { useServiceStatus } from './shared/hooks/useServiceStatus';
@@ -25,6 +27,8 @@ function App() {
             <Routes>
               <Route path="/" element={<UploadPage />} />
               <Route path="/f/:shareToken" element={<DownloadPage />} />
+              <Route path="/terms" element={<TermsPage />} />
+              <Route path="/privacy" element={<PrivacyPage />} />
               <Route path="/diagnostics/argon2" element={<Suspense fallback={null}><Argon2BenchmarkPage /></Suspense>} />
             </Routes>
           )}
