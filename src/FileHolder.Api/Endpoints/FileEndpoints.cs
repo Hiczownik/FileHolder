@@ -103,7 +103,7 @@ public static class FileEndpoints
     public static Ok<UploadLimitsResponseDto> GetUploadLimits(IOptions<UploadLimitsOptions> uploadLimits)
     {
         var limits = uploadLimits.Value;
-        return TypedResults.Ok(ToResponse(limits.WithoutCode(), limits.AccessCodesEnabled));
+        return TypedResults.Ok(ToResponse(limits.WithoutCode(), limits.AccessCodesEnabled, limits.MaxExpiryHours));
     }
 
     /// <summary>A valid code's limits; an unknown, expired or revoked one gets the same 400 (AccessCodeRules.InvalidCodeMessage).</summary>
@@ -118,12 +118,13 @@ public static class FileEndpoints
 
         var resolution = await accessCodes.ResolveAsync(dto.Code, ct);
         return resolution.Status == AccessCodeStatus.Valid
-            ? TypedResults.Ok(ToResponse(limits, accessCodesEnabled: true))
+            ? TypedResults.Ok(ToResponse(limits, accessCodesEnabled: true, limits.MaxExpiryHours))
             : InvalidAccessCodeProblem();
     }
 
-    private static UploadLimitsResponseDto ToResponse(UploadLimitsOptions limits, bool accessCodesEnabled) => new(
-        limits.MaxBundleSizeBytes, BundleRules.MaxFilesPerBundle, BundleLimits.MinExpiryHours, limits.MaxExpiryHours, accessCodesEnabled);
+    private static UploadLimitsResponseDto ToResponse(UploadLimitsOptions limits, bool accessCodesEnabled, int longestExpiryHours) => new(
+        limits.MaxBundleSizeBytes, BundleRules.MaxFilesPerBundle, BundleLimits.MinExpiryHours, limits.MaxExpiryHours, accessCodesEnabled,
+        longestExpiryHours);
 
     private static ProblemHttpResult InvalidAccessCodeProblem() => TypedResults.Problem(
         detail: AccessCodeRules.InvalidCodeMessage,

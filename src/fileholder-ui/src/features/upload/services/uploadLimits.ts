@@ -7,6 +7,10 @@ export interface UploadLimits {
     readonly maxFilesPerBundle: number;
     readonly minExpiryHours: number;
     readonly maxExpiryHours: number;
+    /** These are the limits without an access code, and a code unlocks more (#169). */
+    readonly accessCodesEnabled?: boolean;
+    /** The longest any bundle can live, with a code or without (#169): what the privacy page promises. */
+    readonly longestExpiryHours?: number;
 }
 
 const HOURS_PER_DAY = 24;
@@ -31,14 +35,16 @@ const DEFAULT_EXPIRE_IN_HOURS = HOURS_PER_DAY;
 
 const isPositiveInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 
-function isUploadLimits(value: unknown): value is UploadLimits {
+export function isUploadLimits(value: unknown): value is UploadLimits {
     if (typeof value !== 'object' || value === null) return false;
     const limits = value as Record<string, unknown>;
     return isPositiveInteger(limits.maxBundleSizeBytes)
         && isPositiveInteger(limits.maxFilesPerBundle)
         && isPositiveInteger(limits.minExpiryHours)
         && isPositiveInteger(limits.maxExpiryHours)
-        && limits.minExpiryHours <= limits.maxExpiryHours;
+        && limits.minExpiryHours <= limits.maxExpiryHours
+        && (limits.accessCodesEnabled === undefined || typeof limits.accessCodesEnabled === 'boolean')
+        && (limits.longestExpiryHours == null || isPositiveInteger(limits.longestExpiryHours));
 }
 
 async function askServer(): Promise<UploadLimits> {
@@ -66,6 +72,11 @@ export function loadUploadLimits(): Promise<UploadLimits> {
 /** For tests: forget the limits asked for, so the next call asks again. */
 export function forgetUploadLimits(): void {
     request = null;
+}
+
+/** The longest any bundle can live: longer than these limits allow when an access code unlocks more. */
+export function longestExpiry(limits: UploadLimits): number {
+    return Math.max(limits.maxExpiryHours, limits.longestExpiryHours ?? 0);
 }
 
 /** The expiry choices the form offers: the usual ones within the limits, plus the maximum itself if it isn't one. */

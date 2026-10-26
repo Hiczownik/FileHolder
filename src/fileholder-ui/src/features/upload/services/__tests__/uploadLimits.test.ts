@@ -7,6 +7,7 @@ import {
     expiryChoices,
     forgetUploadLimits,
     loadUploadLimits,
+    longestExpiry,
     type UploadLimits,
 } from '../uploadLimits';
 
@@ -82,5 +83,16 @@ describe('upload limits', () => {
         { hours: ONE_WEEK, text: '7 days' },
     ])('describes $hours hours as "$text"', ({ hours, text }) => {
         expect(describeHours(hours)).toBe(text);
+    });
+
+    it('knows the longest a bundle can live, which is longer than these limits when an access code allows more', () => {
+        expect(longestExpiry(DEMO)).toBe(ONE_DAY);
+        expect(longestExpiry({ ...DEMO, maxExpiryHours: ONE_HOUR, accessCodesEnabled: true, longestExpiryHours: ONE_DAY })).toBe(ONE_DAY);
+    });
+
+    it('falls back to the defaults when the longest a bundle can live is nonsense', async () => {
+        vi.spyOn(uploadApi, 'getLimits').mockResolvedValue({ ...DEMO, longestExpiryHours: 'forever' } as never);
+
+        expect(await loadUploadLimits()).toEqual(DEFAULT_UPLOAD_LIMITS);
     });
 });

@@ -2,7 +2,7 @@ import { useReducer, useRef } from "react";
 import { keyModeOf, type BundleSummary, type PreparingPhase, type UploadFormValues, type UploadResult, type UploadState } from "../types";
 import { cleanPhotos } from "../services/photoCleaning";
 import { describeUploadError } from "../services/uploadErrors";
-import { executeStandardUploadWorkflow, executeEncryptedUploadWorkflow } from "../services/uploadWorkflow";
+import { executeStandardUploadWorkflow, executeEncryptedUploadWorkflow, type UploadAccess } from "../services/uploadWorkflow";
 import { passkeyProblem } from "../services/passkey";
 
 type UploadAction =
@@ -34,7 +34,7 @@ export const useFileUpload = () => {
     const [uploadState, dispatch] = useReducer(uploadReducer, { status: 'idle' });
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    const upload = async (formValues: UploadFormValues, files: File[]) => {
+    const upload = async (formValues: UploadFormValues, files: File[], access?: UploadAccess) => {
         if (files.length === 0) return;
 
         abortControllerRef.current = new AbortController();
@@ -69,13 +69,15 @@ export const useFileUpload = () => {
                     formValues,
                     toUpload,
                     (progress) => dispatch({ type: 'SET_PROGRESS', payload: progress }),
-                    signal
+                    signal,
+                    access
                 )
                 : await executeStandardUploadWorkflow(
                     formValues,
                     toUpload,
                     (progress) => dispatch({ type: 'SET_PROGRESS', payload: progress }),
-                    signal
+                    signal,
+                    access
                 );
 
             const bundle: BundleSummary = {

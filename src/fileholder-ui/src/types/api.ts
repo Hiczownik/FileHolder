@@ -15,6 +15,8 @@ export interface CreatePresignedUrlRequest {
     maxDownloads?: number;
     password?: string;
     isEncrypted?: boolean;
+    /** Unlocks the full limits when access codes are on (#169). */
+    accessCode?: string;
 }
 
 export interface PresignedItem {
