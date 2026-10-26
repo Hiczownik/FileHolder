@@ -93,6 +93,7 @@ builder.Services.AddScoped<IBundleStreamService, BundleStreamService>();
 builder.Services.AddScoped<IStoragePurgeService, StoragePurgeService>();
 // Maintenance modes (README, Maintenance Modes): which requests are let through, switched on the admin port.
 builder.Services.AddSingleton<IServiceModeProvider, ServiceModeProvider>();
+builder.Services.AddScoped<ITakedownService, TakedownService>();
 
 var metricsPort = builder.Configuration.GetValue("Metrics:Port", 9464);
 

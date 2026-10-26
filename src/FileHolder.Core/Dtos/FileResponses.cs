@@ -63,7 +63,9 @@ public record FileGroupMetadataResponseDto(
     // Returned while locked too: the download page needs it to know how to unlock.
     [property: JsonPropertyName("keyMode")] KeyMode? KeyMode = null,
     // Like the salt, returned while locked: the passkey has to be stretched before it can unlock anything.
-    [property: JsonPropertyName("kdfParams")] string? KdfParams = null
+    [property: JsonPropertyName("kdfParams")] string? KdfParams = null,
+    // Taken down by the owner: the link answers 410 "removed" rather than "expired".
+    [property: JsonPropertyName("isRemoved")] bool IsRemoved = false
 );
 
 public record UnlockResult(
@@ -72,7 +74,8 @@ public record UnlockResult(
     bool IsExpired,
     FileGroupMetadataResponseDto? Metadata,
     bool IsLockedOut = false,
-    DateTime? LockedUntil = null
+    DateTime? LockedUntil = null,
+    bool IsRemoved = false
 );
 
 /// <summary>
@@ -102,6 +105,8 @@ public enum OpenDownloadSessionStatus
     NotFound,
     InvalidPassword,
     Expired,
+    /// <summary>Taken down by the owner.</summary>
+    Removed,
     LockedOut
 }
 
@@ -129,6 +134,8 @@ public enum StreamZipStatus
     NotFound,
     InvalidPassword,
     Expired,
+    /// <summary>Taken down by the owner.</summary>
+    Removed,
     SessionInvalid,
     EmptyBundle,
     LockedOut

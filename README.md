@@ -236,6 +236,22 @@ Uploads can be paused, or the whole site closed, within seconds and without a re
   * Without the token, or on any other port, `/admin/…` answers `404`; with a wrong token, `401`.
 * **Where it's kept:** each change is a row in `ServiceModeChanges` (mode, message, until, reason, who, when); the latest row is the current mode. Each API instance re-reads it at most every 5 seconds. Every change is logged as a warning, a pause still on after a restart is logged at startup, and the mode is the metric `fileholder_service_mode{mode}` (1 for the current one).
 
+### Takedown
+For abuse reports (`abuse@fileholder.app`) and legal requests, a bundle can be removed at once:
+```powershell
+scripts/admin.ps1 takedown "https://fileholder.app/f/Ab3dE6gH#k=..." -Reason "phishing, reported to abuse@ on 2026-10-27"
+scripts/admin.ps1 takedowns   # the latest takedowns
+```
+* **What happens:**
+  1. The bundle is closed and the takedown is recorded, together. From here on, its link answers `410` *"This bundle was removed by FileHolder."* (title `Link Removed`, field `removed: true`), and its download sessions stop working, so downloads in progress are cut off.
+  2. Its files are deleted from storage straight away, with no grace period, so presigned URLs already handed out (valid 5 minutes) find nothing.
+  3. The bundle is reduced to a tombstone like a purged one. The removed mark stays, so the link keeps saying it was removed until the tombstone goes, 7 days later.
+* **A bundle confirmed less than about an hour ago** still has the uploaded originals of its small files in storage. Confirm serves copies and leaves the originals to the purge, about an hour after the upload, because deleting them earlier would let the uploader put an untracked object there through their still-valid upload URL. Nothing can download an original: no download link is ever issued for it.
+* **If storage fails** to delete a file, the bundle is still closed, and the purge retries on its next run (within 30 minutes) without waiting for its grace period or for open download sessions. The script says so.
+* **The script sends only the share token,** never the `#k=` key of an encrypted bundle's link. A link or a bare token both work.
+* **The record** (`Takedowns`: share token, reason, who, when, file count, total size, encrypted or not) is kept after the tombstone is deleted, so a later question about the link can be answered. It holds no title, file names or keys. Taking down the same link again changes nothing and shows the first record.
+* **Answers:** `404` for an unknown token; `409` when the bundle already expired and its files are gone. Encrypted bundles can be taken down like any other: the server can't see inside them, but it can delete them.
+
 ### Tracing
 One request, or one purge run, can be followed step by step: where the time went and in what order.
 * **Where:** Grafana ([http://localhost:3001](http://localhost:3001)) → **Explore** → **Tempo**. Search for service `fileholder-api` and a span name such as `POST /api/v1/files/confirm` or `purge.run`, or paste a trace id from a log line (`… trace=<id> span=<id>`).
@@ -380,7 +396,7 @@ dotnet test tests/FileHolder.Tests.Integration --filter "FullyQualifiedName~Stor
 | `tests/load` | k6 load tests, their runner (`run.ps1`) and database checks |
 | `docker/` | Prometheus, Tempo and Grafana configuration |
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
-| `scripts/admin.ps1` | The owner's controls: show or switch the maintenance mode (*Maintenance Modes*) |
+| `scripts/admin.ps1` | The owner's controls: the maintenance mode and takedowns (*Maintenance Modes*, *Takedown*) |
 
 ---
 

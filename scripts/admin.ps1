@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    The owner's controls for a running FileHolder: show or switch the maintenance mode (README, Maintenance Modes).
+    The owner's controls for a running FileHolder: show or switch the maintenance mode, and take bundles down
+    (README, Maintenance Modes and Takedown).
 
 .DESCRIPTION
     Calls the API's admin endpoints on the admin port (9465), which compose binds to the host's loopback only. The
@@ -15,18 +16,24 @@
 
 .EXAMPLE
     scripts/admin.ps1 mode Normal -Reason "all clear"
+
+.EXAMPLE
+    scripts/admin.ps1 takedown "https://fileholder.app/f/Ab3dE6gH#k=..." -Reason "phishing, reported to abuse@ on 2026-10-27"
+
+.EXAMPLE
+    scripts/admin.ps1 takedowns
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory, Position = 0)]
-    [ValidateSet('status', 'mode')]
+    [ValidateSet('status', 'mode', 'takedown', 'takedowns')]
     [string]$Command,
 
+    # For mode: Normal, UploadsPaused, ReadOnly or Closed. For takedown: the bundle's link, or just its share token.
     [Parameter(Position = 1)]
-    [ValidateSet('Normal', 'UploadsPaused', 'ReadOnly', 'Closed')]
-    [string]$Mode,
+    [string]$Target,
 
-    # Why: goes into the log, never shown to visitors. Required to change the mode.
+    # Why: goes into the log, never shown to visitors. Required to change the mode or take a bundle down.
     [string]$Reason,
 
     # Shown to visitors in the banner and in refusals.
@@ -67,7 +74,8 @@ switch ($Command) {
         $response.history | Format-Table changedAt, mode, reason, changedBy, message -AutoSize
     }
     'mode' {
-        if (-not $Mode) { throw 'Say which mode: Normal, UploadsPaused, ReadOnly or Closed.' }
+        $Mode = $Target
+        if ($Mode -notin 'Normal', 'UploadsPaused', 'ReadOnly', 'Closed') { throw 'Say which mode: Normal, UploadsPaused, ReadOnly or Closed.' }
         if (-not $Reason) { throw 'Say why with -Reason; it goes into the log.' }
 
         $body = @{ mode = $Mode; reason = $Reason; changedBy = $ChangedBy }
@@ -78,5 +86,39 @@ switch ($Command) {
         $response = Invoke-RestMethod -Method Put -Uri "$BaseUrl/admin/mode" -Headers $headers `
             -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
         "Now in mode $($response.mode)."
+    }
+    'takedown' {
+        if (-not $Target) { throw 'Give the bundle''s link or share token.' }
+        if (-not $Reason) { throw 'Say why with -Reason; it goes into the takedown record.' }
+
+        # Only the share token is sent: never the #k= key of an encrypted bundle's link.
+        $shareToken = ($Target -split '#', 2)[0].TrimEnd('/')
+        if ($shareToken -match '/f/([^/?]+)') { $shareToken = $Matches[1] }
+
+        $json = @{ shareToken = $shareToken; reason = $Reason; changedBy = $ChangedBy } | ConvertTo-Json
+        try {
+            $response = Invoke-RestMethod -Method Post -Uri "$BaseUrl/admin/takedown" -Headers $headers `
+                -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($json))
+        }
+        catch {
+            $status = [int]$_.Exception.Response.StatusCode
+            if ($status -eq 404) { throw "No bundle has the share token '$shareToken'." }
+            if ($status -eq 409) { throw "Bundle '$shareToken' already expired and its files are deleted; nothing to take down." }
+            throw
+        }
+
+        if ($response.alreadyTakenDown) {
+            "Bundle $shareToken was already taken down on $($response.record.takenDownAt): $($response.record.reason)"
+        }
+        elseif ($response.filesNotYetDeleted -gt 0) {
+            "Bundle $shareToken is taken down. $($response.filesNotYetDeleted) file(s) couldn't be deleted yet; the purge retries within 30 minutes."
+        }
+        else {
+            "Bundle $shareToken is taken down and its $($response.filesDeleted) file(s) are deleted."
+        }
+    }
+    'takedowns' {
+        Invoke-RestMethod -Method Get -Uri "$BaseUrl/admin/takedowns" -Headers $headers |
+            Format-Table takenDownAt, shareToken, reason, changedBy, fileCount, isEncrypted -AutoSize
     }
 }

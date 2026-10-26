@@ -14,6 +14,8 @@ public static class PurgeQueries
     /// closed (deleted, or out of downloads) at least <see cref="StoragePurgeService.DeletionGracePeriod"/> ago. A
     /// closed group's last download may still be running: its session can last hours after the group closed, and a
     /// URL issued near either end stays valid a little longer, so a group with a session that recent waits too.
+    /// A taken-down group waits for nothing: the takedown deletes its files itself, and this only catches the ones
+    /// that failed then.
     /// </summary>
     public static IQueryable<FileGroup> DueForPurge(this IQueryable<FileGroup> groups, AppDbContext dbContext, DateTime now)
     {
@@ -21,10 +23,11 @@ public static class PurgeQueries
 
         return groups
             .Where(g => g.StoragePurgedAt == null && (
-                (g.ExpiresAt != null && g.ExpiresAt <= graceCutoff) ||
-                ((g.IsDeleted || (g.MaxDownloads != null && g.DownloadCount >= g.MaxDownloads)) &&
-                 (g.DeletedAt == null || g.DeletedAt <= graceCutoff))
-            ))
-            .Where(g => !dbContext.DownloadSessions.Any(s => s.FileGroupId == g.Id && s.ExpiresAt > graceCutoff));
+                g.TakenDownAt != null || (
+                    ((g.ExpiresAt != null && g.ExpiresAt <= graceCutoff) ||
+                     ((g.IsDeleted || (g.MaxDownloads != null && g.DownloadCount >= g.MaxDownloads)) &&
+                      (g.DeletedAt == null || g.DeletedAt <= graceCutoff))) &&
+                    !dbContext.DownloadSessions.Any(s => s.FileGroupId == g.Id && s.ExpiresAt > graceCutoff))
+            ));
     }
 }

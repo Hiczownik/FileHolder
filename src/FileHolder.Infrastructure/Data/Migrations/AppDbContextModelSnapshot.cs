@@ -117,6 +117,9 @@ namespace FileHolder.Infrastructure.Data.Migrations
                     b.Property<DateTime?>("StoragePurgedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTime?>("TakenDownAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Title")
                         .HasMaxLength(255)
                         .HasColumnType("character varying(255)");
@@ -330,6 +333,50 @@ namespace FileHolder.Infrastructure.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("SharedFiles", (string)null);
+                });
+
+            modelBuilder.Entity("FileHolder.Core.Entities.Takedown", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("ChangedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("FileCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("FileGroupId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsEncrypted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("ShareToken")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("TakenDownAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("TotalSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ShareToken");
+
+                    b.ToTable("Takedowns", (string)null);
                 });
 
             modelBuilder.Entity("FileHolder.Core.Entities.DownloadSession", b =>

@@ -47,6 +47,8 @@ public class BundleStreamService(
                     return new StreamZipResult(StreamZipStatus.InvalidPassword, null);
                 case OpenDownloadSessionStatus.Expired:
                     return new StreamZipResult(StreamZipStatus.Expired, null);
+                case OpenDownloadSessionStatus.Removed:
+                    return new StreamZipResult(StreamZipStatus.Removed, null);
                 case OpenDownloadSessionStatus.LockedOut:
                     return new StreamZipResult(StreamZipStatus.LockedOut, null, opened.LockedUntil);
             }

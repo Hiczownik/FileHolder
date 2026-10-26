@@ -16,6 +16,15 @@ public class FileGroup
     public bool IsDeleted { get; set; }
     public DateTime? DeletedAt { get; set; }
     public DateTime? StoragePurgedAt { get; set; }
+
+    /// <summary>
+    /// When the owner removed the bundle (a takedown, for abuse or a legal request). Its files are deleted at once
+    /// rather than after the purge's grace period, its download sessions stop working, and its link says it was
+    /// removed rather than expired. Kept on the tombstone, unlike the bundle's other details.
+    /// </summary>
+    public DateTime? TakenDownAt { get; set; }
+
+    public bool IsTakenDown => TakenDownAt.HasValue;
     public bool IsEncrypted { get; set; }
     public string? EncryptedManifest { get; set; }
     public string? KeyEnvelope { get; set; }
