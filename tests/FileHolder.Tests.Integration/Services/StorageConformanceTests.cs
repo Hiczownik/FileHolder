@@ -26,8 +26,10 @@ namespace FileHolder.Tests.Integration.Services;
 public sealed class StorageConformanceTests(StorageTargetsFixture targets, ITestOutputHelper output)
     : IClassFixture<StorageTargetsFixture>, IDisposable
 {
-    // The page's origin in the local stack; the R2 test bucket's CORS policy allows it, as Silo allows any.
-    private const string BrowserOrigin = "http://localhost:3000";
+    // The page's origin: the local stack's by default, which the R2 test bucket's CORS policy allows (Silo allows any).
+    // R2_BROWSER_ORIGIN checks another bucket's policy for its own site, e.g. production's for https://fileholder.app.
+    private static readonly string BrowserOrigin =
+        Environment.GetEnvironmentVariable("R2_BROWSER_ORIGIN") is { Length: > 0 } origin ? origin : "http://localhost:3000";
     // Storage refuses multipart parts below 5 MiB, except the last.
     private const int MinPartBytes = 5 * 1024 * 1024;
 

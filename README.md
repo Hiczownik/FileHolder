@@ -468,6 +468,8 @@ R2_JURISDICTION=eu
 dotnet test tests/FileHolder.Tests.Integration --filter "FullyQualifiedName~StorageConformance"
 ```
 
+**Checking the production bucket** before launch: set the same `R2_*` values as environment variables (they take precedence over the file), with `R2_BROWSER_ORIGIN=https://fileholder.app`, so the CORS check uses the site's own origin instead of `http://localhost:3000`. The suite writes a few test objects and deletes them again.
+
 ---
 
 ## 🗂️ Project Structure
