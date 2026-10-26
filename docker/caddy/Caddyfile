@@ -9,9 +9,20 @@
 	# No admin API: the config only changes with a restart, and nothing in the container can reconfigure Caddy.
 	admin off
 
+	# Never try to add Caddy's own local certificate authority (used only for https://localhost, scripts/prod-local.ps1)
+	# to the container's trust store: the filesystem is read-only, and nothing in it needs to trust that authority.
+	skip_install_trust
+
 	# On a stop, connections still open (a bundle ZIP) may finish for this long; the API waits 90 s plus 5 s
 	# (Hosting__ShutdownTimeoutSeconds, Hosting__LingerSeconds), and compose allows 100 s.
 	grace_period 95s
+
+	# HTTP/1.1 and HTTP/3 only, until a Caddy release built with a fixed Go: HTTP/2 can be tied up with a flood of
+	# SETTINGS frames (CVE-2026-78669, docker/trivy/caddy.trivyignore). Browsers fall back to HTTP/1.1 or use HTTP/3,
+	# which makes no difference at this size. Remove this block (back to h1 h2 h3) with the next Caddy release.
+	servers {
+		protocols h1 h3
+	}
 }
 
 {$SITE_ADDRESS} {

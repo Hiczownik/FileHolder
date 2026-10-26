@@ -374,7 +374,7 @@ One server runs the whole app with `docker-compose.prod.yml`; files live in Clou
 ```
 
 * **Only Caddy is published**, on 80 and 443. Docker's published ports get around a host firewall such as `ufw`, so nothing else is: the admin port (9465), Prometheus (9090) and Tempo (3200) are bound to the server's loopback, and Postgres, nginx and the API aren't published at all.
-* **Caddy** (`docker/caddy/Caddyfile`) gets and renews the certificate for `SITE_ADDRESS` (Let's Encrypt, ZeroSSL as the fallback), redirects HTTP to HTTPS, adds `Strict-Transport-Security`, drops the `Server` header, and streams everything to nginx. It keeps no access log (paths hold share tokens); nginx logs them redacted. Its certificates are on the `caddy_data` volume: keep it, or every restart asks for new ones and soon hits Let's Encrypt's rate limits.
+* **Caddy** (`docker/caddy/Caddyfile`) gets and renews the certificate for `SITE_ADDRESS` (Let's Encrypt, ZeroSSL as the fallback), redirects HTTP to HTTPS, adds `Strict-Transport-Security`, drops the `Server` header, and streams everything to nginx. It keeps no access log (paths hold share tokens); nginx logs them redacted. Its certificates are on the `caddy_data` volume: keep it, or every restart asks for new ones and soon hits Let's Encrypt's rate limits. **HTTP/2 is off for now** (`protocols h1 h3`): Caddy 2.11.7 is built with a Go whose HTTP/2 can be tied up by a flood of SETTINGS frames. Browsers use HTTP/1.1 or HTTP/3 meanwhile; turn it back on with the next Caddy release (`docker/trivy/caddy.trivyignore`).
 * **Client addresses** pass along a fixed chain: Caddy sets `X-Forwarded-For`, nginx trusts it only from Caddy's address (`TRUSTED_PROXIES`), the API only from nginx's (`KnownProxies`).
 * **Hardening, on every container:** `no-new-privileges`, all Linux capabilities dropped except the few each needs (Caddy: binding 80/443; nginx and Postgres: switching to their own users), a read-only filesystem with tmpfs where they write, a memory limit (about 290 MB in use for the whole app, against limits of 2 GB), and logs rotated at 3 × 10 MB per container.
 * **Deploys** let running ZIP downloads finish (*Networking & Rate Limits*); `restart: unless-stopped` brings everything back after a reboot.
@@ -488,6 +488,7 @@ dotnet test tests/FileHolder.Tests.Integration --filter "FullyQualifiedName~Stor
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
 | `scripts/release.ps1` | Cuts a release with release-please while GitHub Actions are off (*Versions and Releases*) |
 | `docker-compose.prod.yml`, `docker/caddy/Caddyfile` | The production setup behind Caddy (*Production*); `docker-compose.prod-local.yml` and `scripts/prod-local.ps1` run it locally |
+| `scripts/pre-deploy-check.ps1` | Runs what CI, the nightly job and the security scans would, before a deploy (*Running the Tests*) |
 | `scripts/deploy.ps1` | Deploys this checkout to the production server over SSH, or rolls it back (*Production*) |
 | `scripts/admin.ps1` | The owner's controls: the maintenance mode and takedowns (*Maintenance Modes*, *Takedown*) |
 
@@ -577,7 +578,22 @@ k6 scenarios in `tests/load` send many requests at once. Some check the rules th
 ```
 The script starts the stack with the load-test compose files, runs k6 in a container, checks the database, Postgres connections and API and nginx logs afterwards, purges everything the run made and checks storage is left clean, and then starts the stack with its usual configuration again. Grafana's **FileHolder load tests** dashboard shows each run. See [`tests/load/README.md`](tests/load/README.md).
 
-### 6. Testing from a Phone (e.g. Safari on iPhone)
+### 6. Before a deploy: everything CI would run
+While GitHub Actions are off, `scripts/pre-deploy-check.ps1` runs on this machine what CI, the nightly job and the security workflow would, and ends with a pass/fail summary (about 25 minutes, unattended; exit code 0 when nothing failed):
+```powershell
+scripts/pre-deploy-check.ps1                     # everything
+scripts/pre-deploy-check.ps1 -SkipBrowserTests   # leave the running stack alone
+```
+1. **Tests:** .NET, Vitest, and both property suites at nightly strength (20,000 FsCheck cases, 10,000 fast-check runs).
+2. **Dependency audits:** NuGet (vulnerable packages, transitive too) and npm (fails on production dependencies, warns on development ones).
+3. **Browser tests:** rebuilds the dev stack from the checkout in CI's setup, runs Playwright on Chromium, Firefox and WebKit plus the fault tests, then restarts the stack with its usual files, your override included. During those ~10 minutes the stack runs CI's setup.
+4. **Image scans** with Trivy (CI's version): the API and UI images, and every image production runs (Caddy, Postgres, Prometheus, Tempo), plus Silo. Fixable HIGH and CRITICAL findings fail, except those accepted with a reason and an expiry date: in `.trivyignore` for every image, or in `docker/trivy/<image>.trivyignore` for one image only. Postgres is scanned without `gosu`, which only switches users at start-up.
+5. **Code and secret scans:** Semgrep with CI's rule sets, and gitleaks over the whole history.
+6. **DNS** for `fileholder.app`, over HTTPS: DNSSEC, CAA, DMARC, and where `A`/`AAAA` point.
+
+Each step's log is kept under `%TEMP%\fileholder-pre-deploy-check`; the summary names the folder.
+
+### 7. Testing from a Phone (e.g. Safari on iPhone)
 Encrypted downloads are saved differently per browser (see *Encrypted Downloads*), and CI can't run real Safari. To check a phone by hand, it has to reach your local stack **over HTTPS**: Safari only enables service workers and its private file storage (OPFS) on HTTPS, so a plain `http://<your-PC-IP>:3000` test would silently fall back to saving in memory and prove nothing.
 
 1. **Run the current stack.** Older builds don't route the API through the UI: `docker compose up -d --build --force-recreate`. `--force-recreate` matters when upgrading a stack created before the compose network was pinned: otherwise compose recreates the network but only restarts the old containers on it, without their service names (`minio`, `postgres`), and `minio-init` fails with `lookup minio … no such host`. Data is kept in Docker volumes.

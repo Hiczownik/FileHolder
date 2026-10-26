@@ -1,7 +1,11 @@
-# Vulnerabilities the image scans in ci.yml accept for now. Each entry says why, and expires (exp:) so it is
-# looked at again: after that date the scan fails on it until it is fixed or deliberately extended.
+# Vulnerabilities the image scans (ci.yml, scripts/pre-deploy-check.ps1) accept for now, in every image. Each entry
+# says why, and expires (exp:) so it is looked at again: after that date the scan fails on it until it is fixed or
+# deliberately extended. Ones that apply to one image only are in docker/trivy/<image>.trivyignore instead, so they
+# can't hide the same ID in another image.
 
 # Silo RELEASE.2026-10-18T00-00-00Z (silo and mcli) is built with Go 1.27.2; crypto/x509 is fixed in 1.27.3, and no
 # Silo release has it yet. In this stack Silo and mc only talk plain HTTP inside the compose network, so no
 # certificate is ever checked. Take the next Silo release that is built with a fixed Go.
+# Caddy 2.11.7 (Go 1.26.8) has it too: there it would only affect Caddy's own outbound calls (the certificate authority),
+# which already go to a fixed address over TLS it verifies. Take the next Caddy release (docker/trivy/caddy.trivyignore).
 CVE-2026-111943 exp:2026-11-21
