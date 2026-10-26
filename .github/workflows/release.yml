@@ -1,0 +1,31 @@
+name: Release
+
+# release-please (README, Versions and Releases): on every push to main it keeps a release PR up to date, which bumps
+# the version (version.txt, Directory.Build.props, the UI's package.json) and adds the commits since the last release
+# to CHANGELOG.md. Merging that PR tags the release and creates the GitHub release.
+#
+# Off until GitHub Actions are back on (#82): the other workflows were turned off one by one to save minutes, so this
+# new one would otherwise run. A skipped job uses no minutes. To turn it on, set the repository variable
+# RELEASE_PLEASE_ENABLED to "true" (Settings → Secrets and variables → Actions → Variables). Until then,
+# scripts/release.ps1 runs the same release-please, with the same config, from the owner's machine.
+on:
+    push:
+        branches: [ "main" ]
+    workflow_dispatch:
+
+permissions:
+    contents: write
+    pull-requests: write
+
+jobs:
+    release-please:
+        name: Release PR and GitHub Release
+        if: ${{ vars.RELEASE_PLEASE_ENABLED == 'true' }}
+        runs-on: ubuntu-latest
+        steps:
+            # A PR opened with GITHUB_TOKEN doesn't start other workflows, so the release PR gets no CI run of its own.
+            # It only changes version numbers and the changelog, which the next push to main checks anyway.
+            - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+              with:
+                  config-file: release-please-config.json
+                  manifest-file: .release-please-manifest.json
