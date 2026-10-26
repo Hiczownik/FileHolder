@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using Amazon.S3;
+using FileHolder.Api.Admin;
 using FileHolder.Api.Configuration;
 using FileHolder.Api.Endpoints;
 using FileHolder.Api.ExceptionHandling;
@@ -37,6 +38,11 @@ builder.Services.AddFileHolderStorageOptions(builder.Configuration);
 
 builder.Services.AddOptions<UploadLimitsOptions>()
     .Bind(builder.Configuration.GetSection(UploadLimitsOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+builder.Services.AddOptions<AdminOptions>()
+    .Bind(builder.Configuration.GetSection(AdminOptions.SectionName))
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
@@ -85,6 +91,8 @@ builder.Services.AddScoped<StorageQuota>();
 builder.Services.AddScoped<IMultipartUploadService, MultipartUploadService>();
 builder.Services.AddScoped<IBundleStreamService, BundleStreamService>();
 builder.Services.AddScoped<IStoragePurgeService, StoragePurgeService>();
+// Maintenance modes (README, Maintenance Modes): which requests are let through, switched on the admin port.
+builder.Services.AddSingleton<IServiceModeProvider, ServiceModeProvider>();
 
 var metricsPort = builder.Configuration.GetValue("Metrics:Port", 9464);
 
@@ -142,6 +150,18 @@ using (var scope = app.Services.CreateScope())
     await dbContext.Database.MigrateAsync(CancellationToken.None);
 }
 
+// Read once at startup, so a pause left on from before a restart is in the log, and the mode metric has a value.
+var startupMode = await app.Services.GetRequiredService<IServiceModeProvider>().GetCurrentAsync(CancellationToken.None);
+if (startupMode.Mode != FileHolder.Core.Entities.ServiceMode.Normal)
+{
+    app.Logger.LogWarning("Starting in service mode {Mode}.", startupMode.Mode);
+}
+
+if (string.IsNullOrEmpty(app.Services.GetRequiredService<IOptions<AdminOptions>>().Value.Token))
+{
+    app.Logger.LogWarning("Admin:Token is not set, so the admin endpoints (maintenance modes) are off.");
+}
+
 app.UseExceptionHandler();
 app.UseForwardedHeaders();
 app.UseSecurityHeaders();
@@ -165,6 +185,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapFileEndpoints();
+app.MapStatusEndpoints();
+app.MapAdminEndpoints();
 app.MapHealthEndpoints();
 
 await app.RunAsync(CancellationToken.None);

@@ -156,6 +156,7 @@ function New-Secret { $b = New-Object byte[] 16; [Security.Cryptography.RandomNu
   "STORAGE_ROOT_USER=fileholder-admin"
   "STORAGE_ROOT_PASSWORD=$(New-Secret)"
   "STORAGE_API_SECRET_KEY=$(New-Secret)"
+  "ADMIN_TOKEN=$(New-Secret)$(New-Secret)"
 ) | Set-Content -Encoding ascii .env
 docker compose up --build
 ```
@@ -168,6 +169,7 @@ POSTGRES_PASSWORD=$(openssl rand -hex 16)
 STORAGE_ROOT_USER=fileholder-admin
 STORAGE_ROOT_PASSWORD=$(openssl rand -hex 16)
 STORAGE_API_SECRET_KEY=$(openssl rand -hex 16)
+ADMIN_TOKEN=$(openssl rand -hex 32)
 EOF
 docker compose up --build
 ```
@@ -180,7 +182,7 @@ docker compose up --build
     * *Degraded* (still 200): the purge is lagging, or storage is filling up. The storage lifecycle rule isn't confirmed, the purge worker hasn't completed a run for an hour, bundles have waited over 2 hours to be deleted, or 80% of the storage quota is in use.
   * **Who waits on it:** compose (before starting the UI) and CI.
   * **Liveness:** [`/healthz/live`](http://localhost:8080/healthz/live) only shows the process is up. `/healthz` is the same as `/healthz/ready`.
-  * **Metrics:** each check's status is also on the metrics port as `fileholder_health_status`, with `fileholder_purge_overdue_groups`, `fileholder_purge_last_success_age_seconds`, `fileholder_storage_used_bytes` and, with a quota set, `fileholder_storage_quota_bytes`.
+  * **Metrics:** each check's status is also on the metrics port as `fileholder_health_status`, with `fileholder_purge_overdue_groups`, `fileholder_purge_last_success_age_seconds`, `fileholder_storage_used_bytes` and, with a quota set, `fileholder_storage_quota_bytes`. The maintenance mode is `fileholder_service_mode{mode}` (see *Maintenance Modes*).
 * **Grafana**: [http://localhost:3001](http://localhost:3001) *(login: `admin` / your `GRAFANA_ADMIN_PASSWORD`)*. Prometheus metrics, and Tempo traces (see *Tracing*).
 * **Storage console (Silo)**: [http://localhost:9001](http://localhost:9001) *(login: your `STORAGE_ROOT_USER` / `STORAGE_ROOT_PASSWORD`)*
 * **Scalar API docs**: only when the API runs in Development (see *Development*). The compose stack runs the API in Production.
@@ -189,11 +191,12 @@ docker compose up --build
 * **No password is committed.** `docker-compose.yml` reads them all from `.env`, and `appsettings.json` has none.
 * **The API has its own storage user,** `fileholder-api`, which `minio-init` creates on every start. `docker/silo/api-policy.json` limits it to the one bucket: its objects, multipart uploads, and the safety net's lifecycle rule. It can't change the bucket's access policy or touch other buckets. The storage admin (`STORAGE_ROOT_*`) is only used by `minio-init` and the storage console.
 * **Changing a password:**
-  * `GRAFANA_ADMIN_PASSWORD`, `STORAGE_ROOT_*` and `STORAGE_API_SECRET_KEY`: edit `.env` and run `docker compose up -d`. Storage keeps its data under new admin credentials, and `minio-init` updates the API user's secret.
+  * `GRAFANA_ADMIN_PASSWORD`, `STORAGE_ROOT_*`, `STORAGE_API_SECRET_KEY` and `ADMIN_TOKEN`: edit `.env` and run `docker compose up -d`. Storage keeps its data under new admin credentials, and `minio-init` updates the API user's secret.
   * `POSTGRES_PASSWORD` only takes effect when the `postgres_data` volume is first created. To change it on an existing volume, change it in the database first, then in `.env`, then run `docker compose up -d`:
     ```powershell
     docker compose exec postgres psql -U fileholder_user -d fileholder_db -c "ALTER USER fileholder_user PASSWORD 'the-new-password'"
     ```
+* **Upgrading a stack from before `ADMIN_TOKEN` existed:** add `ADMIN_TOKEN=<64 random hex characters>` to `.env` (PowerShell: `"ADMIN_TOKEN=$(New-Secret)$(New-Secret)" | Add-Content -Encoding ascii .env`, with `New-Secret` from *Quick Start*).
 * **Upgrading a stack from before these passwords existed:** its Postgres volume still has the old password, `fileholder_password`. Either put `POSTGRES_PASSWORD=fileholder_password` in `.env` and change it as above, or start from empty volumes with `docker compose down -v` (deletes the local database and stored files).
 
 ### Networking & Rate Limits
@@ -208,6 +211,30 @@ docker compose up --build
 * **Security headers on the UI pages** (`nginx.conf.template`): a Content-Security-Policy, `X-Frame-Options: DENY`, `nosniff` and `Referrer-Policy: no-referrer`. API responses get theirs from the API (`SecurityHeadersMiddleware`).
   * The policy lets the page run only its own scripts and connect only to itself and to storage. The UI container's `STORAGE_PUBLIC_URL` must therefore match the API's `Storage__PublicBaseUrl`, or every upload and download is blocked. The container won't start without a valid one.
   * Check for violations in the browser console (*Refused to …* / *Content-Security-Policy*). `e2e/securityHeaders.spec.ts` fails on any.
+
+### Maintenance Modes
+Uploads can be paused, or the whole site closed, within seconds and without a restart: for abuse, a full bucket, or maintenance.
+
+| Mode | New uploads | Uploads already started | Bundle pages | New downloads | Downloads already started |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `Normal` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `UploadsPaused` | ❌ | ✅ (multipart steps and confirm) | ✅ | ✅ | ✅ |
+| `ReadOnly` | ❌ | ❌ | ✅ (and unlocking) | ❌ | ✅ (an open download session) |
+| `Closed` | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+* **The purge runs in every mode,** so pausing never delays a deletion. Aborting a multipart upload is also always allowed: it only frees storage.
+* **Refused requests** get `503` with `Retry-After` (until the mode's `until`, else 5 minutes), the owner's message as the problem's `detail`, and the mode as its `mode` field.
+* **`GET /api/v1/status`** → `{ "mode": "UploadsPaused", "message": "…", "until": "…" }`, for the UI. Never cached.
+* **Switching it:** `scripts/admin.ps1` calls the admin endpoints on port 9465 with `ADMIN_TOKEN` from `.env`:
+  ```powershell
+  scripts/admin.ps1 status
+  scripts/admin.ps1 mode UploadsPaused -Reason "abuse reports" -Message "Uploads are paused for a few hours." -Until "2026-10-27T14:00Z"
+  scripts/admin.ps1 mode Normal -Reason "all clear"
+  ```
+  * `-Reason` is required and only goes into the log; `-Message` and `-Until` are shown to visitors. `until` is informational: nothing switches back by itself.
+  * The admin port is bound to the host's loopback and never proxied. On a server, run the script there or through an SSH tunnel (`ssh -L 9465:localhost:9465 …`).
+  * Without the token, or on any other port, `/admin/…` answers `404`; with a wrong token, `401`.
+* **Where it's kept:** each change is a row in `ServiceModeChanges` (mode, message, until, reason, who, when); the latest row is the current mode. Each API instance re-reads it at most every 5 seconds. Every change is logged as a warning, a pause still on after a restart is logged at startup, and the mode is the metric `fileholder_service_mode{mode}` (1 for the current one).
 
 ### Tracing
 One request, or one purge run, can be followed step by step: where the time went and in what order.
@@ -258,11 +285,13 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `ForwardedHeaders__KnownProxies__<n>` / `ForwardedHeaders__KnownNetworks__<n>` | `172.30.250.10` | Proxies whose `X-Forwarded-For` is trusted |
 | `Cors__AllowedOrigins__<n>` | `http://localhost:3000` | Origins whose pages may call the API cross-origin, e.g. `https://fileholder.app`. None by default: through nginx the browser calls the API same-origin, which needs no CORS. Scheme, host and port only, with no trailing slash, or the API refuses to start |
 | `Metrics__Port` | 9464 (default) | Internal Prometheus metrics port |
+| `Admin__Token` | `ADMIN_TOKEN` from `.env` | Bearer token for the admin endpoints (see *Maintenance Modes*). At least 32 characters, or the API refuses to start; empty turns the admin endpoints off |
+| `Admin__Port` | 9465 (default) | The only port the admin endpoints answer on. Compose binds it to the host's loopback |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4317` | Where traces go over OTLP. Unset (the default outside compose), nothing is sent; log lines inside a trace still end with `trace=… span=…` |
 | `Tracing__SampleRatio` | 1 (default) | Share of requests traced, 0–1. Lower it (e.g. 0.1) on a deployment that sends traces |
 | `Tracing__RecordClientAddress` | false (default) | Keep the caller's address on request spans, for debugging rate limits or the lockout on a real host |
 | `ASPNETCORE_ENVIRONMENT` | `Production` | `Development` enables Scalar and detailed errors |
-| `.env`: `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `STORAGE_ROOT_USER`, `STORAGE_ROOT_PASSWORD`, `STORAGE_API_SECRET_KEY` | (yours) | The stack's passwords (see *Quick Start* and `.env.example`) |
+| `.env`: `GRAFANA_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `STORAGE_ROOT_USER`, `STORAGE_ROOT_PASSWORD`, `STORAGE_API_SECRET_KEY`, `ADMIN_TOKEN` | (yours) | The stack's passwords (see *Quick Start* and `.env.example`) |
 | UI: `STORAGE_PUBLIC_URL` | `http://localhost:9000` | The same address as `Storage__PublicBaseUrl`, without a path. The UI's Content-Security-Policy allows connections to it; without a valid one the container doesn't start |
 | UI: `VITE_API_BASE_URL` (build time) | `/api/v1/files` (`.env.production`) | API address the UI calls; `.env.development` uses `http://localhost:8080/api/v1/files` |
 
@@ -351,6 +380,7 @@ dotnet test tests/FileHolder.Tests.Integration --filter "FullyQualifiedName~Stor
 | `tests/load` | k6 load tests, their runner (`run.ps1`) and database checks |
 | `docker/` | Prometheus, Tempo and Grafana configuration |
 | `scripts/tamper-stored-file.sh` | Flips a byte in a stored file, for testing tamper detection |
+| `scripts/admin.ps1` | The owner's controls: show or switch the maintenance mode (*Maintenance Modes*) |
 
 ---
 

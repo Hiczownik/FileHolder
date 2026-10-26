@@ -87,8 +87,10 @@ services:
     container_name: fileholder-api
     # Browsers reach the API through the ui container's nginx (/api/), so it sees real client addresses.
     # This loopback port is only for local tooling and the CI health check. Metrics (9464) stay internal.
+    # 9465 is the owner's admin port (maintenance modes, scripts/admin.ps1): loopback only, and never proxied.
     ports:
       - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9465:9465"
     environment:
       # Production: Development would return internal exception messages and expose the API reference.
       ASPNETCORE_ENVIRONMENT: Production
@@ -111,6 +113,8 @@ services:
       # Traces go to Tempo over the compose network. Not a dependency: if Tempo is down the API still serves, and
       # only traces are lost. Unset it to send none (see README, Tracing).
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
+      # The bearer token for the admin endpoints on 9465 (README, Maintenance Modes). At least 32 characters.
+      Admin__Token: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env (see .env.example)}
     depends_on:
       postgres:
         condition: service_healthy
