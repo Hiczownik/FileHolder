@@ -102,8 +102,9 @@ public static partial class BundleRules
 
     // A media type of RFC 6838 restricted names, with optional unquoted parameters. It is echoed back as the
     // download's Content-Type, so nothing else gets through: "text/plain; charset=utf-8" and
-    // "application/vnd.ms-excel" match; "application.pdf", "text/html\r\nX-Evil: 1" and "a/b c" don't.
-    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(?:[ \t]*;[ \t]*[A-Za-z0-9!#$&^_.+-]+=[A-Za-z0-9!#$&^_.+-]+)*$")]
+    // "application/vnd.ms-excel" match; "application.pdf", "text/html\r\nX-Evil: 1", "application/pdf\n" and "a/b c"
+    // don't. Ends with \z, not $: in .NET, $ also matches just before a final newline (so do the patterns below).
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*(?:[ \t]*;[ \t]*[A-Za-z0-9!#$&^_.+-]+=[A-Za-z0-9!#$&^_.+-]+)*\z")]
     private static partial Regex ContentTypeRegex();
 
     // Required for encrypted bundles: without any one of them no recipient can ever open the bundle.
@@ -120,8 +121,9 @@ public static partial class BundleRules
             .WithMessage(string.Create(CultureInfo.InvariantCulture,
                 $"Key derivation settings must be Argon2id version {KeyDerivationParams.Argon2Version} with {KeyDerivationParams.MinMemoryKib}–{KeyDerivationParams.MaxMemoryKib} KiB of memory, {KeyDerivationParams.MinIterations}–{KeyDerivationParams.MaxIterations} passes and {KeyDerivationParams.MinParallelism}–{KeyDerivationParams.MaxParallelism} lanes."));
 
-    // Unpadded base64url, as the browser encodes key material: "q3-_Zx0" matches; "q3+/Zx0=" and "a b" don't.
-    [GeneratedRegex(@"^[A-Za-z0-9_-]+$")]
+    // Unpadded base64url, as the browser encodes key material: "q3-_Zx0" matches; "q3+/Zx0=", "q3-_Zx0\n" and "a b"
+    // don't.
+    [GeneratedRegex(@"^[A-Za-z0-9_-]+\z")]
     private static partial Regex Base64UrlRegex();
 
     // An encrypted bundle sends its kAuth as the password: 32 bytes from HKDF, as unpadded base64url. Only that shape
@@ -132,9 +134,9 @@ public static partial class BundleRules
             .WithMessage("The derived key of an encrypted upload must be 43 base64url characters.");
 
     // Exactly 43 base64url characters, as 32 bytes encode unpadded: "q3-_" followed by 39 more matches; a 42-character
-    // value, one with "=" padding, or "k_auth_derived_token_123" doesn't.
-    // https://regex101.com/?regex=%5E%5BA-Za-z0-9_-%5D%7B43%7D%24&testString=q3-_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%0Ak_auth_derived_token_123
-    [GeneratedRegex(@"^[A-Za-z0-9_-]{43}$")]
+    // value, one with "=" padding or a trailing newline, or "k_auth_derived_token_123" doesn't.
+    // https://regex101.com/?regex=%5E%5BA-Za-z0-9_-%5D%7B43%7D%5Cz&testString=q3-_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA%0Ak_auth_derived_token_123
+    [GeneratedRegex(@"^[A-Za-z0-9_-]{43}\z")]
     private static partial Regex AuthKeyRegex();
 
     public static IRuleBuilderOptions<T, string?> MustBeValidPassword<T>(this IRuleBuilder<T, string?> rule) =>
