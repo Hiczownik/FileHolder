@@ -13,6 +13,11 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 # Where the "Report abuse" links send email; .env.production has FileHolder's. An empty value hides the links.
 ARG VITE_ABUSE_EMAIL=abuse@fileholder.app
 ENV VITE_ABUSE_EMAIL=$VITE_ABUSE_EMAIL
+# Who runs the deployment and where to write about it, on the terms and privacy pages; .env.production has FileHolder's.
+ARG VITE_OPERATOR_NAME="Henryk I"
+ENV VITE_OPERATOR_NAME=$VITE_OPERATOR_NAME
+ARG VITE_CONTACT_EMAIL=security@fileholder.app
+ENV VITE_CONTACT_EMAIL=$VITE_CONTACT_EMAIL
 # The commit the UI is built from, shown in the footer and the diagnostics report (vite.config.ts). The build context
 # has no .git, so whoever builds passes it; compose reads GIT_SHA from the environment.
 ARG GIT_SHA=""
@@ -41,6 +46,8 @@ ENV NGINX_ENVSUBST_FILTER=^STORAGE_PUBLIC_URL$
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 # Checks STORAGE_PUBLIC_URL first; the container won't start without a valid one (set in docker-compose.yml).
 COPY --chmod=755 docker-entrypoint.d/19-storage-public-url.envsh /docker-entrypoint.d/
+# Writes the access log's client-address setting (NGINX_LOG_CLIENT_ADDRESS, off by default); refuses an unknown value.
+COPY --chmod=755 docker-entrypoint.d/17-client-address-log.envsh /docker-entrypoint.d/
 # Writes the trusted-proxy settings (TRUSTED_PROXIES) the config relies on; refuses a malformed value.
 COPY --chmod=755 docker-entrypoint.d/18-trusted-proxies.envsh /docker-entrypoint.d/
 

@@ -59,6 +59,9 @@ services:
       STORAGE_PUBLIC_URL: "${STORAGE_PUBLIC_URL:?Set STORAGE_PUBLIC_URL in .env (the R2 bucket address)}"
       # Caddy, so nginx takes the client's address and https from Caddy's forwarded headers.
       TRUSTED_PROXIES: "172.30.250.20"
+      # No client addresses in the access log (privacy page). Set NGINX_LOG_CLIENT_ADDRESS=masked in .env only while
+      # investigating abuse, then back to off (README, Production).
+      NGINX_LOG_CLIENT_ADDRESS: "${NGINX_LOG_CLIENT_ADDRESS:-off}"
     networks:
       default:
         # Fixed, so the API trusts X-Forwarded-For from this container only (ForwardedHeaders__KnownProxies__0).

@@ -247,6 +247,10 @@ export const UploadForm: React.FC<Props> = ({ uploadState, onUpload, limits = DE
                         ? 'New uploads are paused for now (see the notice at the top). Shared links still work.'
                         : 'Your browser uploads the files directly to storage.'}
                 </p>
+                <p className={`${HINT} text-center`}>
+                    By uploading, you agree to the{' '}
+                    <a href="/terms" className="underline underline-offset-2 hover:text-fg rounded outline-none focus-visible:ring-2 focus-visible:ring-accent">terms of use</a>.
+                </p>
             </div>
         </form>
     );

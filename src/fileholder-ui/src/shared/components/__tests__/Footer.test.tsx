@@ -10,4 +10,11 @@ describe('Footer', () => {
         expect(screen.getByTestId('ui-build')).toHaveTextContent(describeBuild(UI_BUILD));
         expect(screen.getByTestId('ui-build').textContent?.startsWith(`v${UI_BUILD.version}`)).toBe(true);
     });
+
+    it('links the terms and the privacy page', () => {
+        render(<Footer />);
+
+        expect(screen.getByRole('link', { name: 'Terms' })).toHaveAttribute('href', '/terms');
+        expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
+    });
 });

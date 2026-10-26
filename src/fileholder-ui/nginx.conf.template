@@ -9,7 +9,9 @@ map $request_path $loggable_path {
     default $request_path;
 }
 
-log_format redacted '$remote_addr - [$time_local] "$request_method $loggable_path $server_protocol" '
+# No client address: FileHolder stores no IP addresses (privacy page). $logged_client is "-" unless
+# NGINX_LOG_CLIENT_ADDRESS=masked is switched on while investigating abuse (docker-entrypoint.d/17-client-address-log.envsh).
+log_format redacted '$logged_client - [$time_local] "$request_method $loggable_path $server_protocol" '
                     '$status $body_bytes_sent "$http_user_agent"';
 
 # Connections to the API are kept open and reused. With a new connection per request, each closed one holds a local
@@ -25,6 +27,11 @@ server {
     server_name localhost;
 
     access_log /var/log/nginx/access.log redacted;
+    # Only critical errors for requests. An ordinary one, such as the API being unreachable during a deploy, would be
+    # written with the client's full address and the full request line, share token included, in a format that can't
+    # be changed. The API's health checks and Caddy show an unreachable API anyway. Start-up errors (a bad config)
+    # are still logged by the image's main error_log.
+    error_log /var/log/nginx/error.log crit;
 
     location / {
         root /usr/share/nginx/html;
