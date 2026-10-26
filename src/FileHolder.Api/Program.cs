@@ -40,6 +40,8 @@ builder.Services.AddFileHolderStorageOptions(builder.Configuration);
 builder.Services.AddOptions<UploadLimitsOptions>()
     .Bind(builder.Configuration.GetSection(UploadLimitsOptions.SectionName))
     .ValidateDataAnnotations()
+    .Validate(o => o.WithoutCodeSettingsAreValid(),
+        "UploadLimits:WithoutCodeMaxBundleSizeBytes and WithoutCodeMaxExpiryHours must be set together (access codes, #169), and be no larger than MaxBundleSizeBytes and MaxExpiryHours.")
     .ValidateOnStart();
 
 builder.Services.AddOptions<AdminOptions>()
@@ -100,6 +102,9 @@ builder.Services.AddScoped<IStoragePurgeService, StoragePurgeService>();
 // Maintenance modes (README, Maintenance Modes): which requests are let through, switched on the admin port.
 builder.Services.AddSingleton<IServiceModeProvider, ServiceModeProvider>();
 builder.Services.AddScoped<ITakedownService, TakedownService>();
+// Access codes (#169): the full upload limits for those who have one; managed on the admin port.
+builder.Services.AddScoped<IAccessCodeService, AccessCodeService>();
+builder.Services.AddSingleton<AccessCodeMetrics>();
 
 var metricsPort = builder.Configuration.GetValue("Metrics:Port", 9464);
 
@@ -124,7 +129,10 @@ builder.Services.AddFileHolderHealthChecks();
 builder.Services.AddSingleton<StorageLifecycleStatus>();
 builder.Services.AddHostedService<StorageLifecycleInitializer>();
 
-builder.Services.AddValidatorsFromAssemblyContaining<Program>();
+// WithoutCodeLimitsValidator is built by presign with the limits of an upload without an access code; registered, it
+// would be a second validator for presign requests.
+builder.Services.AddValidatorsFromAssemblyContaining<Program>(
+    filter: scan => scan.ValidatorType != typeof(FileHolder.Api.Validation.WithoutCodeLimitsValidator));
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {

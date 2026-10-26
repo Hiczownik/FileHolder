@@ -86,7 +86,9 @@ public record UploadLimitsResponseDto(
     [property: JsonPropertyName("maxBundleSizeBytes")] long MaxBundleSizeBytes,
     [property: JsonPropertyName("maxFilesPerBundle")] int MaxFilesPerBundle,
     [property: JsonPropertyName("minExpiryHours")] int MinExpiryHours,
-    [property: JsonPropertyName("maxExpiryHours")] int MaxExpiryHours
+    [property: JsonPropertyName("maxExpiryHours")] int MaxExpiryHours,
+    // True when uploads without an access code get these (smaller) limits, and a code unlocks more (#169).
+    [property: JsonPropertyName("accessCodesEnabled")] bool AccessCodesEnabled = false
 );
 
 public record DownloadUrlResponseDto(

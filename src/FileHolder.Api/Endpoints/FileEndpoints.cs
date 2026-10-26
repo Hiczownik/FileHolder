@@ -25,6 +25,13 @@ public static class FileEndpoints
             .RequireRateLimiting(RateLimitPolicies.Metadata)
             .WithName("GetUploadLimits");
 
+        // Which limits an access code unlocks (#169), so the form shows them before uploading. Rate-limited with
+        // presign: a code check is the first step of an upload, and each wrong code is one attempt.
+        group.MapPost("/access-codes/check", CheckAccessCode)
+            .RequireServiceMode(ServiceCapability.StartUpload)
+            .RequireRateLimiting(RateLimitPolicies.UploadInitiate)
+            .WithName("CheckAccessCode");
+
         group.MapPost("/presign", GetPresignedUploadUrl)
             .RequireServiceMode(ServiceCapability.StartUpload)
             .AddEndpointFilter<ValidationFilter<CreatePresignedUrlRequestDto>>()
@@ -92,20 +99,76 @@ public static class FileEndpoints
             .WithName("StreamBundleZipForSession");
     }
 
+    /// <summary>The limits of an upload without an access code: the smaller ones when codes are on (#169).</summary>
     public static Ok<UploadLimitsResponseDto> GetUploadLimits(IOptions<UploadLimitsOptions> uploadLimits)
     {
         var limits = uploadLimits.Value;
-        return TypedResults.Ok(new UploadLimitsResponseDto(
-            limits.MaxBundleSizeBytes, BundleRules.MaxFilesPerBundle, BundleLimits.MinExpiryHours, limits.MaxExpiryHours));
+        return TypedResults.Ok(ToResponse(limits.WithoutCode(), limits.AccessCodesEnabled));
     }
 
-    public static async Task<Results<Ok<PresignedUrlResponseDto>, ProblemHttpResult>> GetPresignedUploadUrl(
+    /// <summary>A valid code's limits; an unknown, expired or revoked one gets the same 400 (AccessCodeRules.InvalidCodeMessage).</summary>
+    public static async Task<Results<Ok<UploadLimitsResponseDto>, NotFound, ProblemHttpResult>> CheckAccessCode(
+        AccessCodeCheckRequestDto dto, IAccessCodeService accessCodes, IOptions<UploadLimitsOptions> uploadLimits, CancellationToken ct)
+    {
+        var limits = uploadLimits.Value;
+        if (!limits.AccessCodesEnabled)
+        {
+            return TypedResults.NotFound();
+        }
+
+        var resolution = await accessCodes.ResolveAsync(dto.Code, ct);
+        return resolution.Status == AccessCodeStatus.Valid
+            ? TypedResults.Ok(ToResponse(limits, accessCodesEnabled: true))
+            : InvalidAccessCodeProblem();
+    }
+
+    private static UploadLimitsResponseDto ToResponse(UploadLimitsOptions limits, bool accessCodesEnabled) => new(
+        limits.MaxBundleSizeBytes, BundleRules.MaxFilesPerBundle, BundleLimits.MinExpiryHours, limits.MaxExpiryHours, accessCodesEnabled);
+
+    private static ProblemHttpResult InvalidAccessCodeProblem() => TypedResults.Problem(
+        detail: AccessCodeRules.InvalidCodeMessage,
+        statusCode: StatusCodes.Status400BadRequest,
+        title: "Invalid Access Code",
+        extensions: new Dictionary<string, object?> { ["accessCode"] = "invalid" });
+
+    public static async Task<Results<Ok<PresignedUrlResponseDto>, ValidationProblem, ProblemHttpResult>> GetPresignedUploadUrl(
         CreatePresignedUrlRequestDto dto,
         IFileGroupService fileGroupService,
+        IAccessCodeService accessCodes,
+        IOptions<UploadLimitsOptions> uploadLimits,
         StorageQuota storageQuota,
         HttpContext context,
         ILogger<StorageQuota> logger)
     {
+        // Validation held the bundle to the full limits; without a valid access code, the smaller ones apply (#169).
+        var tier = UploadTier.Unrestricted;
+        var limits = uploadLimits.Value;
+        if (limits.AccessCodesEnabled)
+        {
+            var resolution = await accessCodes.ResolveAsync(dto.AccessCode, context.RequestAborted);
+            if (resolution.Status == AccessCodeStatus.Invalid)
+            {
+                // Said rather than silently falling back: the uploader typed or followed a code and should know.
+                return InvalidAccessCodeProblem();
+            }
+
+            if (resolution.Status == AccessCodeStatus.None)
+            {
+                var withoutCode = limits.WithoutCode();
+                var result = await new WithoutCodeLimitsValidator(withoutCode).ValidateAsync(dto, context.RequestAborted);
+                if (!result.IsValid)
+                {
+                    return TypedResults.ValidationProblem(result.ToDictionary());
+                }
+
+                tier = new UploadTier(withoutCode.MaxExpiryHours, null);
+            }
+            else
+            {
+                tier = new UploadTier(limits.MaxExpiryHours, resolution.AccessCodeId);
+            }
+        }
+
         // Validation has already capped each bundle at the size limit, so this sum can't overflow.
         if (!await storageQuota.HasRoomForAsync(dto.Files.Sum(f => f.SizeBytes), context.RequestAborted))
         {
@@ -118,7 +181,7 @@ public static class FileEndpoints
                 title: "Storage Full");
         }
 
-        var response = await fileGroupService.CreatePresignedUploadUrlAsync(dto);
+        var response = await fileGroupService.CreatePresignedUploadUrlAsync(dto, tier);
         return TypedResults.Ok(response);
     }
 

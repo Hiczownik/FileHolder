@@ -1,4 +1,5 @@
-﻿using FileHolder.Core.Configuration;
+﻿using System.Globalization;
+using FileHolder.Core.Configuration;
 using FileHolder.Core.Dtos;
 using FileHolder.Core.Entities;
 using FileHolder.Core.Exceptions;
@@ -58,8 +59,9 @@ public class FileGroupService
         return (partSize, totalParts);
     }
 
-    public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto)
+    public async Task<PresignedUrlResponseDto> CreatePresignedUploadUrlAsync(CreatePresignedUrlRequestDto dto, UploadTier? tier = null)
     {
+        tier ??= UploadTier.Unrestricted;
         using var activity = FileHolderTracing.StartStep("presign")
             ?.SetTag("fileholder.file_count", dto.Files.Count)
             .SetTag("fileholder.multipart_file_count", dto.Files.Count(f => IsMultipart(f.SizeBytes)))
@@ -92,7 +94,9 @@ public class FileGroupService
                     SizeBytes = file.SizeBytes,
                     IsEncrypted = dto.IsEncrypted,
                     CreatedAt = now,
-                    ExpiresAt = pendingExpiresAt
+                    ExpiresAt = pendingExpiresAt,
+                    MaxExpiryHours = tier.MaxExpiryHours,
+                    AccessCodeId = tier.AccessCodeId
                 });
 
                 if (IsMultipart(file.SizeBytes))
@@ -191,6 +195,13 @@ public class FileGroupService
         if (pendingUploads.Any(p => p.IsEncrypted != dto.IsEncrypted))
         {
             throw new InvalidRequestException("Encryption mode does not match the presigned upload.");
+        }
+
+        // The expiry is sent again here, so the tier presign approved (#169) is checked again too.
+        if (pendingUploads.Min(p => p.MaxExpiryHours) is int maxExpiryHours && (dto.ExpireInHours ?? 0) > maxExpiryHours)
+        {
+            throw new InvalidRequestException(string.Create(CultureInfo.InvariantCulture,
+                $"This upload can live at most {maxExpiryHours} hour{(maxExpiryHours == 1 ? "" : "s")}: that's what was approved for it."));
         }
 
         foreach (var item in dto.Files)
@@ -336,6 +347,20 @@ public class FileGroupService
 
                 _dbContext.FileGroups.Add(fileGroup);
                 await _dbContext.SaveChangesAsync();
+
+                // Counted with the bundle, in the same transaction; the bundle itself keeps no link to the code.
+                if (pendingUploads.Select(p => p.AccessCodeId).FirstOrDefault(id => id.HasValue) is Guid accessCodeId)
+                {
+                    long bytes = pendingUploads.Sum(p => p.SizeBytes);
+                    await _dbContext.AccessCodes
+                        .Where(c => c.Id == accessCodeId)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(c => c.BundleCount, c => c.BundleCount + 1)
+                            .SetProperty(c => c.BytesUploaded, c => c.BytesUploaded + bytes)
+                            .SetProperty(c => c.FirstUsedAt, c => c.FirstUsedAt ?? now)
+                            .SetProperty(c => c.LastUsedAt, now));
+                }
+
                 await tx.CommitAsync();
             });
 

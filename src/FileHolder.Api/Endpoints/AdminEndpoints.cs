@@ -29,6 +29,14 @@ public static class AdminEndpoints
             .AddEndpointFilter<ValidationFilter<TakedownRequestDto>>();
 
         admin.MapGet("/takedowns", GetTakedowns);
+
+        // Access codes (#169): scripts/admin.ps1 codes, code-create, code-extend, code-revoke.
+        admin.MapGet("/access-codes", ListAccessCodes);
+        admin.MapPost("/access-codes", CreateAccessCode)
+            .AddEndpointFilter<ValidationFilter<CreateAccessCodeRequestDto>>();
+        admin.MapPost("/access-codes/{label}/extend", ExtendAccessCode)
+            .AddEndpointFilter<ValidationFilter<ExtendAccessCodeRequestDto>>();
+        admin.MapPost("/access-codes/{label}/revoke", RevokeAccessCode);
     }
 
     public static async Task<Ok<AdminServiceModeResponseDto>> GetMode(IServiceModeProvider serviceMode, CancellationToken ct) =>
@@ -61,6 +69,22 @@ public static class AdminEndpoints
             _ => TypedResults.NotFound(),
         };
     }
+
+    public static async Task<Ok<IReadOnlyList<AccessCodeDto>>> ListAccessCodes(IAccessCodeService accessCodes, CancellationToken ct) =>
+        TypedResults.Ok(await accessCodes.ListAsync(ct));
+
+    /// <summary>201 with the code, shown this once; 409 when the label is taken.</summary>
+    public static async Task<Created<AccessCodeCreatedDto>> CreateAccessCode(
+        CreateAccessCodeRequestDto dto, IAccessCodeService accessCodes, CancellationToken ct) =>
+        TypedResults.Created((string?)null, await accessCodes.CreateAsync(dto, ct));
+
+    public static async Task<Results<Ok<AccessCodeDto>, NotFound>> ExtendAccessCode(
+        string label, ExtendAccessCodeRequestDto dto, IAccessCodeService accessCodes, CancellationToken ct) =>
+        await accessCodes.ExtendAsync(label, dto, ct) is { } code ? TypedResults.Ok(code) : TypedResults.NotFound();
+
+    public static async Task<Results<Ok<AccessCodeDto>, NotFound>> RevokeAccessCode(
+        string label, IAccessCodeService accessCodes, CancellationToken ct) =>
+        await accessCodes.RevokeAsync(label, ct) is { } code ? TypedResults.Ok(code) : TypedResults.NotFound();
 
     public static async Task<Ok<IReadOnlyList<TakedownRecordDto>>> GetTakedowns(ITakedownService takedowns, CancellationToken ct) =>
         TypedResults.Ok(await takedowns.GetHistoryAsync(HistoryLength, ct));

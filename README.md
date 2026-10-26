@@ -285,6 +285,23 @@ scripts/admin.ps1 takedowns   # the latest takedowns
 * **Reports come in by email:** the footer's *Report abuse* link, and *Report it* under every bundle, open an email to `abuse@fileholder.app` (`VITE_ABUSE_EMAIL`). The bundle's report names its link **without the `#k=` key**, so the key never reaches the inbox; the share token is all a takedown needs.
 * **Answers:** `404` for an unknown token; `409` when the bundle already expired and its files are gone. Encrypted bundles can be taken down like any other: the server can't see inside them, but it can delete them.
 
+### Access Codes
+A public demo can give anonymous uploads limits too small to be worth abusing, and unlock the full ones with a code (#169):
+- **Without a code:** `UploadLimits__WithoutCodeMaxBundleSizeBytes` and `UploadLimits__WithoutCodeMaxExpiryHours` (production: 10 MB, 1 hour). Setting both turns codes on; unset (the default), every upload gets the full limits and codes aren't used.
+- **With a valid code:** `UploadLimits__MaxBundleSizeBytes` and `UploadLimits__MaxExpiryHours` (production: 250 MB, 24 hours). The global quota still caps everything.
+- **Managing them** on the admin port (*Maintenance Modes*):
+  ```powershell
+  scripts/admin.ps1 code-create a03                # valid 30 days; prints the code and the personal link
+  scripts/admin.ps1 code-create a04 -ExpiresInDays 60   # or -NoExpiry
+  scripts/admin.ps1 codes                          # status, bundles, bytes, first and last use
+  scripts/admin.ps1 code-extend a03 -Days 30       # valid for another 30 days from now (or -NoExpiry)
+  scripts/admin.ps1 code-revoke a03
+  ```
+  **Use neutral labels** (`a01`, `a02`, …) and keep which company each is outside FileHolder: otherwise the list is a list of the companies you applied to, on the server and in its backups.
+- **A code** is the label and 12 random characters, `a03-7F3K-9Q2M-X8PD` (Crockford's base32, about 10¹⁸ possibilities). It's shown once; only its SHA-256 is stored. Case, spaces, and O/I/L for 0/1/1 don't matter when it's typed.
+- **Presign** takes the code as `accessCode`. With a valid one the full limits apply; with an unknown, expired or revoked one, presign refuses with the same message for all three. Without one the smaller limits apply, and the refusal says an access code allows more. The longest expiry is fixed at presign, since confirm sends the expiry again. `POST /api/v1/files/access-codes/check` tells the UI a code's limits before uploading; `GET /api/v1/files/limits` gives the limits without a code, with `accessCodesEnabled`.
+- **Counted, not linked:** each code counts its bundles, bytes, and first and last use, but no bundle records its code. Wrong codes are rate-limited per client (with presign) and counted in `fileholder_access_code_rejections_total`. There's no global limit, which would let anyone lock real codes out on purpose; with 60 random bits, guessing is hopeless anyway.
+
 ### Tracing
 One request, or one purge run, can be followed step by step: where the time went and in what order.
 * **Where:** Grafana ([http://localhost:3001](http://localhost:3001)) → **Explore** → **Tempo**. Search for service `fileholder-api` and a span name such as `POST /api/v1/files/confirm` or `purge.run`, or paste a trace id from a log line (`… trace=<id> span=<id>`).
@@ -337,6 +354,7 @@ The API reads standard .NET configuration: `appsettings.json`, then environment 
 | `Hosting__ShutdownTimeoutSeconds` | 90 (default) | On a stop (a deploy), how long requests already running may finish. Bundle ZIPs stream through the API, so a longer one is cut off after this. Compose's `stop_grace_period` (100 s) must be longer than this plus the linger |
 | `Hosting__LingerSeconds` | 5 (default) | How long the API stays up after its last response, so the end of a ZIP still in the network buffers reaches nginx before Docker removes the container's network |
 | `Admin__Token` | `ADMIN_TOKEN` from `.env` | Bearer token for the admin endpoints (see *Maintenance Modes*). At least 32 characters, or the API refuses to start; empty turns the admin endpoints off |
+| `UploadLimits__WithoutCodeMaxBundleSizeBytes`, `UploadLimits__WithoutCodeMaxExpiryHours` | unset (production: 10 MB, 1 hour) | The limits of an upload without an access code. Set both to turn access codes on (*Access Codes*); no larger than the full limits, or the API refuses to start |
 | `Admin__Port` | 9465 (default) | The only port the admin endpoints answer on. Compose binds it to the host's loopback |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://tempo:4317` | Where traces go over OTLP. Unset (the default outside compose), nothing is sent; log lines inside a trace still end with `trace=… span=…` |
 | `Tracing__SampleRatio` | 1 (default) | Share of requests traced, 0–1. Lower it (e.g. 0.1) on a deployment that sends traces |
