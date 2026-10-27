@@ -1,0 +1,40 @@
+# Load tests on the production server's resources (tests/load/vps-profile.ps1), layered on docker-compose.prod.yml and
+# docker-compose.prod-local.yml. Never use it for a deployment.
+#
+# Every container the server runs shares two cores, as on the VPS (2 vCPU): cpuset pins them to the same two, so they
+# compete for them exactly as they do there. Storage stands in for R2, which runs on Cloudflare's machines, so it gets
+# cores of its own; k6, playing the visitors, runs on others again (vps-profile.ps1).
+services:
+  caddy:
+    cpuset: "0,1"
+  ui:
+    cpuset: "0,1"
+  api:
+    cpuset: "0,1"
+    # The measurement needs no admin port, and an admin tunnel to the live server may hold 19465 on this machine.
+    ports: !reset []
+    environment:
+      # k6 sends the storage PUTs and GETs itself, from inside the compose network.
+      Storage__PublicBaseUrl: "http://minio:9000"
+      # All k6 traffic comes from one address; the server's capacity is measured, not the per-visitor limits.
+      RateLimits__UploadInitiatePermitLimit: "100000"
+      RateLimits__MultipartPipelinePermitLimit: "100000"
+      RateLimits__ConfirmPermitLimit: "100000"
+      RateLimits__DownloadPermitLimit: "100000"
+      RateLimits__MetadataPermitLimit: "100000"
+      # Room for the longer runs (scenario 3 holds several GB at once) and the ZIP scenario's 200 MB bundles.
+      UploadLimits__GlobalQuotaBytes: "53687091200"
+      UploadLimits__WithoutCodeMaxBundleSizeBytes: "262144000"
+      UploadLimits__WithoutCodeMaxExpiryHours: "24"
+  sample:
+    cpuset: "0,1"
+  postgres:
+    cpuset: "0,1"
+  prometheus:
+    cpuset: "0,1"
+  tempo:
+    cpuset: "0,1"
+  minio:
+    cpuset: "2,3"
+  minio-init:
+    cpuset: "2,3"
