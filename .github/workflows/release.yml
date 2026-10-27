@@ -1,6 +1,6 @@
 name: Release
 
-# release-please (README, Versions and Releases): on every push to main it keeps a release PR up to date, which bumps
+# release-please (docs/operations.md, Versions and Releases): on every push to main it keeps a release PR up to date, which bumps
 # the version (version.txt, Directory.Build.props, the UI's package.json) and adds the commits since the last release
 # to CHANGELOG.md. Merging that PR tags the release and creates the GitHub release.
 #

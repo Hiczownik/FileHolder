@@ -10,7 +10,7 @@
     <!--
       FileHolder's version, for the API and its libraries (the UI's is in src/fileholder-ui/package.json; release-please
       bumps both). The commit is added at build time: from git locally, from the GIT_SHA build argument in Docker,
-      which has no .git (README, Versions and Releases).
+      which has no .git (docs/operations.md, Versions and Releases).
     -->
     <PropertyGroup>
         <Version>0.9.0</Version> <!-- x-release-please-version -->

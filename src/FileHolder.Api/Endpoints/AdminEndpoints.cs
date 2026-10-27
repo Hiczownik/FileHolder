@@ -8,7 +8,7 @@ namespace FileHolder.Api.Endpoints;
 
 /// <summary>
 /// The owner's controls, on the admin port with the admin token only (<see cref="AdminAccessFilter"/>).
-/// scripts/admin.ps1 wraps them; README, *Maintenance Modes*.
+/// scripts/admin.ps1 wraps them; docs/operations.md, *Maintenance Modes*.
 /// </summary>
 public static class AdminEndpoints
 {

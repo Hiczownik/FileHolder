@@ -1,4 +1,4 @@
-# Local settings for reaching the stack from a phone over HTTPS tunnels (README: "Testing from a Phone").
+# Local settings for reaching the stack from a phone over HTTPS tunnels (docs/testing.md: "Testing from a Phone").
 # Copy this file to docker-compose.override.yml, which git ignores and docker compose merges in automatically,
 # replace both addresses below with the same one, then run: docker compose up -d api ui
 services:

@@ -2,7 +2,7 @@ using FileHolder.Core.Dtos;
 
 namespace FileHolder.Core.Interfaces;
 
-/// <summary>The owner removing a bundle for abuse or a legal request (README, *Takedown*).</summary>
+/// <summary>The owner removing a bundle for abuse or a legal request (docs/operations.md, *Takedown*).</summary>
 public interface ITakedownService
 {
     /// <summary>

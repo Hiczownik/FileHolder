@@ -6,8 +6,19 @@ const CI_RETRIES = 2;
 // "2. Rejects executable files" doesn't.
 // https://regex101.com/?regex=%40cross-browser&flags=&testString=4.%20E2EE%20journey%20%40cross-browser%0A2.%20Rejects%20executable%20files
 const CROSS_BROWSER = /@cross-browser/;
-// Tests for other stacks: the fault tests (their own projects) and the production setup (scripts/prod-local.ps1).
-const NOT_THE_DEV_STACK = ['**/faults/**', '**/production.spec.ts'];
+// Tests for other stacks: the fault tests (their own projects), the production setup (scripts/prod-local.ps1), and
+// the README's screenshots, taken from it.
+const NOT_THE_DEV_STACK = ['**/faults/**', '**/production.spec.ts', '**/screenshots.spec.ts'];
+const PRODUCTION_URL = process.env.PROD_LOCAL_URL ?? 'https://localhost:18443';
+// Caddy's local certificate authority isn't trusted by the browser: ignoreHTTPSErrors covers pages and requests, and
+// the flag covers the download service worker, which Chromium otherwise refuses to register from such a site.
+const TRUST_LOCAL_CADDY = { ignoreHTTPSErrors: true, launchOptions: { args: ['--ignore-certificate-errors'] } };
+// The README's screenshots: a desktop window, at twice the pixels so they stay sharp on high-density screens.
+const SCREENSHOT_WIDTH = 1280;
+// Tall enough for the whole upload form with two files picked.
+const SCREENSHOT_HEIGHT = 1300;
+const SCREENSHOT_VIEWPORT = { width: SCREENSHOT_WIDTH, height: SCREENSHOT_HEIGHT };
+const SCREENSHOT_SCALE = 2;
 
 export default defineConfig({
   testDir: './e2e',
@@ -67,17 +78,22 @@ export default defineConfig({
       workers: 1,
       use: { ...devices['Desktop Safari'] },
     },
-    // The production setup (docker-compose.prod.yml) behind Caddy, run by scripts/prod-local.ps1 test. Caddy's local
-    // certificate authority isn't trusted by the browser: ignoreHTTPSErrors covers pages and requests, and the flag
-    // covers the download service worker, which Chromium otherwise refuses to register from such a site.
+    // The production setup (docker-compose.prod.yml) behind Caddy, run by scripts/prod-local.ps1 test.
     {
       name: 'production',
       testMatch: 'production.spec.ts',
+      use: { ...devices['Desktop Chrome'], baseURL: PRODUCTION_URL, ...TRUST_LOCAL_CADDY },
+    },
+    // The README's screenshots (docs/images), run on demand: see e2e/screenshots.spec.ts.
+    {
+      name: 'screenshots',
+      testMatch: 'screenshots.spec.ts',
       use: {
         ...devices['Desktop Chrome'],
-        baseURL: process.env.PROD_LOCAL_URL ?? 'https://localhost:18443',
-        ignoreHTTPSErrors: true,
-        launchOptions: { args: ['--ignore-certificate-errors'] },
+        baseURL: process.env.SCREENSHOT_URL ?? PRODUCTION_URL,
+        viewport: SCREENSHOT_VIEWPORT,
+        deviceScaleFactor: SCREENSHOT_SCALE,
+        ...TRUST_LOCAL_CADDY,
       },
     },
   ],

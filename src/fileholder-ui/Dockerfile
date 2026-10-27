@@ -28,7 +28,7 @@ RUN npm run build
 ARG SAMPLE_API_BASE_URL=http://api:8080/api/v1/files
 RUN VITE_API_BASE_URL=$SAMPLE_API_BASE_URL npm run build:sample
 
-# The sample keeper (README, Sample Bundle): keeps a public sample bundle alive for /sample. Built with
+# The sample keeper (docs/operations.md, Sample Bundle): keeps a public sample bundle alive for /sample. Built with
 # `--target sample`; without a target, the build ends at the nginx stage below as before.
 FROM node:26.12.1-alpine3.24@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS sample
 ARG GIT_SHA=""

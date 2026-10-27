@@ -1,4 +1,4 @@
-# Production: one server running the whole app (README, Production). Only Caddy is published to the internet, on 80
+# Production: one server running the whole app (docs/operations.md, Production). Only Caddy is published to the internet, on 80
 # and 443; Docker's published ports get around a host firewall such as ufw, so nothing else is. Files are stored in
 # Cloudflare R2, not here; Grafana runs on the owner's computer and reaches Prometheus and Tempo over SSH or Tailscale.
 #
@@ -60,7 +60,7 @@ services:
       # Caddy, so nginx takes the client's address and https from Caddy's forwarded headers.
       TRUSTED_PROXIES: "172.30.250.20"
       # No client addresses in the access log (privacy page). Set NGINX_LOG_CLIENT_ADDRESS=masked in .env only while
-      # investigating abuse, then back to off (README, Production).
+      # investigating abuse, then back to off (docs/operations.md, Production).
       NGINX_LOG_CLIENT_ADDRESS: "${NGINX_LOG_CLIENT_ADDRESS:-off}"
     volumes:
       # The current sample bundle, served at /sample-bundle/current.json for /sample (the sample service below).
@@ -98,7 +98,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ConnectionStrings__PostgresConnection: "Host=postgres;Port=5432;Database=fileholder_db;Username=fileholder_user;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env};Maximum Pool Size=50"
-      # Cloudflare R2 (README, Running on Cloudflare R2): the bucket's address, used by the API and in presigned URLs.
+      # Cloudflare R2 (docs/operations.md, Running on Cloudflare R2): the bucket's address, used by the API and in presigned URLs.
       Storage__ServiceUrl: "${STORAGE_PUBLIC_URL:?Set STORAGE_PUBLIC_URL in .env (the R2 bucket address)}"
       Storage__PublicBaseUrl: "${STORAGE_PUBLIC_URL:?Set STORAGE_PUBLIC_URL in .env (the R2 bucket address)}"
       Storage__BucketName: "${STORAGE_BUCKET:?Set STORAGE_BUCKET in .env}"
@@ -135,7 +135,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Keeps one public, encrypted sample bundle alive and points /sample at it (README, Sample Bundle). Uploads with the
+  # Keeps one public, encrypted sample bundle alive and points /sample at it (docs/operations.md, Sample Bundle). Uploads with the
   # access code SAMPLE_ACCESS_CODE; without one it idles, and /sample says there's no sample.
   sample:
     image: "fileholder-sample:${FILEHOLDER_VERSION:?Set FILEHOLDER_VERSION in .env (deploy.ps1 does)}"
@@ -161,7 +161,7 @@ services:
     environment:
       POSTGRES_DB: fileholder_db
       POSTGRES_USER: fileholder_user
-      # Only applied when the volume is first created (README, Passwords and Storage Users).
+      # Only applied when the volume is first created (docs/development.md, Passwords and Storage Users).
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}"
     # No port: reach it with `docker compose exec postgres psql …`.
     volumes:

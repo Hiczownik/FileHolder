@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Runs, on this machine, every check CI, the nightly job and the security workflow would run, and ends with a
-    pass/fail summary (README, Running the Tests → Before a deploy). For use before deploying while GitHub Actions
+    pass/fail summary (docs/testing.md, Before a deploy). For use before deploying while GitHub Actions
     are off; about 25 minutes, unattended.
 
 .DESCRIPTION

@@ -15,7 +15,7 @@ import { useServiceStatus } from './shared/hooks/useServiceStatus';
 const Argon2BenchmarkPage = lazy(() => import('./features/diagnostics/Argon2BenchmarkPage'));
 
 function App() {
-  // The owner's maintenance mode (README, Maintenance Modes): a banner while paused, one page while closed.
+  // The owner's maintenance mode (docs/operations.md, Maintenance Modes): a banner while paused, one page while closed.
   const serviceStatus = useServiceStatus();
 
   return (

@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Runs the production setup (docker-compose.prod.yml) on this machine, behind Caddy at https://localhost:18443, to
-    check it before it reaches the server (README, Production).
+    check it before it reaches the server (docs/operations.md, Production).
 
 .DESCRIPTION
     up     Builds the images from this checkout and starts the stack, waiting until every service is healthy.
@@ -55,7 +55,7 @@ if (-not (Test-Path $envFile)) {
     Add-Content -Encoding ascii $envFile "STORAGE_API_SECRET_KEY=$((Get-Content $envFile | Where-Object { $_ -like 'STORAGE_SECRET_KEY=*' }).Split('=', 2)[1])"
 }
 
-# The sample keeper's access code (README, Sample Bundle): made on the admin port once the API is up, kept in the env
+# The sample keeper's access code (docs/operations.md, Sample Bundle): made on the admin port once the API is up, kept in the env
 # file, and made again when it no longer works (after down -Volumes, the database that knew it is gone).
 function Initialize-SampleCode {
     $headers = @{ Authorization = "Bearer $((Get-Content $envFile | Where-Object { $_ -like 'ADMIN_TOKEN=*' }).Split('=', 2)[1])" }

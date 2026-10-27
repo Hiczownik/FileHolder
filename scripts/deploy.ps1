@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Deploys this checkout to the production server (README, Production → Deploying), or rolls the server back.
+    Deploys this checkout to the production server (docs/operations.md, Production → Deploying), or rolls the server back.
 
 .DESCRIPTION
     1. Checks: no uncommitted changes (unless -AllowDirty), and the server has Docker Compose and its .env.
@@ -89,7 +89,7 @@ try {
 command -v docker >/dev/null || { echo 'Docker is not installed on the server.' >&2; exit 2; }
 docker compose version >/dev/null || { echo 'The Docker Compose plugin is not installed on the server.' >&2; exit 2; }
 mkdir -p '$RemoteDir'
-test -f '$RemoteDir/.env' || { echo 'No $RemoteDir/.env on the server: make it from .env.prod.example first (README, Production).' >&2; exit 3; }
+test -f '$RemoteDir/.env' || { echo 'No $RemoteDir/.env on the server: make it from .env.prod.example first (docs/operations.md, Production).' >&2; exit 3; }
 "@
 
     if ($Rollback) {

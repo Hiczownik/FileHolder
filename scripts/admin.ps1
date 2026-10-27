@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     The owner's controls for a running FileHolder: show or switch the maintenance mode, and take bundles down
-    (README, Maintenance Modes and Takedown).
+    (docs/operations.md, Maintenance Modes and Takedown).
 
 .DESCRIPTION
     Calls the API's admin endpoints on the admin port (9465), which compose binds to the host's loopback only. The

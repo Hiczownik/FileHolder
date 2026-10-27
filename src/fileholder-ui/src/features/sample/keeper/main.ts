@@ -1,4 +1,4 @@
-// The sample keeper (#82; README, Sample Bundle): a small Node service next to the API that keeps one public, encrypted
+// The sample keeper (#82; docs/operations.md, Sample Bundle): a small Node service next to the API that keeps one public, encrypted
 // sample bundle alive and points /sample at it. It uploads with the browser's own code (uploadWorkflow.ts), so the
 // sample is encrypted exactly as a visitor's bundle would be. Built by `npm run build:sample`, run by the Dockerfile's
 // `sample` target. Settings come from the environment (docker-compose.prod.yml).

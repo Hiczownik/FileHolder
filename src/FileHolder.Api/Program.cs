@@ -50,7 +50,7 @@ builder.Services.AddOptions<AdminOptions>()
     .ValidateOnStart();
 
 // On a stop (a deploy), how long requests already running may finish: bundle ZIPs stream through the API and are cut
-// off after this. Compose's stop_grace_period must be longer, or Docker kills the process first (README, Configuration).
+// off after this. Compose's stop_grace_period must be longer, or Docker kills the process first (docs/development.md, Configuration).
 builder.Services.Configure<HostOptions>(options =>
     options.ShutdownTimeout = TimeSpan.FromSeconds(builder.Configuration.GetValue("Hosting:ShutdownTimeoutSeconds", 90)));
 
@@ -75,7 +75,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("PostgresConnection")
         ?? throw new InvalidOperationException(
             "ConnectionStrings:PostgresConnection is not set. Compose builds it from POSTGRES_PASSWORD in .env; " +
-            "for a local `dotnet run`, set it with dotnet user-secrets (README, Development).")));
+            "for a local `dotnet run`, set it with dotnet user-secrets (docs/development.md, API and UI Outside Docker).")));
 
 // The API's own connection to storage.
 builder.Services.AddKeyedSingleton<IAmazonS3>("InternalS3", (sp, _) =>
@@ -99,7 +99,7 @@ builder.Services.AddScoped<StorageQuota>();
 builder.Services.AddScoped<IMultipartUploadService, MultipartUploadService>();
 builder.Services.AddScoped<IBundleStreamService, BundleStreamService>();
 builder.Services.AddScoped<IStoragePurgeService, StoragePurgeService>();
-// Maintenance modes (README, Maintenance Modes): which requests are let through, switched on the admin port.
+// Maintenance modes (docs/operations.md, Maintenance Modes): which requests are let through, switched on the admin port.
 builder.Services.AddSingleton<IServiceModeProvider, ServiceModeProvider>();
 builder.Services.AddScoped<ITakedownService, TakedownService>();
 // Access codes (#169): the full upload limits for those who have one; managed on the admin port.

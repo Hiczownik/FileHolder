@@ -27,7 +27,7 @@ public class StorageOptions
     public string PublicBaseUrl { get; set; } = "http://localhost:9000";
 
     // No defaults: credentials come from the environment (compose reads them from .env) or, for a local
-    // `dotnet run`, from user secrets (README, Development).
+    // `dotnet run`, from user secrets (docs/development.md, API and UI Outside Docker).
     [Required(ErrorMessage = "Storage:AccessKey is required.")]
     public string AccessKey { get; set; } = string.Empty;
 

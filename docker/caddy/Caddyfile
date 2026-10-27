@@ -1,7 +1,7 @@
 # Caddy, the only thing published to the internet in production (docker-compose.prod.yml). It gets and renews the
 # HTTPS certificate for SITE_ADDRESS by itself (Let's Encrypt, ZeroSSL as the fallback; both allowed by the domain's
 # CAA records), redirects HTTP to HTTPS, adds HSTS, and passes everything to the ui container (nginx), which serves the
-# UI with its own security headers and proxies /api/ to the API (README, Production).
+# UI with its own security headers and proxies /api/ to the API (docs/operations.md, Production).
 {
 	# Expiry warnings and the certificate authority's account go to this address.
 	email {$ACME_EMAIL}

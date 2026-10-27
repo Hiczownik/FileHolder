@@ -27,7 +27,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- Local `dotnet run` reads the passwords from user secrets, outside the repository (README, Development). -->
+    <!-- Local `dotnet run` reads the passwords from user secrets, outside the repository (docs/development.md, API and UI Outside Docker). -->
     <UserSecretsId>fileholder-api-6f1c2d4e</UserSecretsId>
   </PropertyGroup>
 

@@ -5,7 +5,7 @@ namespace FileHolder.Core.Configuration;
 /// <summary>
 /// Limits on what one presign may approve. Upload URLs are signed for the declared sizes, so these also bound how
 /// much an uploader can put into storage before confirm. A public demo runs with smaller values than these
-/// defaults (README, Configuration). The UI reads them from GET /api/v1/files/limits.
+/// defaults (docs/development.md, Configuration). The UI reads them from GET /api/v1/files/limits.
 /// </summary>
 public class UploadLimitsOptions
 {
