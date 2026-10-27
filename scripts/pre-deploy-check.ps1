@@ -174,10 +174,13 @@ try {
             }
         }
     }
-    elseif (-not $SkipImageScans) {
-        Invoke-Step 'Build API, UI and sample images' {
+    if (-not $SkipImageScans) {
+        # The browser tests' stack already built the API and UI images; the sample keeper is no part of the dev stack,
+        # so it's built here either way.
+        Invoke-Step 'Build images to scan' {
             param($log)
-            $exit = Invoke-Logged $log { docker compose -f docker-compose.yml build api ui }
+            $exit = 0
+            if ($SkipBrowserTests) { $exit = Invoke-Logged $log { docker compose -f docker-compose.yml build api ui } }
             if ($exit -eq 0) { $exit = Invoke-Logged $log { docker build --target sample -t fileholder-sample:latest src/fileholder-ui } }
             @((@('FAIL', 'PASS')[[int]($exit -eq 0)]), "built from $commit; the running stack is untouched")
         }
