@@ -13,7 +13,7 @@
        on Chromium, Firefox and WebKit plus the fault tests, then restarts the stack with its usual files (your
        docker-compose.override.yml included). The stack runs CI's setup for about 10 minutes. -SkipBrowserTests
        leaves it alone.
-    4. Image scans (Trivy, the version CI pins): the API and UI images built here, and the images production runs
+    4. Image scans (Trivy, the version CI pins): the API, UI and sample-keeper images built here, and the images production runs
        (Caddy, Postgres, Prometheus, Tempo) plus Silo. HIGH and CRITICAL findings that have a fix fail, except those
        accepted in .trivyignore (every image) or docker/trivy/<image>.trivyignore (that image only). -SkipImageScans
        skips them.
@@ -175,9 +175,10 @@ try {
         }
     }
     elseif (-not $SkipImageScans) {
-        Invoke-Step 'Build API and UI images' {
+        Invoke-Step 'Build API, UI and sample images' {
             param($log)
             $exit = Invoke-Logged $log { docker compose -f docker-compose.yml build api ui }
+            if ($exit -eq 0) { $exit = Invoke-Logged $log { docker build --target sample -t fileholder-sample:latest src/fileholder-ui } }
             @((@('FAIL', 'PASS')[[int]($exit -eq 0)]), "built from $commit; the running stack is untouched")
         }
     }
@@ -191,6 +192,7 @@ try {
         $images = [ordered]@{
             api        = @{ Ref = 'fileholder-api:latest'; Local = $true }
             ui         = @{ Ref = 'fileholder-ui:latest'; Local = $true }
+            sample     = @{ Ref = 'fileholder-sample:latest'; Local = $true }
             caddy      = @{ Ref = (& $pinned $prod 'caddy:') }
             # gosu only switches to the postgres user when the container starts; it never touches the network, so the
             # Go library flaws Trivy finds in it can't be reached. The rest of the image is scanned.

@@ -62,6 +62,9 @@ services:
       # No client addresses in the access log (privacy page). Set NGINX_LOG_CLIENT_ADDRESS=masked in .env only while
       # investigating abuse, then back to off (README, Production).
       NGINX_LOG_CLIENT_ADDRESS: "${NGINX_LOG_CLIENT_ADDRESS:-off}"
+    volumes:
+      # The current sample bundle, served at /sample-bundle/current.json for /sample (the sample service below).
+      - sample_data:/usr/share/nginx/html/sample-bundle:ro
     networks:
       default:
         # Fixed, so the API trusts X-Forwarded-For from this container only (ForwardedHeaders__KnownProxies__0).
@@ -132,6 +135,26 @@ services:
       postgres:
         condition: service_healthy
 
+  # Keeps one public, encrypted sample bundle alive and points /sample at it (README, Sample Bundle). Uploads with the
+  # access code SAMPLE_ACCESS_CODE; without one it idles, and /sample says there's no sample.
+  sample:
+    image: "fileholder-sample:${FILEHOLDER_VERSION:?Set FILEHOLDER_VERSION in .env (deploy.ps1 does)}"
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: "https://${SITE_ADDRESS:?Set SITE_ADDRESS in .env, e.g. fileholder.app}"
+      SAMPLE_ACCESS_CODE: "${SAMPLE_ACCESS_CODE:-}"
+    volumes:
+      - sample_data:/data
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    mem_limit: 256m
+    stop_grace_period: 10s
+    logging: *logging
+    depends_on:
+      api:
+        condition: service_healthy
+
   postgres:
     image: postgres:17.11-alpine3.24@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
     restart: unless-stopped
@@ -199,6 +222,7 @@ services:
 
 volumes:
   caddy_data:
+  sample_data:
   caddy_config:
   postgres_data:
   prometheus_data:

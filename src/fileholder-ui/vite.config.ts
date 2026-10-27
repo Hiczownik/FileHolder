@@ -26,7 +26,7 @@ function buildCommit(): string {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ isSsrBuild }) => ({
   plugins: [react(), tailwindcss()],
   // The UI's version (package.json, bumped by release-please) and commit, fixed into the bundle at build time.
   define: {
@@ -37,6 +37,14 @@ export default defineConfig({
   // keeps only the Argon2id part of hash-wasm in the passkey worker instead of every algorithm it has.
   worker: {
     format: 'es'
+  },
+  // Only the sample keeper is built for the server (npm run build:sample): one file with every dependency in it, so
+  // its image needs no node_modules.
+  ssr: {
+    noExternal: true
+  },
+  build: {
+    copyPublicDir: !isSsrBuild
   },
   server: {
     port: UI_PORT
@@ -54,4 +62,4 @@ export default defineConfig({
     setupFiles: './src/test/setup.ts',
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
-})
+}))

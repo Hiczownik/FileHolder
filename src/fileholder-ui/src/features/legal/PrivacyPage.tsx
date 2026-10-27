@@ -22,7 +22,10 @@ export const PrivacyPage: React.FC = () => {
                     <li><strong>No accounts, no cookies, no analytics, no tracking.</strong></li>
                     <li><strong>Files delete themselves</strong> when a bundle expires (after {longest} at most) or runs out of downloads.</li>
                     <li><strong>FileHolder doesn&apos;t store IP addresses.</strong></li>
-                    <li><strong>Encrypted bundles can&apos;t be read by anyone without the link</strong>, including FileHolder.</li>
+                    <li>
+                        <strong>Encrypted bundles can&apos;t be read by anyone without the link</strong>, including FileHolder.
+                        The one exception is the public <Link to="/sample" className={LINK}>sample bundle</Link>, which FileHolder makes itself.
+                    </li>
                 </ul>
             </Section>
 

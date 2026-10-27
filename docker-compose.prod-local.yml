@@ -45,6 +45,19 @@ services:
       minio-init:
         condition: service_completed_successfully
 
+  sample:
+    build:
+      context: ./src/fileholder-ui
+      target: sample
+      args:
+        GIT_SHA: ${GIT_SHA:-}
+        VERSION: ${FILEHOLDER_VERSION}
+    environment:
+      PUBLIC_URL: "https://localhost:18443"
+      # Upload links name localhost:19000, the host's port; from this container, storage is minio:9000.
+      STORAGE_PUBLIC_URL: "${STORAGE_PUBLIC_URL}"
+      STORAGE_INTERNAL_URL: "http://minio:9000"
+
   minio:
     extends:
       file: docker-compose.yml

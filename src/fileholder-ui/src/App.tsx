@@ -6,6 +6,7 @@ import { UploadPage } from './features/upload/UploadPage';
 import { DownloadPage } from './features/download/DownloadPage';
 import { TermsPage } from './features/legal/TermsPage';
 import { PrivacyPage } from './features/legal/PrivacyPage';
+import { SamplePage } from './features/sample/SamplePage';
 import { ServiceStatusBanner } from './shared/components/ServiceStatusBanner';
 import { ClosedPage } from './shared/components/ClosedPage';
 import { useServiceStatus } from './shared/hooks/useServiceStatus';
@@ -29,6 +30,7 @@ function App() {
               <Route path="/f/:shareToken" element={<DownloadPage />} />
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/privacy" element={<PrivacyPage />} />
+              <Route path="/sample" element={<SamplePage />} />
               <Route path="/diagnostics/argon2" element={<Suspense fallback={null}><Argon2BenchmarkPage /></Suspense>} />
             </Routes>
           )}

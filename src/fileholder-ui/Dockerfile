@@ -24,6 +24,25 @@ ARG GIT_SHA=""
 ENV GIT_SHA=$GIT_SHA
 
 RUN npm run build
+# The sample keeper (stage "sample" below) talks to the API container directly, not through nginx.
+ARG SAMPLE_API_BASE_URL=http://api:8080/api/v1/files
+RUN VITE_API_BASE_URL=$SAMPLE_API_BASE_URL npm run build:sample
+
+# The sample keeper (README, Sample Bundle): keeps a public sample bundle alive for /sample. Built with
+# `--target sample`; without a target, the build ends at the nginx stage below as before.
+FROM node:26.12.1-alpine3.24@sha256:40cd011b55415bc894e45b02fdd5a5dfde056921b7d23a64c74f80497af48797 AS sample
+ARG GIT_SHA=""
+ARG VERSION="dev"
+LABEL org.opencontainers.image.title="fileholder-sample"       org.opencontainers.image.version="${VERSION}"       org.opencontainers.image.revision="${GIT_SHA}"       org.opencontainers.image.licenses="MIT"
+# The keeper is one bundled file; npm and corepack are never used, so they (and their vulnerabilities) go.
+RUN rm -rf /usr/local/lib/node_modules /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack     && mkdir /data && chown node:node /data
+WORKDIR /app
+COPY --from=build /app/dist-sample ./
+COPY sample-content/ ./content/
+# The pointer to the current sample goes in /data, a volume nginx serves at /sample-bundle/ (docker-compose.prod.yml). A
+# new volume takes the owner of the directory it's mounted over, so the keeper writes to it without running as root.
+USER node
+CMD ["node", "main.js"]
 
 # Stage 2: Serve static files with Nginx
 FROM nginx:1.31.8-alpine3.24@sha256:e2d97c2b8c016f12c2f1a27d095685063b2f281c4edf2babfde6001cf4fb77a8 AS final

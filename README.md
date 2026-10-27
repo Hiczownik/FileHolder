@@ -303,6 +303,20 @@ A public demo can give anonymous uploads limits too small to be worth abusing, a
 - **In the browser:** the personal link (`/?code=…`) applies the code and removes it from the address bar; the code is kept in `sessionStorage` for that tab only. The form shows the code's limits once the server confirms it, and says plainly when a code is unknown or expired (it then uploads with the smaller limits, never sending a bad code). Above the form, *Have an access code?* opens a field to type one.
 - **Counted, not linked:** each code counts its bundles, bytes, and first and last use, but no bundle records its code. Wrong codes are rate-limited per client (with presign) and counted in `fileholder_access_code_rejections_total`. There's no global limit, which would let anyone lock real codes out on purpose; with 60 random bits, guessing is hopeless anyway.
 
+### Sample Bundle
+`/sample` opens a ready-made encrypted bundle anyone can try without uploading anything or having a code: the README and the landing page can link it. Every bundle deletes itself, the sample included, so a small service keeps one alive (#82):
+- **The keeper** (`sample` in `docker-compose.prod.yml`, `src/features/sample/keeper/`) uploads a one-page PDF it writes itself (naming the site and the day) and `src/fileholder-ui/sample-content/photo.jpg`, encrypted with the browser's own upload code running under Node, so the sample is made exactly as a visitor's bundle would be. Each sample lives 24 hours with 100 downloads; the keeper checks every hour and makes a new one after 12 hours (so whoever opened the old one can finish), or as soon as it's gone, expired, or down to 20 downloads (`SAMPLE_*` settings in `main.ts`).
+- **The pointer:** it writes the current link to a volume nginx serves at `/sample-bundle/current.json`, which `/sample` reads and forwards to; it only forwards to a share link on the site itself. The pointer is replaced only once the new sample is uploaded.
+- **It uploads with an ordinary access code**, so the server has no special case and no bundle that never expires; `scripts/admin.ps1 codes` shows how many samples it has made. Without `SAMPLE_ACCESS_CODE`, it idles and `/sample` says there's no sample.
+- **The one key the server knows:** the pointer holds the sample's link, key included. The sample is public by design, so nothing is exposed; every other encrypted bundle's key still never reaches the server.
+- **Setting it up**, once after the first deploy:
+  ```powershell
+  scripts/admin.ps1 code-create s01 -NoExpiry      # prints the code
+  # add SAMPLE_ACCESS_CODE=<code> to the server's .env, then on the server:
+  docker compose -f docker-compose.prod.yml up -d sample
+  ```
+  `scripts/prod-local.ps1 up` makes its own code.
+
 ### Tracing
 One request, or one purge run, can be followed step by step: where the time went and in what order.
 * **Where:** Grafana ([http://localhost:3001](http://localhost:3001)) → **Explore** → **Tempo**. Search for service `fileholder-api` and a span name such as `POST /api/v1/files/confirm` or `purge.run`, or paste a trace id from a log line (`… trace=<id> span=<id>`).
@@ -398,11 +412,11 @@ One server runs the whole app with `docker-compose.prod.yml`; files live in Clou
 * **Caddy** (`docker/caddy/Caddyfile`) gets and renews the certificate for `SITE_ADDRESS` (Let's Encrypt, ZeroSSL as the fallback), redirects HTTP to HTTPS, adds `Strict-Transport-Security`, drops the `Server` header, and streams everything to nginx. It keeps no access log (paths hold share tokens); nginx logs them redacted. Its certificates are on the `caddy_data` volume: keep it, or every restart asks for new ones and soon hits Let's Encrypt's rate limits. **HTTP/2 is off for now** (`protocols h1 h3`): Caddy 2.11.7 is built with a Go whose HTTP/2 can be tied up by a flood of SETTINGS frames. Browsers use HTTP/1.1 or HTTP/3 meanwhile; turn it back on with the next Caddy release (`docker/trivy/caddy.trivyignore`).
 * **Terms and privacy** are pages of the UI (`/terms`, `/privacy`), linked from every page's footer and under the upload button. They name the operator and contact address (`VITE_OPERATOR_NAME`, `VITE_CONTACT_EMAIL`), read the deployment's limits from the API, and describe what the code does: no stored IP addresses, retention, the providers (OVHcloud, Cloudflare) and OVHcloud's 7-day server backups. Change them together with any change to what's stored or for how long.
 * **Client addresses** pass along a fixed chain: Caddy sets `X-Forwarded-For`, nginx trusts it only from Caddy's address (`TRUSTED_PROXIES`), the API only from nginx's (`KnownProxies`).
-* **Hardening, on every container:** `no-new-privileges`, all Linux capabilities dropped except the few each needs (Caddy: binding 80/443; nginx and Postgres: switching to their own users), a read-only filesystem with tmpfs where they write, a memory limit (about 290 MB in use for the whole app, against limits of 2 GB), and logs rotated at 3 × 10 MB per container.
+* **Hardening, on every container:** `no-new-privileges`, all Linux capabilities dropped except the few each needs (Caddy: binding 80/443; nginx and Postgres: switching to their own users), a read-only filesystem with tmpfs where they write, a memory limit (about 320 MB in use for the whole app, against limits of 2.3 GB), and logs rotated at 3 × 10 MB per container.
 * **Deploys** let running ZIP downloads finish (*Networking & Rate Limits*); `restart: unless-stopped` brings everything back after a reboot.
 * **Monitoring** stays private: Prometheus keeps 7 days and Tempo 48 hours, and Grafana runs on your own computer, reaching them through an SSH tunnel (`ssh -L 9090:localhost:9090 -L 3200:localhost:3200 <server>`) or Tailscale.
 * **Settings:** the server's `.env`, listed in `.env.prod.example`: the site address, the R2 bucket and token, the Postgres password, the admin token and the image version; the demo's upload limits are the defaults.
-* **Images** are built on a development machine and copied to the server (`scripts/deploy.ps1`, below), so `docker-compose.prod.yml` refers to them as `fileholder-api:<version>` and `fileholder-ui:<version>`.
+* **Images** are built on a development machine and copied to the server (`scripts/deploy.ps1`, below), so `docker-compose.prod.yml` refers to them as `fileholder-api:<version>`, `fileholder-ui:<version>` and `fileholder-sample:<version>` (the sample keeper, *Sample Bundle*; the UI's Dockerfile, target `sample`).
 
 #### Deploying
 ```powershell
@@ -411,13 +425,13 @@ scripts/deploy.ps1 -Server fileholder -Rollback  # back to the version before
 ```
 `-Server` is an SSH destination, best a `Host` in `~/.ssh/config` (or set `FILEHOLDER_SERVER`). The script:
 1. refuses uncommitted changes (`-AllowDirty` overrides), and checks the server has Docker Compose and its `.env`;
-2. builds both images here, tagged `<version>-<commit>` (e.g. `0.9.0-4ba83f2`);
-3. copies them over SSH (`docker save`, `scp -C`, `docker load`; about 150 MB), with `docker-compose.prod.yml` and the Caddy, Prometheus and Tempo configs. There's no registry; once the repository is public, images can move to GHCR;
+2. builds the three images here, tagged `<version>-<commit>` (e.g. `0.9.0-4ba83f2`);
+3. copies them over SSH (`docker save`, `scp -C`, `docker load`; about 150 MB compressed, 60 MB of it the sample keeper's Node runtime), with `docker-compose.prod.yml` and the Caddy, Prometheus and Tempo configs. There's no registry; once the repository is public, images can move to GHCR;
 4. sets `FILEHOLDER_VERSION` in the server's `.env`, remembers the previous version, and runs `docker compose up --wait`. **If anything doesn't come up healthy, it switches back to the previous version by itself** and fails;
 5. checks the API on the server, and `https://fileholder.app/api/v1/status` (`-SiteUrl`; empty skips it), report the new commit;
 6. keeps the new and the previous images, removes older ones, and logs each deploy, failure and rollback in `deploy.log` on the server.
 
-Only the API and UI containers are recreated; Caddy, Postgres, Prometheus and Tempo keep running. A deploy interrupted halfway (Ctrl+C, a dropped connection) can leave a container stopped: run it again, or `docker compose -f docker-compose.prod.yml up -d` on the server.
+Only the API, UI and sample keeper containers are recreated; Caddy, Postgres, Prometheus and Tempo keep running. A deploy interrupted halfway (Ctrl+C, a dropped connection) can leave a container stopped: run it again, or `docker compose -f docker-compose.prod.yml up -d` on the server.
 
 **First time on a new server** (a fresh Debian or Ubuntu):
 1. An SSH key on your computer (`ssh-keygen -t ed25519`), installed on the server, and a `Host fileholder` entry in `~/.ssh/config` with its address, user and key. Turn off password logins.
@@ -426,11 +440,12 @@ Only the API and UI containers are recreated; Caddy, Postgres, Prometheus and Te
 4. `/opt/fileholder`, owned by the deploying user, with a `.env` made from `.env.prod.example`.
 5. DNS: `A`/`AAAA` for the site address pointing at the server, **DNS only** (not proxied by Cloudflare), so Caddy gets its certificate and sees real client addresses.
 6. `scripts/deploy.ps1 -Server fileholder`. Caddy asks for the certificate on its first start, so DNS must already point at the server.
+7. The sample bundle's access code (*Sample Bundle*).
 
 **Trying it locally first:** `scripts/prod-local.ps1` runs the same setup next to the dev stack, as its own compose project with its own volumes, ports and random secrets (`.env.prod-local`). Caddy serves `https://localhost:18443` with its local certificate authority, and storage is Silo instead of R2 (`docker-compose.prod-local.yml`).
 ```powershell
 scripts/prod-local.ps1 up      # build from this checkout and start; waits until everything is healthy
-scripts/prod-local.ps1 test    # Playwright: HTTPS and headers, plain and encrypted bundles through Caddy, the admin port
+scripts/prod-local.ps1 test    # Playwright: HTTPS and headers, plain and encrypted bundles through Caddy, the admin port, access codes, /sample
 scripts/prod-local.ps1 down -Volumes
 ```
 

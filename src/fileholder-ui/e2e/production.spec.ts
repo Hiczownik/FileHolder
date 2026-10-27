@@ -102,3 +102,22 @@ test('an access code from a personal link unlocks the larger limits, and leaves 
     await request.post(`${ADMIN_URL}/admin/access-codes/${label}/revoke`, { headers: auth });
   }
 });
+
+test('/sample opens the current sample bundle, which decrypts in the browser and downloads', async ({ page }) => {
+  // The keeper (sample service) makes the first sample as soon as it starts; scripts/prod-local.ps1 up gives it a code.
+  await page.goto('/sample');
+  await expect.poll(() => new URL(page.url()).pathname.startsWith('/f/'), { timeout: UPLOAD_TIMEOUT_MS }).toBe(true);
+  // The title is encrypted too: shown only once the key from the link decrypted it (the page then drops the key from
+  // the address bar, as for any bundle).
+  await expect(page.getByRole('heading', { name: 'FileHolder sample' })).toBeVisible();
+
+  // With the photo, each file has its own button; with the PDF alone, the page has one for the bundle.
+  const perFile = page.getByRole('button', { name: 'Download About-FileHolder.pdf' });
+  const button = (await perFile.count()) > 0 ? perFile : page.getByRole('button', { name: 'Download file' });
+  const download = page.waitForEvent('download');
+  await button.click();
+  const saved = await (await download).path();
+  const pdf = fs.readFileSync(saved, 'latin1');
+  expect(pdf.startsWith('%PDF-')).toBe(true);
+  expect(pdf).toContain('FileHolder sample bundle');
+});
