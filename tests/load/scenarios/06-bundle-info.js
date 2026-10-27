@@ -16,6 +16,9 @@ const UNKNOWN_RATE = Number(__ENV.UNKNOWN_RATE || 1400);
 // At the default rates that is 168,000 unknown tokens in 2 minutes. On a 16-core desktop the heap grew 2 MB; with
 // the cache eviction of unknown tokens removed on purpose, it grew 129 MB.
 const MAX_HEAP_GROWTH_MB = Number(__ENV.MAX_HEAP_GROWTH_MB || 48);
+// p95 latency limits, strict for local runs on known hardware; the load-tests workflow raises them for shared runners.
+const KNOWN_P95_MS = Number(__ENV.KNOWN_P95_MS || 50);
+const UNKNOWN_P95_MS = Number(__ENV.UNKNOWN_P95_MS || 250);
 
 const heapGrowth = new Gauge('api_heap_growth_mb');
 const workingSetGrowth = new Gauge('api_working_set_growth_mb');
@@ -47,8 +50,8 @@ export const options = {
     unknown: arrivalRate(UNKNOWN_RATE, 'unknown'),
   },
   thresholds: {
-    'http_req_duration{scenario:known}': ['p(95)<50'],
-    'http_req_duration{scenario:unknown}': ['p(95)<250'],
+    'http_req_duration{scenario:known}': [`p(95)<${KNOWN_P95_MS}`],
+    'http_req_duration{scenario:unknown}': [`p(95)<${UNKNOWN_P95_MS}`],
     api_heap_growth_mb: [`value<${MAX_HEAP_GROWTH_MB}`],
     http_req_failed: ['rate==0'],
     checks: ['rate==1'],

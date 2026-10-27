@@ -16,7 +16,7 @@ k6 sends its metrics to Prometheus as it runs (the "FileHolder load tests" dashb
 each run is saved in tests/load/results. Afterwards the stack is started with its usual configuration again
 (docker-compose.yml plus your docker-compose.override.yml), unless -KeepLoadConfig is given.
 
-Works in Windows PowerShell 5.1 and PowerShell 7.
+Works in Windows PowerShell 5.1 and PowerShell 7, on Windows and Linux (the load-tests workflow runs it on Linux).
 
 .EXAMPLE
 ./tests/load/run.ps1 4
@@ -39,14 +39,18 @@ param(
     [switch] $NoPurge,
 
     # Extra environment variables for the scenario, as NAME=value.
-    [string[]] $K6Env = @()
+    [string[]] $K6Env = @(),
+
+    # Also save k6's HTML report of each run next to its summary, in tests/load/results.
+    [switch] $HtmlReport
 )
 
 # Native commands report failure through $LASTEXITCODE, which is checked after each; with "Stop", Windows
 # PowerShell 5.1 would treat the progress k6 and docker write to stderr as a terminating error.
 $ErrorActionPreference = 'Continue'
 
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+# Forward slashes in paths: Windows accepts them too, Linux only those.
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $scenarioDir = Join-Path $PSScriptRoot 'scenarios'
 $checkDir = Join-Path $PSScriptRoot 'checks'
 $resultDir = Join-Path $PSScriptRoot 'results'
@@ -104,7 +108,7 @@ function Get-StorageEntriesSince([string] $since, [switch] $Incomplete) {
 # Makes everything the run created due, restarts the API so its purge runs, and checks that one pass removed it all.
 function Invoke-RunPurge([string[]] $composeArgs, [string] $runId, [string] $since) {
     $failures = @()
-    $expired = Invoke-PsqlFile (Join-Path $PSScriptRoot 'lib\expire-run.sql') $runId $since
+    $expired = Invoke-PsqlFile (Join-Path $PSScriptRoot 'lib/expire-run.sql') $runId $since
     if ($LASTEXITCODE -ne 0) {
         return @("lib/expire-run.sql failed: $($expired -join ' ')")
     }
@@ -117,7 +121,7 @@ function Invoke-RunPurge([string[]] $composeArgs, [string] $runId, [string] $sin
     $deadline = (Get-Date).AddMinutes(3)
     do {
         Start-Sleep -Seconds 5
-        $remaining = [int](Invoke-PsqlFile (Join-Path $PSScriptRoot 'lib\purge-remaining.sql') $runId $since | Select-Object -First 1)
+        $remaining = [int](Invoke-PsqlFile (Join-Path $PSScriptRoot 'lib/purge-remaining.sql') $runId $since | Select-Object -First 1)
     } while ($remaining -gt 0 -and (Get-Date) -lt $deadline)
 
     if ($remaining -gt 0) {
@@ -185,6 +189,10 @@ foreach ($name in (Resolve-Scenarios $Scenario)) {
     $envArgs = @('-e', "RUN_ID=$runId")
     foreach ($pair in ($K6Env | ForEach-Object { $_ -split ',' })) {
         $envArgs += @('-e', $pair)
+    }
+    if ($HtmlReport) {
+        # k6's built-in web dashboard, written to a file when the run ends instead of served live.
+        $envArgs += @('-e', 'K6_WEB_DASHBOARD=true', '-e', "K6_WEB_DASHBOARD_EXPORT=/results/$name-$runId.html")
     }
     # Metrics go to Prometheus as the run goes, tagged with the run id (the dashboard's "Run" picker).
     $runArgs = $composeArgs + @('--profile', 'load', 'run', '--rm') + $envArgs +
