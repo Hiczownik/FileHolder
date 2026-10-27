@@ -10,6 +10,7 @@ jobs:
     backend-tests:
         name: Build & Test Backend (.NET 10)
         runs-on: ubuntu-latest
+        timeout-minutes: 20
 
         steps:
             - name: Checkout Repository
@@ -34,6 +35,7 @@ jobs:
     e2e-tests: 
         name: Build & Run Playwright E2E Tests
         runs-on: ubuntu-latest
+        timeout-minutes: 40
         # No "needs": this job builds the API in Docker itself, so it runs alongside backend-tests.
         env:
             # Pinned so compose looks for the image names the bake step tags (fileholder-api, fileholder-ui).
@@ -67,6 +69,8 @@ jobs:
                 cd src/fileholder-ui
                 npm test
             - name: Install Playwright Browsers & System Dependencies
+              # A stuck download once held this step for over 30 minutes; it normally takes 2 to 3.
+              timeout-minutes: 10
               run: |
                cd src/fileholder-ui
                npx playwright install --with-deps chromium firefox webkit
@@ -217,6 +221,7 @@ jobs:
         # UI images above. Accepted findings: .trivyignore for every image, docker/trivy/<image>.trivyignore for one.
         name: Scan Production Image (${{ matrix.image }})
         runs-on: ubuntu-latest
+        timeout-minutes: 15
         strategy:
             fail-fast: false
             matrix:
