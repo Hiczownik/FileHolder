@@ -10,6 +10,7 @@ jobs:
     backend-tests:
         name: Build & Test Backend (.NET 10)
         runs-on: ubuntu-latest
+        timeout-minutes: 20
 
         steps:
             - name: Checkout Repository
@@ -33,7 +34,10 @@ jobs:
               run: dotnet test tests/FileHolder.Tests.Integration/FileHolder.Tests.Integration.csproj -c Release --no-build --verbosity normal
     e2e-tests: 
         name: Build & Run Playwright E2E Tests
-        runs-on: ubuntu-latest
+        # Pinned: on ubuntu-latest (26.04 since late October) Playwright installs 185 system packages for its
+        # browsers, which the runners' mirror served too slowly to finish. 24.04 is the image CI last passed on.
+        runs-on: ubuntu-24.04
+        timeout-minutes: 40
         # No "needs": this job builds the API in Docker itself, so it runs alongside backend-tests.
         env:
             # Pinned so compose looks for the image names the bake step tags (fileholder-api, fileholder-ui).
@@ -67,6 +71,8 @@ jobs:
                 cd src/fileholder-ui
                 npm test
             - name: Install Playwright Browsers & System Dependencies
+              # Normally 2 to 3 minutes; a slow package mirror once held it for over 30.
+              timeout-minutes: 15
               run: |
                cd src/fileholder-ui
                npx playwright install --with-deps chromium firefox webkit
@@ -175,7 +181,7 @@ jobs:
                 mc() { docker exec fileholder-minio mc "$@"; }
                 # The storage container has the admin credentials in its environment.
                 docker exec fileholder-minio sh -c 'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"' > /dev/null
-                for attempt in $(seq 1 30); do
+                for _ in $(seq 1 30); do
                   rules=$(mc ilm export local/fileholder-bucket 2>/dev/null || true)
                   echo "$rules" | grep -q '"ID":"fileholder-safety-net"' && echo "$rules" | grep -q '"Expiration":{"Days":' && break
                   sleep 2
@@ -194,7 +200,10 @@ jobs:
             - name: Run Playwright E2E Tests
               run: |
                 cd src/fileholder-ui
-                npx playwright test
+                # The dev-stack projects only: `production` and `screenshots` need the production setup
+                # (scripts/prod-local.ps1), which this job doesn't start.
+                npx playwright test --project=chromium --project=firefox --project=webkit \
+                  --project=faults --project=faults-firefox --project=faults-webkit
             - name: Verify Traces Reach Tempo
               run: |
                 # A broken tracing setup fails nothing else: this sends one request under its own trace id and checks
@@ -211,3 +220,57 @@ jobs:
                 path: src/fileholder-ui/playwright-report/
                 retention-days: 7    
             
+
+    production-image-scans:
+        # The images production runs that the dev stack doesn't (docker-compose.prod.yml), scanned like the API and
+        # UI images above. Accepted findings: .trivyignore for every image, docker/trivy/<image>.trivyignore for one.
+        name: Scan Production Image (${{ matrix.image }})
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    # The sample keeper is built here from the UI's Dockerfile; the others are pinned in the compose file.
+                    - image: sample
+                    - image: caddy
+                      pattern: 'caddy:'
+                    # gosu only switches to the postgres user at start-up and never touches the network, so the Go
+                    # library flaws Trivy finds in it can't be reached (as in scripts/pre-deploy-check.ps1).
+                    - image: postgres
+                      pattern: 'postgres:'
+                      skip: usr/local/bin/gosu
+                    - image: prometheus
+                      pattern: 'prom/prometheus:'
+                    - image: tempo
+                      pattern: 'grafana/tempo:'
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - name: Find the Image and Its Ignore Files
+              id: image
+              env:
+                IMAGE: ${{ matrix.image }}
+                PATTERN: ${{ matrix.pattern }}
+              run: |
+                if [ "$IMAGE" = sample ]; then
+                  docker build --target sample -t fileholder-sample:ci src/fileholder-ui
+                  echo "ref=fileholder-sample:ci" >> "$GITHUB_OUTPUT"
+                else
+                  ref=$(grep -m1 -oE "${PATTERN}[^[:space:]\"]+" docker-compose.prod.yml)
+                  if [ -z "$ref" ]; then echo "::error::No ${PATTERN} image in docker-compose.prod.yml"; exit 1; fi
+                  echo "ref=$ref" >> "$GITHUB_OUTPUT"
+                fi
+                ignores=.trivyignore
+                if [ -f "docker/trivy/$IMAGE.trivyignore" ]; then ignores="$ignores,docker/trivy/$IMAGE.trivyignore"; fi
+                echo "ignores=$ignores" >> "$GITHUB_OUTPUT"
+            - name: Scan (Trivy)
+              uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+              with:
+                version: v0.76.1
+                image-ref: ${{ steps.image.outputs.ref }}
+                severity: HIGH,CRITICAL
+                ignore-unfixed: true
+                exit-code: '1'
+                trivyignores: ${{ steps.image.outputs.ignores }}
+                skip-files: ${{ matrix.skip }}

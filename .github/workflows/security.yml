@@ -1,7 +1,8 @@
 name: Security Scans
 
-# Code scanning and secret scanning with free tools: the repository is private, where GitHub's own CodeQL and
-# secret scanning need a paid add-on (#74). Findings fail the job and are listed in its log.
+# Code scanning and secret scanning with Semgrep and gitleaks (#74), chosen while the repository was private and
+# GitHub's own tools needed a paid add-on. They stay next to CodeQL (codeql.yml): different tools catch different
+# things, and these fail the job with the findings listed in its log.
 on:
     push:
         branches: [ "main" ]
@@ -19,6 +20,7 @@ jobs:
     semgrep:
         name: Code Scanning (Semgrep)
         runs-on: ubuntu-latest
+        timeout-minutes: 15
         steps:
             - name: Checkout Repository
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,6 +40,7 @@ jobs:
     gitleaks:
         name: Secret Scanning (gitleaks)
         runs-on: ubuntu-latest
+        timeout-minutes: 10
         steps:
             - name: Checkout Repository (Full History)
               uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
