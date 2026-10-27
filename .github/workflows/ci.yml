@@ -34,7 +34,9 @@ jobs:
               run: dotnet test tests/FileHolder.Tests.Integration/FileHolder.Tests.Integration.csproj -c Release --no-build --verbosity normal
     e2e-tests: 
         name: Build & Run Playwright E2E Tests
-        runs-on: ubuntu-latest
+        # Pinned: on ubuntu-latest (26.04 since late October) Playwright installs 185 system packages for its
+        # browsers, which the runners' mirror served too slowly to finish. 24.04 is the image CI last passed on.
+        runs-on: ubuntu-24.04
         timeout-minutes: 40
         # No "needs": this job builds the API in Docker itself, so it runs alongside backend-tests.
         env:
@@ -69,8 +71,8 @@ jobs:
                 cd src/fileholder-ui
                 npm test
             - name: Install Playwright Browsers & System Dependencies
-              # A stuck download once held this step for over 30 minutes; it normally takes 2 to 3.
-              timeout-minutes: 10
+              # Normally 2 to 3 minutes; a slow package mirror once held it for over 30.
+              timeout-minutes: 15
               run: |
                cd src/fileholder-ui
                npx playwright install --with-deps chromium firefox webkit
