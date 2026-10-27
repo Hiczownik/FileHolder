@@ -14,6 +14,7 @@ Docker must be running. From the repository root, in PowerShell (Windows PowerSh
 ./tests/load/run.ps1 1,2,3,7        # the capacity runs, about 30 minutes
 ./tests/load/run.ps1 all -Build     # every scenario (with the 2-hour soak), after rebuilding the API and UI images
 ./tests/load/run.ps1 4 -K6Env BURSTS=2,CLIENTS=20   # smaller, by setting the scenario's variables
+./tests/load/run.ps1 6 -HtmlReport  # also save k6's HTML report next to the summary
 ```
 
 For each scenario, `run.ps1`:
@@ -38,7 +39,22 @@ Each run gets an id such as `20261023-143101-04`. The bundles it creates have it
 (`k6 <run id> download race 3`), so its checks find exactly the bundles it made. The purge step finds everything the run
 made by when it was made, which is safe because nothing else can upload while the load configuration is applied.
 
-k6's summary of each run is saved as JSON in `tests/load/results/` (git ignores it).
+k6's summary of each run is saved as JSON in `tests/load/results/` (git ignores it). With `-HtmlReport`, k6's HTML
+report of the run is saved next to it: charts of request rates, latencies and errors over the run, in one file.
+
+### In CI
+
+`.github/workflows/load-tests.yml` runs `run.ps1` on a GitHub runner:
+
+* **Nightly**, at small scale: scenarios 4, 5, 6 and 9, and a 1-minute scenario 1. Their correctness checks are as
+  strict as locally; the latency limits are generous (scenario 6's ten times the local ones, scenario 1's confirm at
+  15 s), since shared runners are slower and vary.
+* **By hand** (*Actions* → *Load Tests* → *Run workflow*): any scenarios, with any settings, e.g. `3` with
+  `DURATION=5m`.
+* **On pull requests** that change the load tests, the workflow or the load compose files: the nightly set.
+
+Each run's summaries and HTML reports are attached to the workflow run as the `load-test-results` artifact (kept 14
+days). The numbers in *Baseline* below come from a known desktop, not from CI.
 
 **Disk space.** Docker Desktop's virtual disk grows to the most it ever held and doesn't shrink by itself, so the
 scenarios are sized by data, not only by time: none holds more than about 12 GB at once (scenario 3), and each is
