@@ -21,7 +21,6 @@
   "packages": {
     ".": {
       "package-name": "fileholder",
-      "release-as": "1.0.0",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         { "type": "generic", "path": "Directory.Build.props" },
