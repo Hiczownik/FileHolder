@@ -179,7 +179,7 @@ jobs:
                 mc() { docker exec fileholder-minio mc "$@"; }
                 # The storage container has the admin credentials in its environment.
                 docker exec fileholder-minio sh -c 'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"' > /dev/null
-                for attempt in $(seq 1 30); do
+                for _ in $(seq 1 30); do
                   rules=$(mc ilm export local/fileholder-bucket 2>/dev/null || true)
                   echo "$rules" | grep -q '"ID":"fileholder-safety-net"' && echo "$rules" | grep -q '"Expiration":{"Days":' && break
                   sleep 2
@@ -198,7 +198,10 @@ jobs:
             - name: Run Playwright E2E Tests
               run: |
                 cd src/fileholder-ui
-                npx playwright test
+                # The dev-stack projects only: `production` and `screenshots` need the production setup
+                # (scripts/prod-local.ps1), which this job doesn't start.
+                npx playwright test --project=chromium --project=firefox --project=webkit \
+                  --project=faults --project=faults-firefox --project=faults-webkit
             - name: Verify Traces Reach Tempo
               run: |
                 # A broken tracing setup fails nothing else: this sends one request under its own trace id and checks
