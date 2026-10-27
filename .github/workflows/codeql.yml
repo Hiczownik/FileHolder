@@ -1,0 +1,43 @@
+name: CodeQL
+
+# GitHub's own code scanning, free now that the repository is public (#82). It runs next to Semgrep (security.yml):
+# CodeQL follows data from where it enters to where it's used, Semgrep matches patterns; each finds what the other
+# misses. Findings appear under Security → Code scanning.
+on:
+    push:
+        branches: [ "main" ]
+    pull_request:
+        branches: [ "main" ]
+    schedule:
+        # Weekly, so new queries are checked against unchanged code too.
+        - cron: '17 5 * * 1'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    analyze:
+        name: CodeQL (${{ matrix.language }})
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            security-events: write
+        strategy:
+            fail-fast: false
+            matrix:
+                # build-mode none: CodeQL reads the source without building it, so no .NET or Node setup is needed.
+                language: [ csharp, javascript-typescript ]
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - name: Initialize CodeQL
+              uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+              with:
+                  languages: ${{ matrix.language }}
+                  build-mode: none
+                  queries: security-extended
+            - name: Analyze
+              uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+              with:
+                  category: /language:${{ matrix.language }}
