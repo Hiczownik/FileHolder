@@ -33,6 +33,7 @@
 * **Encryption built on WebCrypto:** AES-256-GCM in 4 MiB chunks, authenticated so they can't be reordered, dropped or added. Keys come from HKDF, and a passkey is stretched with Argon2id in a worker. The server checks a derived value on unlock, never the key. → [How It Works](docs/how-it-works.md), [threat model](docs/threat-model.md)
 * **Streaming decryption, even on an iPhone.** Downloads decrypt as they arrive and go straight to disk through a service worker, a "Save as" dialog or Safari's private storage (OPFS). A 1.5 GB encrypted file was checked on a real iPhone. → [Encrypted Downloads](docs/how-it-works.md#-encrypted-downloads)
 * **Deletion you can rely on:** download limits are enforced with one conditional database update, however many recipients race. A background purge removes files and details. Storage's own lifecycle rule is a safety net in case the purge ever fails. → [How It Works](docs/how-it-works.md)
+* **Sized for a small server.** On the production server's resources (2 vCPU, simulated with the production setup pinned to two cores): about 400 link opens a second with p95 under 5 ms, realistic mixed traffic at around 10% CPU, and 150 fifty-file bundles a minute. Because file contents bypass it, the server mostly answers small API requests. → [Load tests](tests/load/README.md#on-the-production-servers-resources)
 * **Tested from several sides:**
   * unit and integration tests (Testcontainers);
   * property tests in C# and TypeScript, with the server's and browser's file-name rules checked against shared examples;

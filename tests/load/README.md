@@ -145,3 +145,38 @@ same machine against these. Shared CI runners will be slower and vary more.
 | 6 | Throughput through nginx | 1,250 requests/s, 0 errors |
 | 6 | API heap growth over 168,000 unknown tokens | 2 MB (129 MB with the cache eviction removed on purpose) |
 | 9 | Requests, p95 | 4 ms |
+
+## On the production server's resources
+
+What the deployed server (OVHcloud VPS-1: 2 vCPU, 4 GB) can handle, measured on 2026-10-27 with
+`tests/load/vps-profile.ps1`. It runs the production setup locally (Caddy over HTTPS, nginx, the API, Postgres,
+Prometheus, Tempo and the sample keeper, as `docker-compose.prod.yml` hardens them) with `docker-compose.load-vps.yml`:
+
+* **Every server container is pinned to the same two cores**, so they compete for two cores as on the VPS.
+* **Storage and k6 run on other cores**: storage stands in for R2, which runs on Cloudflare's machines, and k6 for the
+  visitors.
+* **Per-address rate limits are raised**, because all k6 traffic comes from one address. This measures the server, not
+  one visitor's limits.
+
+**Scaling to the VPS.** One VPS core does about 0.68 of this machine's (OpenSSL SHA-256 on Debian 13, one and two
+cores: 343 vs 513 MB/s and 700 vs 1,008 MB/s; VPS: Haswell-generation Intel; here: Core i9-9880H). Throughput below is
+scaled by that; latencies are as measured, since at moderate load they hardly depend on CPU speed.
+
+| Run | Measured on two cores | Estimate for the VPS |
+| :--- | :--- | :--- |
+| 6: bundle pages at 600 requests/s, 1 min | 36,008 requests, 0 failed, p95 2.5 ms (known) / 4.3 ms (unknown), CPU 75% of two cores on average | about 400 requests/s with p95 under 5 ms |
+| 6: at 1,200 requests/s, 1 min | 71,435 requests, 0 failed, 0.8% of iterations dropped, p95 70–95 ms, CPU full | the limit: about 750–800 requests/s |
+| 3: mixed traffic, 10 min (12 uploads and 60 downloads a minute, 30% encrypted) | 121 uploads, 0 failed, CPU 6–7% of two cores on average; p95: confirm 408 ms, every other request 5–28 ms | the same traffic at about 10% CPU |
+| 1: 50-file bundles, ramping to 10 clients, 3 min | 652 bundles (32,600 files), 0 failed; confirm p95 1.3 s | about 150 bundles a minute |
+| 5: password guessing, 50 guessers × 5 bursts | lockout held (exactly 6 checks a burst); unlock p95 0.8 s | unlock p95 about 1.2 s under attack |
+| 7: 10 simultaneous 200 MB server-built ZIPs | 2.1 GB at about 157 MB/s together, CPU full (TLS in Caddy and the streaming); first byte p95 0.1 s | about 100 MB/s of CPU; the server's network link is likely the limit first |
+
+**Caveats.** These are estimates from a simulation, each from a single run. The VPS's network link isn't simulated;
+it matters only for server-built ZIPs of plain bundles, since every other file goes straight between browsers and
+storage. Scenario 7 fails its exact byte count over HTTPS (TLS adds about 0.07% to what k6 counts), and the 1,200
+requests/s run fails its thresholds by design: it looks for the limit.
+
+```powershell
+./tests/load/vps-profile.ps1                      # every run, about 35 minutes; removes its stack afterwards
+./tests/load/vps-profile.ps1 -Run 6-600,3-mixed   # some of them
+```
