@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 // The production setup (docker-compose.prod.yml) on this machine: Caddy with HTTPS in front of nginx and the API,
 // every container hardened. Run with scripts/prod-local.ps1 test, which starts nothing itself: run `up` first.
@@ -7,11 +8,15 @@ const UPLOAD_TIMEOUT_MS = 30_000;
 const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_CREATED = 201;
-const BYTES_PER_MIB = 1024 * 1024;
+const BYTES_PER_KIB = 1024;
+const BYTES_PER_MIB = BYTES_PER_KIB * BYTES_PER_KIB;
+// Digits and letters: the shortest unique label for a timestamp.
+const BASE36 = 36;
 // Over the 10 MB allowed without an access code (docker-compose.prod.yml), within what a code allows.
 const LARGER_THAN_WITHOUT_CODE_MIB = 11;
 const ADMIN_URL = process.env.ADMIN_URL ?? 'http://localhost:19465';
 const HSTS = 'max-age=63072000; includeSubDomains; preload';
+const SAMPLE_PHOTO = fileURLToPath(new URL('../sample-content/photo.jpg', import.meta.url));
 
 const report = { name: 'report.txt', mimeType: 'text/plain', buffer: Buffer.from('Quarterly figures, behind Caddy') };
 
@@ -79,7 +84,7 @@ test('an access code from a personal link unlocks the larger limits, and leaves 
   test.skip(!token, 'scripts/prod-local.ps1 test passes the admin token');
   const auth = { Authorization: `Bearer ${token}` };
   // Labels are a lowercase letter and up to 19 more letters or digits.
-  const label = `e${Date.now().toString(36)}`;
+  const label = `e${Date.now().toString(BASE36)}`;
   const created = await request.post(`${ADMIN_URL}/admin/access-codes`, { headers: auth, data: { label } });
   expect(created.status()).toBe(HTTP_CREATED);
   const { code } = (await created.json()) as { code: string };
@@ -111,13 +116,18 @@ test('/sample opens the current sample bundle, which decrypts in the browser and
   // the address bar, as for any bundle).
   await expect(page.getByRole('heading', { name: 'FileHolder sample' })).toBeVisible();
 
-  // With the photo, each file has its own button; with the PDF alone, the page has one for the bundle.
-  const perFile = page.getByRole('button', { name: 'Download About-FileHolder.pdf' });
-  const button = (await perFile.count()) > 0 ? perFile : page.getByRole('button', { name: 'Download file' });
-  const download = page.waitForEvent('download');
-  await button.click();
-  const saved = await (await download).path();
-  const pdf = fs.readFileSync(saved, 'latin1');
+  const pdf = fs.readFileSync(await downloadFile(page, 'About-FileHolder.pdf'), 'latin1');
   expect(pdf.startsWith('%PDF-')).toBe(true);
   expect(pdf).toContain('FileHolder sample bundle');
+
+  // The photo comes back byte for byte: it has no metadata for the upload to strip (sample-content/README.md).
+  const photo = fs.readFileSync(await downloadFile(page, 'Photo.jpg'));
+  expect(photo.equals(fs.readFileSync(SAMPLE_PHOTO))).toBe(true);
 });
+
+/** Clicks a file's own download button and returns where Playwright saved it. */
+async function downloadFile(page: Page, name: string): Promise<string> {
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: `Download ${name}` }).click();
+  return (await download).path();
+}
