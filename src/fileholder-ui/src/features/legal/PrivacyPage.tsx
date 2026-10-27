@@ -7,7 +7,7 @@ import { CONTACT_EMAIL } from '../../shared/utils/operator';
 
 const LINK = 'underline underline-offset-2 text-fg hover:text-accent rounded outline-none focus-visible:ring-2 focus-visible:ring-accent';
 
-/** What FileHolder does with personal data (GDPR art. 13), kept true to the code: see README, Production. */
+/** What FileHolder does with personal data (GDPR art. 13), kept true to the code: see docs/operations.md, Production. */
 export const PrivacyPage: React.FC = () => {
     const limits = useUploadLimits();
     const longest = describeHours(longestExpiry(limits));

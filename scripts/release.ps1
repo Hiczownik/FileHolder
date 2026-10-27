@@ -11,7 +11,7 @@
       release  After the release PR is merged: tags the merge commit (v0.9.1, ...) and creates the GitHub release
                with that version's changelog.
     Uses your GitHub CLI login (gh auth token); nothing is stored. Add -DryRun to see what would happen.
-    Before the first run there must be a v0.9.0 release to start from (README, Versions and Releases).
+    Before the first run there must be a v0.9.0 release to start from (docs/operations.md, Versions and Releases).
 
 .EXAMPLE
     scripts/release.ps1 pr -DryRun

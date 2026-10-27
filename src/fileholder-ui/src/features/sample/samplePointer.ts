@@ -1,7 +1,7 @@
 /**
  * The current sample bundle (#82): written by the sample keeper (sample/keeper.ts) into a volume nginx serves at
  * SAMPLE_POINTER_PATH, read by /sample to forward a visitor there. The link holds the bundle's key: the sample is public
- * by design, so this is the one bundle whose key the server has (README, Sample Bundle).
+ * by design, so this is the one bundle whose key the server has (docs/operations.md, Sample Bundle).
  */
 export interface SamplePointer {
     /** The share link, `{origin}/f/{shareToken}#k={linkKey}`. */

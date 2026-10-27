@@ -13,7 +13,7 @@ services:
     environment:
       POSTGRES_DB: fileholder_db
       POSTGRES_USER: fileholder_user
-      # Only applied when the postgres_data volume is first created; changing it later needs an ALTER USER (README).
+      # Only applied when the postgres_data volume is first created; changing it later needs an ALTER USER (docs/development.md).
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
     # Loopback only: the API reaches Postgres over the compose network; this is just for local tooling.
     ports:
@@ -87,7 +87,7 @@ services:
       context: .
       dockerfile: src/FileHolder.Api/Dockerfile
       # The build's commit and version, shown in the footer, /healthz, /api/v1/status and fileholder_build_info.
-      # Docker builds have no .git, so set GIT_SHA before building (README, Versions and Releases):
+      # Docker builds have no .git, so set GIT_SHA before building (docs/operations.md, Versions and Releases):
       #   $env:GIT_SHA = git rev-parse --short HEAD; docker compose up -d --build
       # Unset, the commit shows as "unknown". VERSION only labels the image; the app's version is in the code.
       args:
@@ -123,9 +123,9 @@ services:
       # server (npm run dev, port 3000 once the ui container is stopped) to call this API on port 8080.
       Cors__AllowedOrigins__0: "http://localhost:3000"
       # Traces go to Tempo over the compose network. Not a dependency: if Tempo is down the API still serves, and
-      # only traces are lost. Unset it to send none (see README, Tracing).
+      # only traces are lost. Unset it to send none (see docs/operations.md, Tracing).
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://tempo:4317"
-      # The bearer token for the admin endpoints on 9465 (README, Maintenance Modes). At least 32 characters.
+      # The bearer token for the admin endpoints on 9465 (docs/operations.md, Maintenance Modes). At least 32 characters.
       Admin__Token: ${ADMIN_TOKEN:?Set ADMIN_TOKEN in .env (see .env.example)}
     depends_on:
       postgres:
