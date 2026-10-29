@@ -1,0 +1,9 @@
+# Findings accepted in the Tempo image only (grafana/tempo:3.1.1), on top of .trivyignore. scripts/pre-deploy-check.ps1
+# adds this file when it scans Tempo, so these never hide the same IDs in another image. Each entry says why, and
+# expires (exp:): after that date the scan fails on it again. Tempo 3.1.1 (2026-10-21) is the newest release; take the
+# next one and remove what it fixes.
+
+# go-jose v4.1.4: parsing a JWK that holds an RSA key can be made to take very long (fixed in 4.1.6, already on Tempo's
+# main branch). Tempo only parses JWKs for cloud-storage sign-in and token auth; docker/tempo/tempo.yaml stores traces
+# on local disk with no auth, OTLP is reachable on the compose network only, and queries on the loopback only.
+CVE-2026-116587 exp:2026-11-30
