@@ -27,6 +27,8 @@ services:
     environment:
       SITE_ADDRESS: "${SITE_ADDRESS:?Set SITE_ADDRESS in .env, e.g. fileholder.app}"
       ACME_EMAIL: "${ACME_EMAIL:?Set ACME_EMAIL in .env: certificate expiry warnings go there}"
+      # The second site, QuickKsef (Caddyfile); its own A record must point at this server.
+      QUICKKSEF_ADDRESS: "${QUICKKSEF_ADDRESS:-quickksef.fileholder.app}"
     volumes:
       - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       # Certificates and the certificate authority account: kept, or every restart would ask for new ones and soon

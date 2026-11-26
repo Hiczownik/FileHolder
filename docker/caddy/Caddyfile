@@ -43,3 +43,15 @@
 		# X-Forwarded-Proto to https; nginx trusts both only from this container (TRUSTED_PROXIES).
 	}
 }
+
+# QuickKsef (github.com/Hiczownik/quick-ksef), a separate project on the same server. It isn't part of this compose file:
+# its own container joins this network as "quickksef" (its docker-compose.prod.yml) and trusts forwarded headers only
+# from this container's fixed address. While it isn't running, this address answers 502; FileHolder is unaffected.
+{$QUICKKSEF_ADDRESS:quickksef.fileholder.app} {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+		-Server
+	}
+
+	reverse_proxy quickksef:8080
+}
