@@ -4,6 +4,12 @@
 # next one and remove what it fixes.
 
 # go-jose v4.1.4: parsing a JWK that holds an RSA key can be made to take very long (fixed in 4.1.6, already on Tempo's
-# main branch). Tempo only parses JWKs for cloud-storage sign-in and token auth; docker/tempo/tempo.yaml stores traces
+# main branch; Tempo 3.1.1 is still the newest release, so extended once). Tempo only parses JWKs for cloud-storage sign-in and token auth; docker/tempo/tempo.yaml stores traces
 # on local disk with no auth, OTLP is reachable on the compose network only, and queries on the loopback only.
-CVE-2026-116587 exp:2026-11-30
+CVE-2026-116587 exp:2026-12-31
+
+# golang.org/x/net/html: text made of many short runs separated by ignored end tags takes quadratic time to parse
+# (fixed in x/net 0.62.0, which no Tempo release is built with yet). Only reachable where the program parses HTML
+# from outside; Tempo receives traces as OTLP protobuf on the compose network and never parses
+# HTML.
+CVE-2026-78661 exp:2026-12-31

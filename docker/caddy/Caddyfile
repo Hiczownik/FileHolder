@@ -17,12 +17,6 @@
 	# (Hosting__ShutdownTimeoutSeconds, Hosting__LingerSeconds), and compose allows 100 s.
 	grace_period 95s
 
-	# HTTP/1.1 and HTTP/3 only, until a Caddy release built with a fixed Go: HTTP/2 can be tied up with a flood of
-	# SETTINGS frames (CVE-2026-78669, docker/trivy/caddy.trivyignore). Browsers fall back to HTTP/1.1 or use HTTP/3,
-	# which makes no difference at this size. Remove this block (back to h1 h2 h3) with the next Caddy release.
-	servers {
-		protocols h1 h3
-	}
 }
 
 {$SITE_ADDRESS} {
