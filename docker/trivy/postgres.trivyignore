@@ -1,0 +1,8 @@
+# Findings accepted in the Postgres image only (postgres:17.12-alpine3.24), on top of .trivyignore.
+# scripts/pre-deploy-check.ps1 adds this file when it scans Postgres, so these never hide the same IDs in another
+# image. Each entry says why, and expires (exp:): after that date the scan fails on it again. Take the next image
+# build (with Alpine's fixed libxml2 2.13.9-r3) and remove it.
+
+# libxml2: XInclude processing ignores the parser's flags, e.g. "no network". PostgreSQL's XML functions never run
+# XInclude, and FileHolder stores no XML.
+CVE-2026-86144 exp:2026-12-31

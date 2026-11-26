@@ -6,7 +6,7 @@
 # to start without them. .env.example lists them, and the README (Quick Start) has a command that generates them.
 services:
   postgres:
-    image: postgres:17.11-alpine3.24@sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
+    image: postgres:17.12-alpine3.24@sha256:f9cf3e1f0066f0eb0c48707d864f0ac5941e9ff454a072077d97a4d278d07d73
     container_name: fileholder-postgres
     # Time for a clean shutdown (a checkpoint) instead of crash recovery on the next start.
     stop_grace_period: 30s
@@ -30,7 +30,7 @@ services:
     # Silo: a community fork of the MinIO server (MinIO wound down its community edition), maintained by one vendor
     # on a best-effort basis, so read the release notes before taking an update. The -distroless variant can't be
     # used: it has no mc for the healthcheck the other services wait on, and runs as root just the same.
-    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
+    image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z@sha256:c20d112390b9a9ce8c11b8af95ad35bcaa62f4759663c09c936cd8d2b511f329
     container_name: fileholder-minio
     command: server /data --console-address ":9001"
     environment:
@@ -56,7 +56,7 @@ services:
       retries: 5
 
   minio-init:
-    image: pgsty/silo:RELEASE.2026-10-18T00-00-00Z@sha256:2636fc4155d9a7e41ff58cdb65ddd13ba9304e67184e13c25bc5cb34016269d7
+    image: pgsty/silo:RELEASE.2026-11-12T00-00-00Z@sha256:c20d112390b9a9ce8c11b8af95ad35bcaa62f4759663c09c936cd8d2b511f329
     container_name: fileholder-minio-init
     depends_on:
       minio:
@@ -173,7 +173,7 @@ services:
         condition: service_healthy
 
   prometheus:
-    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     container_name: fileholder-prometheus
     ports:
       - "127.0.0.1:9090:9090"
