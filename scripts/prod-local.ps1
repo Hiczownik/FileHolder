@@ -38,6 +38,8 @@ if (-not (Test-Path $envFile)) {
     @(
         '# Made by scripts/prod-local.ps1 for the local production test; random, never used anywhere else.'
         'SITE_ADDRESS=localhost'
+        # Locally Caddy's own certificate authority, never a real certificate request for the public name.
+        'QUICKKSEF_ADDRESS=quickksef.localhost'
         'ACME_EMAIL=prodtest@example.invalid'
         'FILEHOLDER_VERSION=local'
         'STORAGE_PUBLIC_URL=http://localhost:19000'
@@ -53,6 +55,10 @@ if (-not (Test-Path $envFile)) {
     ) | Set-Content -Encoding ascii $envFile
     # minio-init gives the API's storage user the same secret.
     Add-Content -Encoding ascii $envFile "STORAGE_API_SECRET_KEY=$((Get-Content $envFile | Where-Object { $_ -like 'STORAGE_SECRET_KEY=*' }).Split('=', 2)[1])"
+}
+# Env files made before QuickKsef's site was added: without this, Caddy would ask for a real certificate for it.
+if (-not (Select-String -Path $envFile -Pattern '^QUICKKSEF_ADDRESS=' -Quiet)) {
+    Add-Content -Encoding ascii $envFile 'QUICKKSEF_ADDRESS=quickksef.localhost'
 }
 
 # The sample keeper's access code (docs/operations.md, Sample Bundle): made on the admin port once the API is up, kept in the env
