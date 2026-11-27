@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SamplePage } from '../SamplePage';
@@ -51,7 +51,10 @@ describe('/sample', () => {
 
         renderSample();
 
-        expect(await screen.findByRole('heading', { name: "The sample bundle isn't available right now" })).toHaveFocus();
+        // The heading appears when the answer arrives; the component focuses it in an effect a moment later.
+        // Waiting only for the heading raced that effect on slow CI runners.
+        const heading = await screen.findByRole('heading', { name: "The sample bundle isn't available right now" });
+        await waitFor(() => expect(heading).toHaveFocus());
     });
 
     it('never forwards anywhere else', async () => {
