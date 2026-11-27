@@ -44,6 +44,12 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: "Npgsql.EntityFrameworkCore.PostgreSQL"
         update-types: [version-update:semver-major]
+      # Serilog's ASP.NET Core packages follow the .NET major too: 11.x needs the .NET 11 hosting packages on every
+      # target framework, so restore fails on .NET 10 with a package downgrade (NU1109, #204).
+      - dependency-name: "Serilog.AspNetCore"
+        update-types: [version-update:semver-major]
+      - dependency-name: "Serilog.Extensions.Hosting"
+        update-types: [version-update:semver-major]
       # ASP.NET Core's OpenAPI source generator is built against Microsoft.OpenApi 2.x and doesn't compile with 3.x
       # (#119); it moves with the .NET major.
       - dependency-name: "Microsoft.OpenApi"
