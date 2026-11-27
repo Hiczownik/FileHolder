@@ -1,0 +1,10 @@
+# Findings accepted in the Prometheus image only (prom/prometheus:v3.16.0), on top of .trivyignore.
+# scripts/pre-deploy-check.ps1 adds this file when it scans Prometheus, so these never hide the same IDs in another
+# image. Each entry says why, and expires (exp:): after that date the scan fails on it again. Take the next Prometheus
+# release and remove what it fixes.
+
+# golang.org/x/net/html: text made of many short runs separated by ignored end tags takes quadratic time to parse
+# (fixed in x/net 0.62.0, which no Prometheus release is built with yet). Only reachable where the program parses HTML
+# from outside; Prometheus scrapes only the stack's own /metrics endpoints
+# (docker/prometheus/prometheus.yml), which answer in its text format, and promtool never runs in production.
+CVE-2026-78661 exp:2026-12-31

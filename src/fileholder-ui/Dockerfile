@@ -45,7 +45,7 @@ USER node
 CMD ["node", "main.js"]
 
 # Stage 2: Serve static files with Nginx
-FROM nginx:1.31.8-alpine3.24@sha256:e2d97c2b8c016f12c2f1a27d095685063b2f281c4edf2babfde6001cf4fb77a8 AS final
+FROM nginx:1.31.10-alpine3.24@sha256:7fc0fb4af7bf006aeb31aea88069976060f8f0a0a86b667126742cc17f4e31ae AS final
 # OCI labels, so `docker inspect` says which build an image is. VERSION is passed by release and deploy builds.
 ARG GIT_SHA=""
 ARG VERSION="dev"
