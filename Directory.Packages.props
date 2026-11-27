@@ -14,7 +14,7 @@
 
     <ItemGroup>
         <!-- Analyzers for every project. -->
-        <GlobalPackageReference Include="SonarAnalyzer.CSharp" Version="10.35.0.4138" />
+        <GlobalPackageReference Include="SonarAnalyzer.CSharp" Version="10.37.0.15768" />
     </ItemGroup>
 
     <ItemGroup>
