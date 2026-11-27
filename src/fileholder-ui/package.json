@@ -21,7 +21,7 @@
     "client-zip": "2.5.1",
     "clsx": "^2.1.1",
     "hash-wasm": "4.13.0",
-    "lucide-react": "^1.78.0",
+    "lucide-react": "^1.79.0",
     "qrcode.react": "4.2.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
